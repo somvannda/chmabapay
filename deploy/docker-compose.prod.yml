@@ -1,0 +1,327 @@
+# The production stack (Docker Compose v2).
+#
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
+#
+# Run from the repository root. `--env-file` is not optional: the `${...}` values
+# below are interpolated by compose from that file, and `deploy/.env` is the
+# production one. It is a different file from the repository-root `.env`, which is a
+# development file — it sets ENABLE_DEV_GATEWAY=true for the local `uv run uvicorn`
+# loop. Copy `deploy/.env.example` to `deploy/.env` and fill it in.
+#
+# ---------------------------------------------------------------------------- #
+# This stack is a tenant of a VPS that already runs the chmaba POS stack.
+# ---------------------------------------------------------------------------- #
+#
+# That is the single fact that shapes this file. The POS project is live and
+# revenue-generating, so nothing here may be able to interrupt it:
+#
+#   * **Only one host port is taken: 8443.** The proxy listens on 443 inside its own
+#     container and compose publishes it as 8443. The POS stack's edge owns 80 and
+#     443 and is not touched — not its compose file, not its nginx, not its certs.
+#     This used to be the plan's weak point: an earlier version had both projects
+#     sharing one host nginx, which would have made ChmabaPay's launch a new
+#     single point of failure for a live service. Two compose projects, two ports.
+#   * **The database and queue are not published at all.** No `ports:` on `db`.
+#     Nothing outside this compose network has any reason to open a Postgres
+#     connection, and a published 5432 on a public VPS is a brute-force target.
+#   * **Logs are capped.** See `x-logging` below. An uncapped `json-file` log is the
+#     ordinary way a container fills a disk, and on a shared host that is not this
+#     project's outage alone.
+#
+# Compose projects are isolated by default: this is project `chmabapay-prod`, with its
+# own bridge network, its own containers and its own `pgdata` volume. Names cannot
+# collide with the POS project's. The host port above is the only shared resource,
+# and it is shared by *allocation*, not by contention.
+#
+# `-prod` is load-bearing, not cosmetic. The repository-root docker-compose.yml also
+# declares `name: chmabapay`, and a compose project name is what namespaces volumes —
+# so with the same name on both, `pgdata` here and `pgdata` there would resolve to the
+# *same* volume `chmabapay_pgdata`, and the same container names besides. On the VPS
+# that would be invisible until someone ran the development stack there once, at which
+# point production would quietly adopt that database — its accounts, its stores, and
+# the test webhook endpoint pointing at a host that does not exist. A fresh production
+# database has to be a property of the file, not of which stack happened to run first.
+
+name: chmabapay-prod
+
+# ---------------------------------------------------------------------------- #
+# Log retention
+# ---------------------------------------------------------------------------- #
+# Docker's default logging driver writes JSON to a file that grows until the disk
+# is full. On a machine also serving live POS traffic, an unbounded log from a
+# payment API is a shared-fate outage rather than a local one.
+#
+# 10MB x 5 files = 50MB per container, which is ~300MB across this stack. Raise it
+# if you want more history; the point is that it is bounded.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-backend-env: &backend-env
+  # Built from the same three variables the `db` service is initialised with, so a
+  # mismatch between the database's user and the URL that reads it is not possible.
+  #
+  # `POSTGRES_PASSWORD` is required rather than defaulted: the development stack
+  # uses `chmaba:chmaba`, and that value reaching production is exactly the kind of
+  # thing that is invisible until it matters.
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-chmaba}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@db:5432/${POSTGRES_DB:-chmabapay}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+x-api-env: &api-env
+  <<: *backend-env
+
+  # -------------------------------------------------------------------------- #
+  # Topology: one process, no external queue
+  # -------------------------------------------------------------------------- #
+  # The API drains its own queues in-process (`inprocess` + `WORKERS_ENABLED=true`),
+  # which is what makes this stack have **no external dependency whose failure stops
+  # payment detection**. There is deliberately no Redis service in this file: it is
+  # only read when `WORKER_TRANSPORT=redis`, and paying the cost of a queue dependency
+  # to gain a topology nobody is using yet is the wrong trade at launch.
+  #
+  # Detection survives a restart regardless, because W1 does not hold state in the
+  # queue — it re-derives what to poll from non-terminal rows in the database. What
+  # an in-process queue costs is throughput, not durability.
+  #
+  # To split the drains into a worker process later, add a `redis` service and the
+  # worker service from docker-compose.yml, and set these two to `redis` and `false`.
+  # The application refuses to boot on the dangerous pairing of `false` + `inprocess`
+  # rather than dropping every job silently.
+  WORKER_TRANSPORT: inprocess
+  WORKERS_ENABLED: "true"
+
+  # The application verifies at startup that the schema is at the Alembic head and
+  # refuses to boot otherwise. It never migrates itself — the `migrate` service does,
+  # and everything that reads the schema waits for it.
+  SCHEMA_CHECK: "true"
+
+  # The fake Bakong rail, hardcoded OFF rather than interpolated from the env file.
+  # `/_dev/payments/{id}/pay` marks a payment paid without money moving, and
+  # `/auth/_dev/login` mints a real session for any email named with no credential.
+  # A value that is inherited from a file is not a default; see the long note in
+  # docker-compose.yml.
+  ENABLE_DEV_GATEWAY: "false"
+
+  # -------------------------------------------------------------------------- #
+  # Identity
+  # -------------------------------------------------------------------------- #
+  # Required, and required loudly: the application's built-in default is a
+  # placeholder published in this repository, so sessions signed with it can be
+  # forged by anyone who has read the source.
+  #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in deploy/.env - see deploy/.env.example}
+  JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-86400}
+
+  # Required. It is the canonical origin, and it wins over the forwarded headers for
+  # the OAuth redirect URI and for whether the session cookie is marked Secure. Left
+  # empty it is derived from `X-Forwarded-Proto`/`X-Forwarded-Host` instead — which
+  # works, and is a silent dependency on the edge forwarding them correctly. Set it,
+  # so the value is a decision rather than an inference.
+  PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in deploy/.env, e.g. https://pay.chmaba.com}
+  # Google compares the redirect URI byte for byte, so this must equal what is
+  # registered in the GCP Console — including the scheme and the absence of a
+  # trailing slash.
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+  GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+  # The OAuth callback is answered by the API at /auth/google/callback, which the
+  # default "/" would land the user back on — and "/" is the FastAPI root, not the
+  # website. Point this at the site.
+  POST_LOGIN_REDIRECT_URL: ${POST_LOGIN_REDIRECT_URL:-https://pay.chmaba.com/dashboard}
+
+  # Browser origins allowed to call this API. Never "*": the wildcard is gone
+  # deliberately, and browsers reject it combined with credentials. Server-to-server
+  # callers — the usual POS integration — are unaffected, because CORS is a browser
+  # mechanism.
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://pay.chmaba.com,https://admin-pay.chmaba.com}
+
+  # -------------------------------------------------------------------------- #
+  # Alerts. Without these two, every alert is a log line and nothing is paged.
+  # -------------------------------------------------------------------------- #
+  # The chat must have sent /start to the bot: a bot cannot open a conversation, and
+  # Telegram answers HTTP 200 with `ok: false` when it is asked to. See docs/deploy.md §5.
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  OPS_TELEGRAM_CHAT_ID: ${OPS_TELEGRAM_CHAT_ID:-}
+  # Set a token or /metrics is served unauthenticated. It is not routed at the edge
+  # (deploy/nginx/api-locations.inc has no location for it), so this is the second
+  # line of defence rather than the only one.
+  METRICS_TOKEN: ${METRICS_TOKEN:-}
+
+  # -------------------------------------------------------------------------- #
+  # Money
+  # -------------------------------------------------------------------------- #
+  # Bakong is what makes payment detection real. A token, or a developer email the
+  # client can mint one from — one of the two.
+  BAKONG_API_TOKEN: ${BAKONG_API_TOKEN:-}
+  BAKONG_DEVELOPER_EMAIL: ${BAKONG_DEVELOPER_EMAIL:-}
+
+  # Platform-admin bootstrap: the first sign-in from one of these addresses is
+  # promoted. The HQ store that billing self-pay charges against is created from it,
+  # and without an HQ PayWay link a self-pay invoice cannot produce a QR.
+  CHMABAPAY_ADMIN_EMAILS: ${CHMABAPAY_ADMIN_EMAILS:-}
+  CHMABAPAY_ADMIN_PASSWORD: ${CHMABAPAY_ADMIN_PASSWORD:-}
+  CHMABAPAY_HQ_STORE_ID: ${CHMABAPAY_HQ_STORE_ID:-}
+  CHMABAPAY_HQ_PAYWAY_LINK: ${CHMABAPAY_HQ_PAYWAY_LINK:-}
+
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chmaba}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-chmabapay}
+    # No `ports:`. The development stack publishes 55432 so `psql` on the host can
+    # reach it; production does not need that, and a Postgres port reachable from the
+    # internet is a standing invitation. Use
+    # `docker compose -f deploy/docker-compose.prod.yml exec db psql -U chmaba chmabapay`
+    # instead — same access, through a connection that is already authenticated.
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chmaba} -d ${POSTGRES_DB:-chmabapay}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Schema changes, applied once, before anything that reads the schema starts. A
+  # separate one-shot service because the application is deliberately not allowed to
+  # migrate itself, and because two processes racing to migrate is a failure mode
+  # worth designing out before there are two of them.
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment: *api-env
+    logging: *logging
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    logging: *logging
+    environment: *api-env
+    # No `ports:`. The only published port in this whole file is the proxy's. The API
+    # is reached as `api:8000` on the compose network, by the proxy. Publishing 8000
+    # would put the API's own TLS-less HTTP surface on the internet next to the edge
+    # — reachable by IP, without the Host routing, the refusals in
+    # api-locations.inc, or Cloudflare in front of it.
+    depends_on:
+      db:
+        condition: service_healthy
+      # The gate: no API process until the schema is at head. Without it the API
+      # starts first, finds the database behind, and refuses to boot — correct, but
+      # it produces a crash loop that reads like an image problem.
+      migrate:
+        condition: service_completed_successfully
+    # Healthcheck comes from the image (`/health`, shallow by design — a database
+    # blip must not make a working API look unhealthy and get it restarted).
+
+  landing:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+      args:
+        APP: landing
+        # A *build* arg, not only the runtime variable below: `rewrites()` is
+        # evaluated during `next build` and the resolved destinations are baked into
+        # the build manifest, so a value supplied only at run time is read too late.
+        # Observed, not assumed — with this set at run time alone the container still
+        # dialled the `127.0.0.1:8000` fallback and answered 500 `ECONNREFUSED` for
+        # every rewritten path.
+        NEXT_PUBLIC_API_URL: http://api:8000
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  admin:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile
+      args:
+        APP: admin
+        NEXT_PUBLIC_API_URL: http://api:8000
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3002/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      # The only host port this stack takes. 443 inside the container; 8443 on the
+      # VPS, because 80 and 443 belong to the POS project's edge.
+      #
+      # Bind to the public interface, not to 127.0.0.1: Cloudflare has to reach it.
+      # What keeps other traffic out is the host firewall — restrict 8443 to
+      # Cloudflare's ranges (cloudflare.com/ips-v4 and /ips-v6) — which is defence in
+      # depth rather than the control itself: deploy/nginx/nginx.prod.conf trusts the
+      # client address only when the peer is Cloudflare, so a direct connection cannot
+      # spoof one either way.
+      - "8443:443"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/api-locations.inc:/etc/nginx/api-locations.inc:ro
+      # Cloudflare Origin CA certificate covering pay.chmaba.com **and**
+      # admin-pay.chmaba.com, as fullchain.pem + privkey.pem. Read-only, and
+      # deploy/certs/ is gitignored so a private key cannot be committed by accident.
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      landing:
+        condition: service_started
+      admin:
+        condition: service_started
+    healthcheck:
+      # Plain HTTP on 80, inside the container's own namespace. It never touches an
+      # upstream (a restarting app must not make the edge look unhealthy) and it needs
+      # no certificate trust, which is why the healthcheck is not aimed at 443.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+
+volumes:
+  pgdata:

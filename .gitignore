@@ -35,6 +35,13 @@ findings.json
 client_secret_*.json
 chmabapay.json
 
+# TLS material for the production origin (deploy/docker-compose.prod.yml mounts it at
+# /etc/nginx/certs). A Cloudflare Origin CA private key is a long-lived credential;
+# committing one is not recoverable by rewriting history.
+deploy/certs/
+*.pem
+*.key
+
 # Local binaries
 _bin/
 
