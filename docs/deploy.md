@@ -283,10 +283,14 @@ Two edges, and it matters which one you are reading about.
 front of it, and the edge answers plain HTTP on the compose port.
 
 **In production** (`deploy/nginx/nginx.prod.conf`, §12), the origin terminates TLS
-itself with a Cloudflare Origin CA certificate, and Cloudflare reaches it on 8443
-with SSL mode **Full (strict)**. An earlier version of this section said Cloudflare
-"reaches this origin over plain HTTP", which is what Flexible SSL would look like —
-that mode is not used here, and the sentence was wrong.
+itself with a Cloudflare Origin CA certificate, and Cloudflare reaches it on 8443.
+The SSL mode should be **Full (strict)** so that certificate is actually verified;
+what has been established by observation is only that it is **not `Flexible`**, since
+Flexible speaks plain HTTP to the origin and this origin accepts TLS only on 8443.
+The mode itself is a dashboard setting nobody has read back — see the end of §12. An
+earlier version of this section said Cloudflare "reaches this origin over plain HTTP",
+which is what Flexible would look like — that mode is not in use, and the sentence
+was wrong.
 
 What is the same on both edges is that neither may claim a scheme it cannot see. The
 `map` blocks preserve an inbound `X-Forwarded-Proto`/`X-Forwarded-Host` and fall back
@@ -575,8 +579,8 @@ API, not before.
 
 ### The origin port, and the Cloudflare rule that makes it work
 
-Cloudflare proxies to this origin on **8443**, with **Full (strict)**. Two things have
-to be true in the Cloudflare dashboard:
+Cloudflare proxies to this origin on **8443**. Two things have to be true in the
+Cloudflare dashboard:
 
 1. **An Origin Rule with a destination-port override.** By default Cloudflare connects
    to the origin on the port the visitor used — 443 — which on this host belongs to the
@@ -776,10 +780,40 @@ against `163.245.204.122`, not localhost:
 - memory: ChmabaPay uses ~390 MB across five containers, with ~850 MB still
   available on the 1.9 GB host.
 
-**Still not verified:** anything that depends on Cloudflare actually connecting to
-8443 — i.e. the full public path. That needs the Origin Rule below. Until it exists,
-Cloudflare connects to the origin's 443, which is the POS edge, and serves the POS
-site for `pay.chmaba.com` — observed, not predicted: all three hostnames returned
-`<title>Chmaba | Cloud POS for growing stores</title>`. The two unknowns named
-earlier (Cloudflare's caching note for non-443 ports, and WAF interference) remain
-open for the same reason.
+**Verified through Cloudflare, on the public hostnames** (2026-09-17), after the
+Origin Rule was deployed:
+
+- `https://pay.chmaba.com` serves the website and `https://admin-pay.chmaba.com` the
+  console, while `https://chmaba.com` still serves the POS — the three hostnames
+  route independently;
+- `/health` → `{"status":"ok","app":"ChmabaPay"}` and `/v1/billing/plans` → **200**,
+  so API paths are routed at the edge;
+- the four refusals hold in production: `/metrics`, `/docs`, `/redoc` and
+  `/auth/_dev/login` all return **404** from the public internet. That last one is
+  the important one — it is the route that mints a session for any email with no
+  credential, and it is unreachable;
+- `/openapi.json` returns 200, which is intended and matches the routing table;
+- `/auth/google/login` returns **307** to `accounts.google.com` with
+  `redirect_uri=https://pay.chmaba.com/auth/google/callback` — the exact string that
+  must be registered in the GCP Console;
+- the session cookie comes back `HttpOnly; Path=/; SameSite=lax; Secure`. The
+  `Secure` flag is the evidence that the edge is forwarding `X-Forwarded-Proto`
+  honestly; a hardcoded or absent proto would drop that flag silently;
+- a browser receives Cloudflare's edge certificate (`*.chmaba.com`) over **TLS 1.3**,
+  never the Origin CA certificate — which is what the Origin CA certificate is for.
+
+**An earlier claim in this document was wrong, and this is the correction.** It said
+that `pay.chmaba.com` returning 200 before the Origin Rule existed "suggests the
+SSL/TLS mode may be Full rather than Full (strict)". That reasoning was invalid: the
+POS origin certificate is `*.chmaba.com, admin.chmaba.com, chmaba.com,
+www.chmaba.com` — a wildcard that covers `pay.chmaba.com` — so Full (strict) would
+have accepted it too. The observation could not distinguish the two modes, and
+nothing here can from outside. What *is* settled: the mode is not `Flexible`, because
+Flexible speaks plain HTTP to the origin and this origin only accepts TLS on 8443.
+Confirm the actual mode in the dashboard.
+
+Every hostname Cloudflare proxies in this zone has a matching origin certificate —
+`chmaba.com`, `www.chmaba.com` and `admin.chmaba.com` are covered by the POS
+wildcard, and `pay.chmaba.com` and `admin-pay.chmaba.com` by this stack's — so
+switching the zone to Full (strict) is safe for all of them. Re-check each one
+immediately afterwards, and remember the setting is per-zone: it governs the POS too.
