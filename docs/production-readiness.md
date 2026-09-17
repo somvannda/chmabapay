@@ -800,6 +800,12 @@ stated rather than implied:
   claim "a human is paged" is untested until an operator's chat id is in the
   environment.
 
+  > **Since resolved** (2026-09-17). `OPS_TELEGRAM_CHAT_ID` is set in production and
+  > the recipient confirmed the messages arrived on their device, so this is no
+  > longer "untested" — the path from `alert_discrete` to a human is observed. What
+  > remains untested is narrower: no *condition* has ever fired, since no worker has
+  > stalled and no double charge has occurred. See `docs/deploy.md` §11.
+
 Error tracking (Sentry or equivalent) was on the "verified absent" list below and
 is **still absent** — this item covered metrics and alerting, not exception
 reporting.
