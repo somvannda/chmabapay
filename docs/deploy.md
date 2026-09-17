@@ -508,6 +508,24 @@ From the repository root. Three files carry it: `deploy/docker-compose.prod.yml`
 `deploy/nginx/nginx.prod.conf`, and `deploy/.env` (gitignored — it holds the JWT
 signing key and the database password).
 
+**On this VPS it lives at `/opt/chmabapay`** — verified on the host, not assumed:
+
+```
+/opt/chmabapos     the POS stack (compose project `deploy`, owns host 80/443)
+/opt/chmabapay     this stack (compose project `chmabapay-prod`, owns host 8443)
+```
+
+Worth stating because the POS project's own `docs/deploy.md` refers to
+`/srv/chmaba`, and `/srv` is **empty** on this machine. A documented path that
+nobody verified is how a backup script, a cron entry or a deploy document ends up
+pointing at nothing.
+
+The host is small: **1.9 GB RAM, shared with the live POS stack.** That is why every
+service in the production file carries `mem_limit: 512m`. The limits are ceilings,
+not reservations — they change the failure mode from "the OOM killer picks a victim,
+possibly a POS container" to "the greedy ChmabaPay container is restarted". The POS
+stack is deliberately left uncapped.
+
 ### A tenant on a VPS that already runs the POS stack
 
 The chmaba POS project is live on this machine and its edge owns host 80 and 443.
