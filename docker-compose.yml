@@ -1,0 +1,311 @@
+# The whole stack: database, queue, one-shot migrations, the API, the two frontends
+# and the edge that fronts them.
+#
+# Three deployables, which is the shape the architecture settles on: one API (two
+# auth modes, session for the portals and `ck_` Bearer for integrators), one website
+# that carries both the marketing pages and the merchant dashboard, and one platform
+# console.
+#
+#   docker compose up -d --build      # everything
+#   docker compose up -d db redis     # only the backing services, for the local
+#                                     # `uv run uvicorn` dev loop in README
+#
+# The edge is on :8080. `http://localhost:8080` is the website; the console answers
+# to the `admin.localhost` host (see deploy/nginx/nginx.conf).
+#
+# The API is also published on :8000 for direct inspection with curl. It is not the
+# front door — in production only the proxy is exposed.
+
+name: chmabapay
+
+# Shared by every service that touches the database. Defined once because the API
+# and the migration job must agree exactly: a migration applied through one URL and
+# an application reading another is a confusing way to be broken.
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+asyncpg://chmaba:chmaba@db:5432/chmabapay
+  # Not consumed until P2-3 wires RedisTransport; set now so the queue has one
+  # documented address rather than being invented later.
+  REDIS_URL: redis://redis:6379/0
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+x-api-env: &api-env
+  <<: *backend-env
+  # Where work is queued, and whether *this* process drains it. Two switches, because
+  # a process can need to enqueue without consuming: in the split topology the API must
+  # reach the shared queue while the `worker` service does the draining.
+  #
+  # Interpolated, unlike ENABLE_DEV_GATEWAY above, and deliberately: an operator has to
+  # be able to choose, neither value grants any privilege, and both defaults reproduce
+  # the single-process topology, which needs no external queue at all.
+  #
+  # The dangerous pairing — workers off with the in-process transport, so nothing ever
+  # drains — is refused at startup rather than left to fail quietly. See
+  # `assert_a_queue_will_be_drained`.
+  WORKER_TRANSPORT: ${WORKER_TRANSPORT:-inprocess}
+  WORKERS_ENABLED: ${API_WORKERS_ENABLED:-true}
+  # The app verifies the schema at startup and refuses to boot when the database is
+  # not at head. It never migrates — the `migrate` service does that, and `api`
+  # waits for it. See P0-1.
+  SCHEMA_CHECK: "true"
+  # The fake Bakong rail, hardcoded OFF rather than interpolated.
+  #
+  # This was `${ENABLE_DEV_GATEWAY:-false}`, which reads as safe and is not: compose
+  # resolves that from the project's `.env`, and a developer's `.env` is exactly where
+  # `ENABLE_DEV_GATEWAY=true` lives for the local `uv run uvicorn` loop. A plain
+  # `docker compose up` therefore started the stack with the dev rail live, and
+  # `GET /auth/_dev/login` — reachable, because nginx routes the whole `/auth/` prefix
+  # to the API — minted a valid `chmabapay_session` for any email you named, straight
+  # off the edge. A default is only a default if the variable has to be supplied
+  # deliberately; a value inherited from an unrelated dev file is not one.
+  #
+  # Turn it on by editing this line, in a stack you have chosen to expose that way.
+  ENABLE_DEV_GATEWAY: "false"
+  # Required, and required *loudly*: the application's default is a well-known dev
+  # placeholder. `:?` makes compose refuse to start rather than sign sessions with
+  # a secret that is in the repository.
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY (see .env.example) - the built-in default is a published dev placeholder}
+  PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+  METRICS_TOKEN: ${METRICS_TOKEN:-}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  OPS_TELEGRAM_CHAT_ID: ${OPS_TELEGRAM_CHAT_ID:-}
+  # Google OAuth. Without these the sign-in button the marketing header and the hero
+  # CTA both point at returns 400 `google_oauth_not_configured`, so the whole portal is
+  # unreachable — the stack used to pass none of them and could not sign anyone in.
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+  GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+  POST_LOGIN_REDIRECT_URL: ${POST_LOGIN_REDIRECT_URL:-/}
+  # Bakong. A token is what makes payment detection real; the dev rail is off here.
+  BAKONG_API_TOKEN: ${BAKONG_API_TOKEN:-}
+  BAKONG_DEVELOPER_EMAIL: ${BAKONG_DEVELOPER_EMAIL:-}
+  # Platform-admin bootstrap. First sign-in from one of these addresses is promoted,
+  # and the HQ store that billing self-pay charges against is created from it.
+  CHMABAPAY_ADMIN_EMAILS: ${CHMABAPAY_ADMIN_EMAILS:-}
+  CHMABAPAY_ADMIN_PASSWORD: ${CHMABAPAY_ADMIN_PASSWORD:-}
+  CHMABAPAY_HQ_STORE_ID: ${CHMABAPAY_HQ_STORE_ID:-}
+  CHMABAPAY_HQ_PAYWAY_LINK: ${CHMABAPAY_HQ_PAYWAY_LINK:-}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chmaba
+      POSTGRES_PASSWORD: chmaba
+      POSTGRES_DB: chmabapay
+    # 55432 on the host, not 5432. A developer machine very often already runs
+    # Postgres on 5432 — this one does — and publishing there makes `compose up`
+    # fail with a port conflict that reads like a compose problem. Nothing in the
+    # stack needs the host port; it is published only so `psql` can reach it.
+    ports:
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chmaba -d chmabapay"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # 56379 on the host, not 6379 — the same reason the database is on 55432.
+    #
+    # This machine already serves 6379 from a native Redis 3.0.504 for Windows, and
+    # the collision is worse than a clean failure: the container's mapping is
+    # accepted, so `docker compose port redis 6379` reports `0.0.0.0:6379` and the
+    # service comes up healthy, while the host asking for `localhost:6379` is
+    # answered by the *ancient* one. That server has no streams at all (`XADD` is
+    # Redis 5) and no `HELLO` (Redis 6), so a `REDIS_URL` pointing at the default
+    # port fails with `unknown command 'HELLO'` rather than with a version error.
+    #
+    # Nothing in the stack needs the host port; the services reach `redis:6379` on
+    # the compose network, which is the 7.x container.
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Schema changes, applied once, before anything that reads the schema starts.
+  #
+  # A separate one-shot service rather than an entrypoint in `api`: the application
+  # is deliberately not allowed to migrate itself (P0-1), and two API replicas
+  # racing to migrate the same database is a failure mode worth designing out before
+  # there are two replicas.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment: *api-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment: *api-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # The gate: no API process until the schema is at head. Without this the API
+      # would start first, find the database behind, and refuse to boot — which is
+      # correct but produces a crash loop that looks like an image problem.
+      migrate:
+        condition: service_completed_successfully
+    # Healthcheck comes from the image (`/health`, shallow by design).
+
+  # P2-3: the drains in a process of their own, so a webhook fan-out waiting on a slow
+  # merchant endpoint cannot spend the API's capacity. Before this, that wait happened
+  # inside the API's own event loop.
+  #
+  # **Opt-in, behind a profile, and not the default on purpose.** The default stack has
+  # no queue dependency: with an in-process queue there is no external service whose
+  # failure stops detection. Making detection depend on Redis is a real trade, so it is
+  # a choice rather than a surprise:
+  #
+  #   API_WORKERS_ENABLED=false WORKER_TRANSPORT=redis \
+  #       docker compose --profile workers up -d
+  #
+  # On PowerShell:
+  #   $env:API_WORKERS_ENABLED='false'; $env:WORKER_TRANSPORT='redis'
+  #   docker compose --profile workers up -d
+  #
+  # Extra API replicas can also drain the same queue — that is the point of a consumer
+  # group — so `API_WORKERS_ENABLED` only has to be false where a process should not
+  # consume. Two draining processes each run their own alert watcher, which is fine
+  # but does mean each edge is reported by whoever sees it first.
+  worker:
+    profiles: ["workers"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "chmabapay.worker_main"]
+    restart: unless-stopped
+    environment:
+      # The same environment as the API, not a hand-picked subset: the worker reads the
+      # same database, calls Bakong, sends the same Telegram alerts, and enforces the
+      # same retention window. A subset here is how a worker quietly loses the ability
+      # to do one of those.
+      <<: *api-env
+      # The one thing that must differ from the API in this topology. The application
+      # refuses to start if the API has workers off without it.
+      WORKER_TRANSPORT: redis
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        # The same gate the API has: no worker reading a schema behind the code.
+        condition: service_completed_successfully
+    healthcheck:
+      # Not `/health` — there is no HTTP server to ask. This reads the wall-clock
+      # heartbeat the drain loops publish to Redis, which is the only thing that
+      # distinguishes a working worker from a process that is up and doing nothing.
+      test: ["CMD", "python", "-m", "chmabapay.healthcheck"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  landing:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        APP: landing
+        # A *build* arg, not just the runtime variable below — `rewrites()` is
+        # evaluated during `next build` and the resolved destinations are written into
+        # the build manifest, so a value supplied only at run time is read too late.
+        # Observed, not assumed: with this set at run time alone the container still
+        # dialled the config's `http://127.0.0.1:8000` fallback and answered 500
+        # `ECONNREFUSED` for every rewritten path.
+        NEXT_PUBLIC_API_URL: http://api:8000
+    restart: unless-stopped
+    environment:
+      # Only used by the app's own rewrites, and only if a request for /v1/* ever
+      # reaches this container — normally the proxy routes those straight to `api`.
+      NEXT_PUBLIC_API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      # A Next production server needs a moment before it answers.
+      start_period: 30s
+      retries: 5
+
+  admin:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        APP: admin
+        # Build arg for the same reason as `landing` above: `rewrites()` is resolved
+        # during the image build, not at container start.
+        NEXT_PUBLIC_API_URL: http://api:8000
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3002/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      # The front door locally. In production Cloudflare terminates TLS and reaches
+      # this on 80 with the real Host header.
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx/api-locations.inc:/etc/nginx/api-locations.inc:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      landing:
+        condition: service_started
+      admin:
+        condition: service_started
+    healthcheck:
+      # Hits nginx's own endpoint, which never touches an upstream: a restarting app
+      # must not make the proxy look unhealthy.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+
+volumes:
+  pgdata:

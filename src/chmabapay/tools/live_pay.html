@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>ChmabaPay — live KHQR scan test</title>
+<style>
+:root{--red:#d92b2b;--ink:#1f2430;--muted:#6b7280;--line:#e5e7eb;--bg:#f6f7f9;--panel:#fff;
+--ok:#16a34a;--warn:#d97706;--bad:#b91c1c;--info:#0369a1;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--red)}
+h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.2px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px 60px}
+header.top{background:var(--panel);border-bottom:1px solid var(--line)}
+header.top .inner{max-width:1180px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--red)}
+.tag{font:11px/1 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:5px 9px}
+.spacer{flex:1}
+button{font:inherit;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;padding:8px 13px;cursor:pointer}
+button:hover{border-color:#cbd5e1}
+button.primary{background:var(--red);border-color:var(--red);color:#fff;font-weight:600}
+button.primary:hover{background:#c22525}
+button.sm{padding:5px 9px;font-size:12px}
+button:disabled{opacity:.45;cursor:not-allowed}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:16px}
+.grid{display:grid;gap:12px}
+.g4{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+label.f{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:5px}
+input[type=text],input[type=number],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff}
+input.mono{font-family:var(--mono);font-size:12.5px}
+.hint{font-size:11.5px;color:var(--muted);margin-top:4px}
+.warnbox{border-left:3px solid var(--warn);background:#fffbeb;padding:10px 13px;border-radius:0 8px 8px 0;font-size:12.5px;color:#78350f;margin-top:14px}
+.errbox{border-left:3px solid var(--bad);background:#fef2f2;padding:10px 13px;border-radius:0 8px 8px 0;font-size:12.5px;color:#7f1d1d;margin-top:14px}
+.split{display:grid;gap:16px;grid-template-columns:minmax(280px,380px) 1fr;align-items:start}
+@media(max-width:820px){.split{grid-template-columns:1fr}}
+.qrCard{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px;text-align:center}
+.qrCard img{width:100%;max-width:320px;height:auto;image-rendering:pixelated;background:#fff;border-radius:6px}
+.amount{font-size:30px;font-weight:800;letter-spacing:-.5px;margin-top:12px}
+.merchant{font-size:13px;color:var(--muted);margin-top:2px}
+.count{font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:8px}
+.pill{display:inline-block;font:700 12px/1 var(--mono);padding:7px 12px;border-radius:99px;text-transform:uppercase;letter-spacing:.05em}
+.p-pending{background:#fef3c7;color:#b45309}
+.p-paid{background:#dcfce7;color:#15803d}
+.p-failed{background:#fee2e2;color:#b91c1c}
+.p-unknown{background:#f1f5f9;color:#475569}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.kv{display:grid;grid-template-columns:132px 1fr;gap:4px 12px;font-size:12px;margin:0}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;font-family:var(--mono);word-break:break-all}
+h3.s{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:16px 0 8px}
+pre{margin:0;background:#0f172a;color:#e2e8f0;border-radius:8px;padding:11px 13px;overflow:auto;max-height:240px;font-size:11.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.log{max-height:260px;overflow:auto;font-family:var(--mono);font-size:11.5px;line-height:1.6}
+.log div{padding:3px 0;border-bottom:1px solid #f1f3f5}
+.log .t{color:#94a3b8;margin-right:8px}
+.sig{display:block;color:var(--info)}
+.steps{counter-reset:s;font-size:12.5px;color:var(--ink)}
+.steps div{counter-increment:s;padding:5px 0 5px 26px;position:relative}
+.steps div::before{content:counter(s);position:absolute;left:0;top:5px;width:18px;height:18px;border-radius:50%;background:#eef2f7;color:var(--muted);font:600 11px/18px var(--mono);text-align:center}
+.hide{display:none !important}
+footer{color:var(--muted);font-size:12px;margin-top:26px}
+</style>
+</head>
+<body>
+<header class="top"><div class="inner">
+  <span class="dot"></span>
+  <h1>Live KHQR scan test</h1>
+  <span class="tag">dev only</span>
+  <span class="tag" id="planTag">from-link → render → PayWay status</span>
+  <div class="spacer"></div>
+  <a href="/_dev/integration-test"><button class="sm">Integration suite</button></a>
+</div></header>
+
+<div class="wrap">
+
+  <div class="warnbox">
+    <b>Real money.</b> This generates a live payment request against your ABA PayWay link. If you scan it and confirm
+    in your banking app, the money actually moves to the merchant behind that link. Start with <b>$0.01</b>.
+  </div>
+
+  <div class="panel">
+    <div class="grid g4">
+      <div>
+        <label class="f" for="link">ABA PayWay link</label>
+        <input type="text" id="link" class="mono" spellcheck="false">
+      </div>
+      <div>
+        <label class="f" for="amount">Amount (USD)</label>
+        <input type="number" id="amount" step="0.01" min="0.01" value="0.01">
+        <div class="hint">Scan tiny first. $0.01 settles just as validly as $10.</div>
+      </div>
+      <div>
+        <label class="f" for="bill">Bill number (Tag 62.01)</label>
+        <input type="text" id="bill" class="mono" spellcheck="false">
+        <div class="hint">Auto-filled on generate. This is the key ABA matches the payment on.</div>
+      </div>
+      <div>
+        <label class="f" for="ttl">TTL (seconds)</label>
+        <input type="number" id="ttl" min="30" max="3600" value="900">
+        <div class="hint">
+          Our own bill expiry (Tag 62.50.05). The window a wallet actually enforces is Tag 99, which we set
+          to ABA's own value: 30 days from issue.
+        </div>
+      </div>
+    </div>
+
+    <div class="grid g4" style="margin-top:12px">
+      <div>
+        <label class="f" for="bakongId">Tag 30.01 — destination Bakong account</label>
+        <input type="text" id="bakongId" class="mono" spellcheck="false" value="126071610243081">
+        <div class="hint">
+          Must be a real Bakong account (all-digit id, or a <span class="mono">name@bank</span> handle).
+          Clearing this routes by the link slug instead — a slug is <em>not</em> an account, so the wallet
+          answers <span class="mono">QR not found</span> at scan time.
+        </div>
+      </div>
+      <div>
+        <label class="f" for="clientId">PayWay client id (optional)</label>
+        <input type="text" id="clientId" class="mono" spellcheck="false" placeholder="e.g. 2364634-518710-26248177">
+        <div class="hint">Adds the PAYWAY@ABA client id to Tag 62.50.01.</div>
+      </div>
+      <div>
+        <label class="f">Known-good constants</label>
+        <button class="sm" id="useKnown" type="button">Fill from ABA's own QR</button>
+        <div class="hint">
+          Values read out of a real <span class="mono">checkoutData.qr_string</span> captured from this link: the
+          merchant's Bakong account and PayWay client id. Use this if slug routing is rejected.
+        </div>
+      </div>
+      <div>
+        <label class="f" for="interval">Status poll interval (s)</label>
+        <input type="number" id="interval" min="2" max="30" value="4">
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
+        <button class="primary" id="gen">Generate scannable QR</button>
+        <button id="openAba">Open ABA's own page</button>
+      </div>
+    </div>
+
+    <div class="errbox hide" id="err"></div>
+  </div>
+
+  <div class="split">
+    <div class="panel qrCard">
+      <img id="qr" alt="" class="hide">
+      <div id="qrEmpty" class="hint" style="padding:60px 10px">
+        The QR appears here — a real, scannable code rendered server-side at ECC&nbsp;level&nbsp;H.
+      </div>
+      <div class="amount" id="amountOut"></div>
+      <div class="merchant" id="merchantOut"></div>
+      <div class="count" id="countOut"></div>
+    </div>
+
+    <div class="panel">
+      <div class="row">
+        <span class="pill p-unknown" id="statusPill">idle</span>
+        <span class="hint" id="pollInfo"></span>
+        <div class="spacer"></div>
+        <button class="sm" id="probeNow" disabled>Probe once</button>
+        <button class="sm" id="pollToggle" disabled>Start polling</button>
+      </div>
+
+      <h3 class="s">Payment status (ABA PayWay page — #1 source)</h3>
+      <div id="signals" class="hint">Signals from the ABA PayWay SSR page will appear here.</div>
+
+      <h3 class="s">Diagnostics</h3>
+      <dl class="kv" id="diag">
+        <dt>qr_string</dt><dd id="dQr">—</dd>
+        <dt>qr_md5</dt><dd id="dMd5">—</dd>
+        <dt>short_hash</dt><dd id="dShort">—</dd>
+        <dt>instruction_ref</dt><dd id="dBill">—</dd>
+        <dt>external_ref</dt><dd id="dRef">—</dd>
+        <dt>Tag 30.01</dt><dd id="dBakong">—</dd>
+        <dt>merchant</dt><dd id="dMerchant">—</dd>
+        <dt>resolved via</dt><dd id="dSource">—</dd>
+        <dt>expires_at</dt><dd id="dExp">—</dd>
+        <dt>wallet window (Tag 99)</dt><dd id="dWindow">—</dd>
+        <dt>QR version</dt><dd id="dVer">—</dd>
+      </dl>
+      <div class="row" style="margin-top:12px">
+        <button class="sm" id="copyPayload" disabled>Copy qr_string</button>
+        <button class="sm" id="dlSvg" disabled>Download SVG</button>
+        <button class="sm" id="bakongCheck" disabled>Cross-check Bakong Open API</button>
+      </div>
+
+      <h3 class="s">Timeline</h3>
+      <div class="log" id="log"><div><span class="t">—</span>waiting for a QR</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3 class="s" style="margin-top:0">How to read the result</h3>
+    <div class="steps">
+      <div><b>Banking app accepts the code and you can pay</b> → the offline EMVCo build routes to the right
+        account. Confirmed on a real phone: this needs Tag 30.01 set to a real Bakong account, never the link slug.</div>
+      <div><b>ABA's page never flips to PAID</b> → verified: <span class="mono">link.payway.com.kh/&lt;slug&gt;</span>
+        is a static Nuxt template. It always serves <span class="mono">order_details.status="OPEN"</span> and
+        <span class="mono">amount="0.00"</span> and carries no per-transaction data, so this source cannot confirm a
+        payment. A poll against it stays PENDING forever by construction — that is not a payload problem.</div>
+      <div><b>Cross-check with the Bakong Open API</b> (md5 lookup) is the only source that can confirm a payment,
+        because Bakong's ledger is indexed by the QR md5. It is currently <b>401 Unauthorized</b> — no
+        <span class="mono">BAKONG_API_TOKEN</span> is configured. Set one before trusting any status.</div>
+    </div>
+  </div>
+
+  <footer>
+    The QR is encoded by the backend at <span class="mono">/v1/khqr/render.svg</span> — ECC H, 4-module quiet zone.
+    Payload generation: <span class="mono">POST /v1/khqr/from-link</span>. Status: <span class="mono">POST
+    /v1/khqr/probe-aba-status</span> (re-reads the public ABA page, no credentials). Dev-only surface.
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+const PAYWAY_DEFAULT = "https://link.payway.com.kh/ABAPAYpe518710Y";
+const $ = (id) => document.getElementById(id);
+const S = { current: null, polling: false, timer: null, countTimer: null, polls: 0 };
+
+function log(msg, kind) {
+  const el = $("log");
+  if (el.firstChild && el.firstChild.textContent.indexOf("waiting for a QR") >= 0) el.innerHTML = "";
+  const now = new Date().toLocaleTimeString();
+  const d = document.createElement("div");
+  const t = document.createElement("span");
+  t.className = "t";
+  t.textContent = now;
+  d.appendChild(t);
+  if (kind === "sig") {
+    const s = document.createElement("span");
+    s.className = "sig";
+    s.textContent = msg;
+    d.appendChild(s);
+  } else {
+    d.appendChild(document.createTextNode(msg));
+  }
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setStatus(status) {
+  const pill = $("statusPill");
+  pill.textContent = status || "idle";
+  pill.className = "pill p-" + String(status || "unknown").toLowerCase();
+}
+
+function bust() {
+  $("err").classList.add("hide");
+}
+
+async function generate() {
+  bust();
+  clearNotice();
+  stopPolling();
+  S.polls = 0;
+  const link = $("link").value.trim() || PAYWAY_DEFAULT;
+  const amount = Number($("amount").value);
+  if (!(amount > 0)) { showError("Amount must be greater than 0."); return; }
+
+  const body = {
+    link,
+    amount,
+    ttl_seconds: Number($("ttl").value) || 900,
+  };
+  if ($("bill").value.trim()) body.bill_number = $("bill").value.trim();
+  if ($("bakongId").value.trim()) body.bakong_id = $("bakongId").value.trim();
+  if ($("clientId").value.trim()) body.payway_client_id = $("clientId").value.trim();
+
+  $("gen").disabled = true;
+  log("POST /v1/khqr/from-link amount=" + amount.toFixed(2) + (body.bakong_id ? " (bakong_id override)" : " (slug routing)"));
+  try {
+    const res = await fetch("/v1/khqr/from-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const txt = await res.text();
+    let json = null;
+    try { json = JSON.parse(txt); } catch (e) { json = null; }
+    if (!res.ok) {
+      showError("from-link failed: HTTP " + res.status + " — " + (json && json.detail ? JSON.stringify(json.detail) : txt.slice(0, 300)));
+      log("from-link HTTP " + res.status);
+      return;
+    }
+    S.current = json;
+    render(json);
+    log("qr_string built, " + json.qr_string.length + " chars, md5=" + json.qr_md5);
+    startPolling();
+  } catch (e) {
+    showError("Request failed: " + e.message);
+  } finally {
+    $("gen").disabled = false;
+  }
+}
+
+function render(j) {
+  const src = "/v1/khqr/render.svg?payload=" + encodeURIComponent(j.qr_string) + "&scale=8";
+  $("qr").src = src;
+  $("qr").classList.remove("hide");
+  $("qrEmpty").classList.add("hide");
+  $("amountOut").textContent = "$" + j.amount + " " + j.currency;
+  $("merchantOut").textContent = j.merchant_name || "(no merchant name resolved)";
+  $("dQr").textContent = j.qr_string;
+  $("dMd5").textContent = j.qr_md5;
+  $("dShort").textContent = j.short_hash;
+  $("dBill").textContent = j.instruction_ref;
+  $("dRef").textContent = j.external_ref || "—";
+  $("dBakong").textContent = j.merchant_bakong_id;
+  $("dMerchant").textContent = j.merchant_name;
+  $("dSource").textContent = j.merchant_source;
+  $("dExp").textContent = new Date(j.expires_at).toLocaleString();
+  $("dWindow").textContent = describeWalletWindow(j.qr_string);
+  $("dVer").textContent = "pending fetch…";
+  if (!isBakongAccount(j.merchant_bakong_id || "")) {
+    showError(
+      'Tag 30.01 is "' + j.merchant_bakong_id + '" — the PayWay slug, not a Bakong account. ' +
+      "A wallet resolves that tag as the payee account and answers \"QR not found\". " +
+      "Set Tag 30.01 to the merchant's real Bakong account and generate again."
+    );
+  }
+  $("bill").value = j.instruction_ref;
+  $("probeNow").disabled = false;
+  $("pollToggle").disabled = false;
+  $("copyPayload").disabled = false;
+  $("dlSvg").disabled = false;
+  $("bakongCheck").disabled = false;
+  setStatus("pending");
+  startCountdown(new Date(j.expires_at).getTime());
+
+  fetch(src)
+    .then((r) => { $("dVer").textContent = (r.headers.get("X-ChmabaPay-QR-Version") || "?") + " (ECC H)"; })
+    .catch(() => { $("dVer").textContent = "?"; });
+}
+
+function startCountdown(expiresMs) {
+  clearInterval(S.countTimer);
+  const tick = () => {
+    const left = Math.max(0, Math.ceil((expiresMs - Date.now()) / 1000));
+    $("countOut").textContent = left > 0
+      ? "our bill TTL: " + Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0")
+      : "our bill TTL elapsed — the wallet window (Tag 99) is still open";
+    if (left === 0) clearInterval(S.countTimer);
+  };
+  tick();
+  S.countTimer = setInterval(tick, 1000);
+}
+
+function startPolling() {
+  if (S.polling) return;
+  S.polling = true;
+  $("pollToggle").textContent = "Stop polling";
+  const every = Math.max(2, Number($("interval").value) || 4) * 1000;
+  log("polling ABA status every " + every / 1000 + "s");
+  const loop = async () => {
+    if (!S.polling) return;
+    await probe();
+    if (S.polling && !["PAID", "FAILED"].includes(currentStatus())) S.timer = setTimeout(loop, every);
+    else if (S.polling) log("terminal status reached — polling stopped");
+  };
+  S.timer = setTimeout(loop, 600);
+}
+
+function stopPolling() {
+  S.polling = false;
+  clearTimeout(S.timer);
+  $("pollToggle").textContent = "Start polling";
+}
+
+function currentStatus() {
+  const p = $("statusPill").textContent.toLowerCase();
+  return p.toUpperCase();
+}
+
+async function probe() {
+  if (!S.current) return;
+  const j = S.current;
+  S.polls += 1;
+  const qs = new URLSearchParams({
+    slug_or_url: $("link").value.trim() || PAYWAY_DEFAULT,
+    bill_number: j.instruction_ref,
+    expected_amount_usd: String(j.amount),
+  });
+  if (j.reference_id) qs.set("reference_id", j.reference_id);
+  try {
+    const res = await fetch("/v1/khqr/probe-aba-status?" + qs.toString(), { method: "POST" });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || !json) { log("probe HTTP " + res.status); return; }
+    setStatus(json.status);
+    $("pollInfo").textContent = "poll #" + S.polls + " at " + new Date().toLocaleTimeString();
+    const sig = $("signals");
+    sig.innerHTML = "";
+    if (!json.signals || !json.signals.length) {
+      sig.textContent = "no signals yet — the ABA page still looks unpaid.";
+    } else {
+      json.signals.forEach((s) => {
+        const d = document.createElement("div");
+        d.className = "sig";
+        d.textContent = "• " + s;
+        sig.appendChild(d);
+      });
+    }
+    log("probe #" + S.polls + " → " + json.status + (json.matched_amount ? " (matched " + json.matched_amount + ")" : ""));
+    if (json.status === "PAID") log("ABA reports PAID — the QR routed and settled.");
+  } catch (e) {
+    log("probe failed: " + e.message);
+  }
+}
+
+async function bakongCheck() {
+  if (!S.current) return;
+  const md5 = S.current.qr_md5;
+  log("GET /v1/transactions/md5/" + md5.slice(0, 12) + "… (independent confirmation)");
+  try {
+    const res = await fetch("/v1/transactions/md5/" + md5 + "?amount=" + S.current.amount + "&currency=" + S.current.currency);
+    const txt = await res.text();
+    log("Bakong API → HTTP " + res.status + " " + txt.slice(0, 220));
+  } catch (e) {
+    log("Bakong API failed: " + e.message);
+  }
+}
+
+function showError(msg) {
+  const box = $("err");
+  box.textContent = msg;
+  box.classList.remove("hide");
+  log("ERROR " + msg);
+}
+
+function clearNotice() {
+  $("err").classList.add("hide");
+}
+
+// A wallet resolves Tag 30.01 as a Bakong account before it does anything else.
+// Slugs like ABAPAYpe518710Y are not accounts, so the lookup comes back empty.
+function isBakongAccount(v) {
+  return /^\d{9,19}$/.test(v) || /^[A-Za-z0-9._-]{2,32}@[A-Za-z]{3,10}$/.test(v);
+}
+
+function parseTlv(s) {
+  const out = new Map();
+  let i = 0;
+  while (i + 4 <= s.length) {
+    const t = s.slice(i, i + 2);
+    if (!/^\d\d$/.test(t)) break;
+    const len = parseInt(s.slice(i + 2, i + 4), 10);
+    if (!Number.isFinite(len) || i + 4 + len > s.length) break;
+    out.set(t, s.slice(i + 4, i + 4 + len));
+    i += 4 + len;
+  }
+  return out;
+}
+
+function describeWalletWindow(qrString) {
+  const t99raw = parseTlv(qrString).get("99");
+  if (!t99raw) return "missing — wallets read this as already expired";
+  const t99 = parseTlv(t99raw);
+  const from = Number(t99.get("00"));
+  const to = Number(t99.get("01"));
+  if (!from || !to) return "malformed";
+  const hours = (to - from) / 3600000;
+  return (hours / 24).toFixed(0) + " days (until " + new Date(to).toLocaleString() + ")";
+}
+
+function wire() {
+  $("gen").addEventListener("click", generate);
+  $("useKnown").addEventListener("click", () => {
+    $("bakongId").value = "126071610243081";
+    $("clientId").value = "2364634-518710-26248177";
+    log("filled Tag 30.01 = 126071610243081 and client id 2364634-518710-26248177 (from a real ABA QR for this link)");
+  });
+  $("probeNow").addEventListener("click", probe);
+  $("pollToggle").addEventListener("click", () => (S.polling ? stopPolling() : startPolling()));
+  $("bakongCheck").addEventListener("click", bakongCheck);
+  $("openAba").addEventListener("click", () => window.open($("link").value.trim() || PAYWAY_DEFAULT, "_blank", "noopener"));
+  $("copyPayload").addEventListener("click", async () => {
+    if (!S.current) return;
+    try { await navigator.clipboard.writeText(S.current.qr_string); log("qr_string copied"); }
+    catch (e) { log("clipboard blocked — select the text in Diagnostics instead"); }
+  });
+  $("dlSvg").addEventListener("click", () => {
+    if (!S.current) return;
+    const a = document.createElement("a");
+    a.href = "/v1/khqr/render.svg?payload=" + encodeURIComponent(S.current.qr_string) + "&scale=16";
+    a.download = "khqr-" + S.current.instruction_ref + ".svg";
+    a.click();
+  });
+  $("amount").addEventListener("change", () => { $("bill").value = ""; });
+}
+
+$("link").value = PAYWAY_DEFAULT;
+wire();
+log("ready — set an amount and press Generate");
+</script>
+</body>
+</html>

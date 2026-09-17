@@ -1,0 +1,61 @@
+# Build context hygiene. Both images use the repository root as their context
+# (the frontend needs the pnpm workspace and `web/shared`), so this file serves
+# the API and the Next apps at once.
+
+# --------------------------------------------------------------------------- #
+# Never in an image
+# --------------------------------------------------------------------------- #
+.git
+.gitignore
+.github
+
+# Secrets. `.env.example` is documentation and is kept; a real `.env` must never
+# be baked into a layer, where it would survive every later deletion.
+#
+# The `**/` forms matter more than the root ones: the Next apps keep `web/*/.env.local`,
+# and Next inlines `NEXT_PUBLIC_*` at build time — so a host file saying
+# `NEXT_PUBLIC_API_URL=http://localhost:8000` would be compiled into the browser
+# bundle and shipped. A root-only pattern would not have caught it.
+.env
+**/.env
+.env.local
+**/.env.local
+.env.*.local
+**/.env.*.local
+
+# --------------------------------------------------------------------------- #
+# Host-installed dependencies — the single most important exclusion.
+# --------------------------------------------------------------------------- #
+# The host `node_modules` trees are pnpm symlink farms pointing at a store outside
+# the context. Copying them in produces a build that resolves to dangling links and
+# fails in ways that look like source errors. The images install their own.
+node_modules
+**/node_modules
+
+# The host virtualenv, same reasoning.
+.venv
+**/.venv
+
+# Stale build output. Let the image build these; a cached `.next` from the host can
+# reference host paths.
+.next
+**/.next
+out
+**/out
+
+# --------------------------------------------------------------------------- #
+# Local state and noise
+# --------------------------------------------------------------------------- #
+*.db
+*.sqlite3
+.pytest_cache
+.mypy_cache
+.ruff_cache
+__pycache__
+**/__pycache__
+*.pyc
+
+# Docs, specs and design notes: useful in the repository, dead weight in a layer.
+docs
+.trae
+*.md

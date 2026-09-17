@@ -1,0 +1,263 @@
+import type { Metadata } from "next";
+
+/**
+ * Terms of Service.
+ *
+ * Two things to know before editing this file.
+ *
+ * 1. **This text is submitted as a draft for legal review.** Every page carrying
+ *    terms, privacy or merchant-agreement language in this repository exists as
+ *    a first draft written from the system's actual behaviour, so there is a
+ *    concrete artifact for a Cambodian lawyer to edit rather than a blank page.
+ *    The banner below is the flag, not decoration: while it is present the text
+ *    is not binding and must not be presented to real merchants as final.
+ *    Removing the banner is the signal that review happened — do it deliberately,
+ *    and only then.
+ *
+ * 2. **`TERMS_VERSION` in the backend must move with this page.** The recorded
+ *    acceptance stores the version the merchant was shown, so the two are a pair:
+ *    a substantive edit here without bumping `terms_version` in
+ *    `src/chmabapay/config.py` would silently attribute agreement to this text to
+ *    merchants who only ever saw the previous one.
+ */
+export const metadata: Metadata = {
+  title: "Terms of Service — ChmabaPay",
+  description:
+    "The terms governing use of the ChmabaPay payment status platform.",
+};
+
+export default function TermsPage() {
+  return (
+    <main className="legal-page">
+      <div className="landing-shell">
+        <div className="legal-shell">
+          <div className="legal-draft" role="note">
+            <span className="legal-draft-mark">Draft</span>
+            <span className="legal-draft-text">
+              This is a first draft written from how the service actually works. It
+              has not been reviewed by a qualified lawyer and is not yet binding.
+              It must be reviewed and replaced before ChmabaPay accepts real
+              merchant traffic.
+            </span>
+          </div>
+
+          <span className="legal-eyebrow">Legal</span>
+          <h1 className="legal-title">Terms of Service</h1>
+          <p className="legal-lede">
+            These terms govern your use of ChmabaPay, a payment status platform for
+            KHQR, Bakong and ABA PayWay. They are between you and ChmabaPay
+            Technologies.
+          </p>
+          <div className="legal-meta">
+            Version 1 · Last updated 15 September 2026
+          </div>
+
+          <div className="legal-body">
+            <section className="legal-section">
+              <h2>1. What ChmabaPay is — and what it is not</h2>
+              <p>
+                ChmabaPay is software. It generates a payment code for an amount
+                you choose, reports whether that code was paid, and sends your
+                systems a notification when it is. That is the whole of the
+                service.
+              </p>
+              <p>
+                <strong>
+                  We never hold, receive, control or transmit your money or your
+                  customers&apos; money.
+                </strong>{" "}
+                A payment moves directly from the payer to the bank account behind
+                the payment link you supplied. The funds do not pass through
+                ChmabaPay at any point, we cannot reverse a payment, and we cannot
+                release funds to you. We are not a payment service provider, an
+                acquirer, a money transmitter or an escrow agent, and nothing in
+                these terms should be read as making us one.
+              </p>
+              <p>
+                Because money does not flow through us, we have no ability to
+                refund a payer, charge back a transaction, or hold a balance on
+                your behalf. Refunds, disputes, chargebacks and customer
+                complaints are yours to handle under your own relationship with
+                the payer.
+              </p>
+            </section>
+
+            <section className="legal-section">
+              <h2>2. Your responsibilities</h2>
+              <ul>
+                <li>
+                  <strong>Lawful business only.</strong> You may use ChmabaPay only
+                  for a lawful business, and only to collect payment for goods or
+                  services you actually provide.
+                </li>
+                <li>
+                  <strong>Your own due diligence.</strong> You are responsible for
+                  your own compliance obligations — including knowing your own
+                  customers, keeping your own records, and meeting your tax,
+                  licensing and reporting duties. ChmabaPay does not perform those
+                  obligations for you and does not verify your identity or your
+                  business.
+                </li>
+                <li>
+                  <strong>Refunds and disputes.</strong> You handle them, at your
+                  own cost, under your own policies.
+                </li>
+                <li>
+                  <strong>Your destination account.</strong> You must have the
+                  right to receive money into the account behind any payment link
+                  you attach. If you attach a link belonging to someone else
+                  without their authority, that is your liability, not ours.
+                </li>
+                <li>
+                  <strong>Your credentials.</strong> Keep your API keys and webhook
+                  signing secrets secret. A key authenticates every store in your
+                  workspace, so treat a leaked key as a leaked password and revoke
+                  it immediately. We are not responsible for transactions you
+                  authorised, or someone else authorised with your key.
+                </li>
+              </ul>
+            </section>
+
+            <section className="legal-section">
+              <h2>3. Restricted businesses</h2>
+              <p>
+                You may not use ChmabaPay, directly or indirectly, in connection
+                with:
+              </p>
+              <ul>
+                <li>gambling, betting, lotteries or games of chance;</li>
+                <li>
+                  money laundering, terrorist financing, or any activity on a
+                  sanctions list;
+                </li>
+                <li>
+                  unlicensed financial services, including unlicensed lending,
+                  deposit-taking or money transmission;
+                </li>
+                <li>
+                  the sale of goods or services that are illegal where you or the
+                  payer are located;
+                </li>
+                <li>
+                  counterfeit goods, stolen goods, or goods infringing intellectual
+                  property;
+                </li>
+                <li>weapons, ammunition or controlled substances;</li>
+                <li>
+                  adult content or services, where restricted or prohibited;
+                </li>
+                <li>
+                  deceptive, fraudulent or pyramid-style schemes, including
+                  anything that misrepresents what the payer is buying.
+                </li>
+              </ul>
+              <p>
+                We may suspend or terminate an account we reasonably believe is
+                being used for any of the above. This list is a starting point and
+                is subject to change following legal review.
+              </p>
+            </section>
+
+            <section className="legal-section">
+              <h2>4. Confirmation is reported, not guaranteed</h2>
+              <p>
+                Payment confirmation depends on ABA PayWay, Bakong and the National
+                Bank of Cambodia&apos;s systems, which we do not control. We report
+                what those systems tell us, as promptly as we can. We do not
+                guarantee that a confirmation will arrive within any particular
+                time, that a notification will be delivered, or that the rail will
+                be available.
+              </p>
+              <p>
+                <strong>
+                  Do not treat a ChmabaPay notification as the sole evidence that
+                  you were paid.
+                </strong>{" "}
+                Reconcile against your own bank account. Where our report and your
+                bank statement disagree, your bank statement governs.
+              </p>
+            </section>
+
+            <section className="legal-section">
+              <h2>5. Your account</h2>
+              <p>
+                You are responsible for the activity on your account and for the
+                accuracy of the information you give us. Tell us promptly if you
+                believe your account or a key has been compromised.
+              </p>
+              <p>
+                You may close your account at any time. We may suspend or terminate
+                an account that breaches these terms, that we are required to
+                suspend by law or by a payment partner, or where we reasonably
+                believe continued service would expose us or a third party to
+                legal or financial risk.
+              </p>
+            </section>
+
+            <section className="legal-section">
+              <h2>6. Plans and fees</h2>
+              <p>
+                Plan prices, limits and features are shown on the pricing section
+                of our website and may change. Changes to a paid plan take effect
+                at your next billing period. We do not charge a fee per
+                transaction: ChmabaPay is a subscription service, and your
+                customers&apos; payments never pass through us to be deducted from.
+              </p>
+            </section>
+
+            <section className="legal-section">
+              <h2>7. Availability</h2>
+              <p>
+                We aim to keep ChmabaPay running, but we do not promise any
+                particular level of uptime, and we do not offer a service level
+                agreement in these terms. Planned and emergency maintenance may
+                interrupt the service.
+              </p>
+            </section>
+
+            <section className="legal-section">
+              <h2>8. Limitation of liability</h2>
+              <p>
+                To the fullest extent permitted by law, ChmabaPay is not liable for
+                lost profits, lost revenue, lost or corrupted data, or indirect or
+                consequential loss arising from your use of the service, from a
+                payment that was not confirmed or not reported, from a notification
+                that was not delivered, or from the acts or omissions of ABA,
+                Bakong or the National Bank of Cambodia.
+              </p>
+              <p>
+                Nothing in these terms excludes liability that cannot lawfully be
+                excluded.
+              </p>
+            </section>
+
+            <section className="legal-section">
+              <h2>9. Changes to these terms</h2>
+              <p>
+                We may update these terms. When we do, we increase the version
+                number shown above and ask you to accept the new version before
+                continuing to use the service. Your acceptance is recorded against
+                the version you were shown.
+              </p>
+            </section>
+
+            <section className="legal-section">
+              <h2>10. Governing law</h2>
+              <p>
+                These terms are governed by the laws of the Kingdom of Cambodia,
+                and the courts of Cambodia have exclusive jurisdiction over any
+                dispute arising from them.
+              </p>
+            </section>
+
+            <div className="legal-contact">
+              Questions about these terms, or a request relating to your data, can
+              be sent to <strong>legal@chmaba.com</strong>. For support, use{" "}
+              <strong>support@chmaba.com</strong>.
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}

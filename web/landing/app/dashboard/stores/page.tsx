@@ -1,0 +1,204 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+
+type Store = {
+  id: string;
+  name: string;
+  status: string;
+  created_at?: string | null;
+  [k: string]: unknown;
+};
+
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function pillClassForStatus(status: string): string {
+  const s = (status || "").toLowerCase();
+  if (s === "active") return "dash-pill dash-pill-paid";
+  return "dash-pill dash-pill-expired";
+}
+
+export default function DashboardStoresPage() {
+  const [loading, setLoading] = useState(true);
+  const [stores, setStores] = useState<Store[]>([]);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [disablingId, setDisablingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch("/v1/stores", { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const items: Store[] = Array.isArray(data)
+            ? data
+            : Array.isArray(data?.items)
+              ? data.items
+              : Array.isArray(data?.data)
+                ? data.data
+                : [];
+          if (alive) setStores(items);
+        }
+      } catch {
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function handleDisable(store: Store) {
+    if (!confirm(`Disable store "${store.name}"?`)) return;
+    setDisablingId(store.id);
+    try {
+      const res = await fetch(`/v1/stores/${store.id}/disable`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        setStores((prev) =>
+          prev.map((s) =>
+            s.id === store.id
+              ? { ...s, status: data?.status || "disabled" }
+              : s,
+          ),
+        );
+        setFlash(`Store "${store.name}" has been disabled.`);
+        setTimeout(() => setFlash(null), 4000);
+      } else if (res.status === 400) {
+        const err = await res.json().catch(() => ({}));
+        setFlash(err?.detail || "Could not disable store.");
+        setTimeout(() => setFlash(null), 6000);
+      }
+    } catch {
+      setFlash("Network error while disabling store.");
+      setTimeout(() => setFlash(null), 4000);
+    } finally {
+      setDisablingId(null);
+    }
+  }
+
+  return (
+    <>
+      <div className="dash-page-head">
+        <div>
+          <h2 className="dash-page-title">Stores</h2>
+          <div className="dash-page-subtitle">
+            Manage stores and payment destinations
+          </div>
+        </div>
+        <div>
+          <Link
+            className="dash-btn dash-btn-primary"
+            href="/dashboard/stores/new"
+          >
+            + New store
+          </Link>
+        </div>
+      </div>
+
+      {flash && (
+        <div className="dash-warn dash-warn-sm">
+          {flash.includes("Upgrade") || flash.includes("max") ? (
+            <>
+              <strong>Limit reached.</strong> {flash}{" "}
+              <Link className="dash-link-btn" href="/dashboard/billing">
+                Upgrade plan
+              </Link>
+            </>
+          ) : (
+            flash
+          )}
+        </div>
+      )}
+
+      <div className="dash-panel">
+        {loading ? (
+          <div className="dash-empty">Loading stores…</div>
+        ) : stores.length === 0 ? (
+          <div className="dash-empty">
+            No stores yet.
+            <div className="dash-empty-desc">
+              Create your first store to connect a payment destination and
+              start accepting payments.
+              <div className="dash-empty-cta-row">
+                <Link
+                  className="dash-btn dash-btn-primary dash-btn-sm"
+                  href="/dashboard/stores/new"
+                >
+                  + Create store
+                </Link>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <table className="dash-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stores.map((s) => (
+                <tr key={s.id}>
+                  <td>
+                    <Link
+                      className="dash-link-btn"
+                      href={`/dashboard/${s.id}`}
+                    >
+                      {s.name}
+                    </Link>
+                  </td>
+                  <td>
+                    <span className={pillClassForStatus(s.status)}>
+                      {(s.status || "unknown").toLowerCase()}
+                    </span>
+                  </td>
+                  <td>{formatDate(s.created_at)}</td>
+                  <td>
+                    <div className="dash-toolbar-filters">
+                      <Link
+                        className="dash-btn dash-btn-secondary dash-btn-sm"
+                        href={`/dashboard/${s.id}`}
+                      >
+                        View
+                      </Link>
+                      <button
+                        type="button"
+                        className="dash-btn dash-btn-danger dash-btn-sm"
+                        onClick={() => handleDisable(s)}
+                        disabled={
+                          disablingId === s.id ||
+                          (s.status || "").toLowerCase() !== "active"
+                        }
+                      >
+                        {disablingId === s.id ? "…" : "Disable"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </>
+  );
+}

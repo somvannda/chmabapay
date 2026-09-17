@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local runtime
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.db
+*.sqlite3
+# Runtime logs. `.backend.log` and the web apps' `.server.log` files carry request
+# paths and headers, so they are local artefacts, never history.
+*.log
+probe-config.json
+findings.json
+
+# Secrets — OAuth client secrets downloaded from the GCP console
+client_secret_*.json
+chmabapay.json
+
+# Local binaries
+_bin/
+
+# Builds
+dist/
+build/
+*.tsbuildinfo

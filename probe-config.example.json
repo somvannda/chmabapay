@@ -1,0 +1,41 @@
+{
+  "comment": "Copy to probe-config.json and fill in. NEVER commit probe-config.json (contains a live secret). Adjust base URLs, request paths and body field names to match YOUR Bakong developer-portal / bank onboarding docs — the probe just executes whatever is here and reports what responds.",
+  "base_urls": [
+    "https://api-sandbox.bakong.com",
+    "https://api.bakong.com"
+  ],
+  "client_id": "REPLACE_ME",
+  "client_secret": "REPLACE_ME",
+  "timeout_seconds": 15,
+  "headers": {},
+  "merchants": [
+    {
+      "name": "Your own merchant",
+      "id": "REPLACE_ME_bakong_id_or_number",
+      "on_behalf_of": ""
+    }
+  ],
+  "probes": [
+    {
+      "name": "account information (self, on_behalf_of header style)",
+      "method": "POST",
+      "path": "/v1/account_information",
+      "auth": "basic",
+      "body": { "on_behalf_of": "{on_behalf}" }
+    },
+    {
+      "name": "account information (body account_id style)",
+      "method": "POST",
+      "path": "/v1/account_information",
+      "auth": "basic",
+      "body": { "account_id": "{merchant_id}" }
+    },
+    {
+      "name": "check transaction by KHQR (shape 1: qr field)",
+      "method": "POST",
+      "path": "/v1/check_transaction_by_khqr",
+      "auth": "basic",
+      "body": { "qr": "{qr}" }
+    }
+  ]
+}

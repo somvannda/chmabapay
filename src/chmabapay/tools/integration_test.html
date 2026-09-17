@@ -1,0 +1,1391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>ChmabaPay — API integration test runner</title>
+<style>
+:root{
+  --red:#d92b2b;--ink:#1f2430;--muted:#6b7280;--line:#e5e7eb;--bg:#f6f7f9;--panel:#fff;
+  --ok:#16a34a;--warn:#d97706;--bad:#b91c1c;--skip:#6b7280;--info:#0369a1;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--red)}
+h1,h2,h3{margin:0;font-weight:600;letter-spacing:-.2px}
+code,pre,.mono{font-family:var(--mono)}
+.wrap{max-width:1400px;margin:0 auto;padding:0 20px 64px}
+header.top{background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+header.top .inner{max-width:1400px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--red)}
+.tag{font:11px/1 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:5px 9px}
+.spacer{flex:1}
+button{font:inherit;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;padding:8px 13px;cursor:pointer}
+button:hover{border-color:#cbd5e1}
+button.primary{background:var(--red);border-color:var(--red);color:#fff;font-weight:600}
+button.primary:hover{background:#c22525}
+button.ghost{background:transparent}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.sm{padding:5px 9px;font-size:12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:16px}
+.grid{display:grid;gap:12px}
+.g4{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.g6{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+label.f{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:5px}
+input[type=text],input[type=password],input[type=number],select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff;color:var(--ink)}
+input.mono{font-family:var(--mono);font-size:12.5px}
+.hint{font-size:11.5px;color:var(--muted);margin-top:4px}
+.chk{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink)}
+.chk input{width:15px;height:15px;accent-color:var(--red)}
+.warnbox{border-left:3px solid var(--warn);background:#fffbeb;padding:10px 12px;border-radius:0 8px 8px 0;font-size:12.5px;color:#78350f;margin-top:12px}
+.errbox{border-left:3px solid var(--bad);background:#fef2f2;padding:10px 12px;border-radius:0 8px 8px 0;font-size:12.5px;color:#7f1d1d;margin-top:12px}
+.cards{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin-top:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.card .n{font-size:23px;font-weight:700;font-variant-numeric:tabular-nums}
+.card .l{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-top:2px}
+.n-ok{color:var(--ok)}.n-bad{color:var(--bad)}.n-warn{color:var(--warn)}.n-skip{color:var(--skip)}
+.bar{height:6px;background:#e9ecef;border-radius:99px;overflow:hidden;margin-top:12px}
+.bar>i{display:block;height:100%;width:0;background:var(--red);transition:width .15s linear}
+section.tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:16px}
+.pill{font:11px/1 var(--mono);border-radius:99px;padding:5px 9px;border:1px solid var(--line);background:#fff;cursor:pointer}
+.pill.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.pill .c{color:var(--muted);margin-left:5px}
+.pill.on .c{color:#cbd5e1}
+table{width:100%;border-collapse:collapse;background:var(--panel)}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:57px;z-index:5}
+td{padding:9px 12px;border-bottom:1px solid #f1f3f5;vertical-align:top}
+tr.row{cursor:pointer}
+tr.row:hover{background:#fafbfc}
+tr.row.hidden{display:none}
+.id{font-family:var(--mono);font-size:12px;color:var(--muted);white-space:nowrap}
+.t{font-size:13px}
+.sub{font-size:11.5px;color:var(--muted);margin-top:2px}
+.badge{display:inline-block;font:600 11px/1 var(--mono);padding:4px 8px;border-radius:99px;text-transform:uppercase;letter-spacing:.04em}
+.b-pass{background:#dcfce7;color:#15803d}
+.b-fail{background:#fee2e2;color:#b91c1c}
+.b-warn{background:#fef3c7;color:#b45309}
+.b-skip{background:#f1f5f9;color:#475569}
+.b-run{background:#e0f2fe;color:#0369a1}
+.sev{font:11px/1 var(--mono);text-transform:uppercase;letter-spacing:.05em}
+.sev-critical{color:var(--bad);font-weight:700}
+.sev-high{color:var(--warn);font-weight:600}
+.sev-medium{color:var(--muted)}
+.sev-low{color:#94a3b8}
+.ms{font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap}
+.detail{background:#fbfcfd;border-top:1px solid var(--line);padding:14px 16px}
+.detail h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.detail pre{margin:0;background:#0f172a;color:#e2e8f0;border-radius:8px;padding:11px 13px;overflow:auto;max-height:340px;font-size:12px;line-height:1.45;white-space:pre-wrap;word-break:break-word}
+.detail .cols{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.scanbox{margin-top:10px;display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px}
+.scanbox img{width:190px;height:190px;display:block;image-rendering:pixelated}
+.a{display:flex;gap:9px;align-items:flex-start;padding:5px 0;font-size:12.5px}
+.a .m{font-family:var(--mono);font-size:11.5px;white-space:nowrap;flex:0 0 auto}
+.a.pass .m{color:var(--ok)}.a.fail .m{color:var(--bad)}
+.plan-g{background:var(--panel);border:1px solid var(--line);border-radius:12px;margin-top:14px;overflow:hidden}
+.plan-g h3{padding:13px 16px;font-size:14px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:10px}
+.legend span{display:flex;gap:6px;align-items:center}
+.sw{width:10px;height:10px;border-radius:3px}
+.hide{display:none !important}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:3px 10px;font-size:12px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;font-family:var(--mono);word-break:break-word}
+footer{color:var(--muted);font-size:12px;margin-top:28px}
+</style>
+</head>
+<body>
+<header class="top"><div class="inner">
+  <div class="brand"><span class="dot"></span><h1>ChmabaPay integration test runner</h1></div>
+  <span class="tag" id="planMeta">loading plan…</span>
+  <div class="spacer"></div>
+  <a href="/_dev/live-pay"><button class="ghost sm">Live scan test</button></a>
+  <button class="ghost sm" id="viewResults">Results</button>
+  <button class="ghost sm" id="viewPlan">Test plan</button>
+</div></header>
+
+<div class="wrap">
+
+  <div class="panel">
+    <div class="grid g4">
+      <div>
+        <label class="f" for="baseUrl">API base URL</label>
+        <input type="text" id="baseUrl" class="mono" spellcheck="false">
+        <div class="hint">Same origin is used when you leave the default.</div>
+      </div>
+      <div>
+        <label class="f" for="apiKey">API key</label>
+        <input type="password" id="apiKey" class="mono" spellcheck="false" autocomplete="off"
+               placeholder="ck_test_… or ck_live_…">
+        <div class="hint">Held in memory only. A <span class="mono">ck_test_</span> key skips live quota.</div>
+      </div>
+      <div>
+        <label class="f" for="paywayLink">ABA PayWay link</label>
+        <input type="text" id="paywayLink" class="mono" spellcheck="false">
+      </div>
+      <div>
+        <label class="f" for="amount">Test amount (USD)</label>
+        <input type="number" id="amount" step="0.01" min="0.01" value="1.00">
+      </div>
+    </div>
+
+    <div class="grid g6" style="margin-top:12px">
+      <div>
+        <label class="f" for="storeId">Store id (optional)</label>
+        <input type="text" id="storeId" class="mono" spellcheck="false" placeholder="auto-resolve">
+      </div>
+      <div>
+        <label class="f" for="paymentId">Payment id (optional)</label>
+        <input type="text" id="paymentId" class="mono" spellcheck="false" placeholder="auto-create">
+      </div>
+      <div>
+        <label class="f" for="webhookId">Webhook endpoint id (optional)</label>
+        <input type="text" id="webhookId" class="mono" spellcheck="false" placeholder="auto-resolve">
+      </div>
+      <div>
+        <label class="f" for="workers">Parallel workers</label>
+        <input type="number" id="workers" min="1" max="16" value="6">
+      </div>
+      <div>
+        <label class="f" for="timeout">Request timeout (ms)</label>
+        <input type="number" id="timeout" min="1000" max="60000" step="500" value="20000">
+      </div>
+    </div>
+
+    <div class="grid g4" style="margin-top:14px">
+      <label class="chk"><input type="checkbox" id="optNetwork" checked> Include live PayWay network cases</label>
+      <label class="chk"><input type="checkbox" id="optDestructive"> Include destructive cases</label>
+      <label class="chk"><input type="checkbox" id="optMutations" checked> Include write / mutating cases</label>
+      <label class="chk"><input type="checkbox" id="optStopOnFail"> Stop on first hard failure</label>
+      <label class="chk"><input type="checkbox" id="optManual"> Include manual / physical-scan cases</label>
+    </div>
+
+    <div class="warnbox">
+      This suite <b>writes test data</b> to the target account: test payments (one is driven through
+      scan&nbsp;→&nbsp;paid via the dev rail), webhook endpoints, and a disposable store when the workspace has
+      none. Point it at a scratch account, and prefer a <span class="mono">ck_test_</span> key.
+    </div>
+
+    <div class="warnbox hide" id="liveWarn">
+      A <span class="mono">ck_live_</span> key is in use. The suite creates real test payments and drives the
+      dev rail; destructive cases stay blocked unless you explicitly enable them with a test key.
+    </div>
+
+    <section class="tools">
+      <button class="primary" id="runAll">Run all cases</button>
+      <button id="runSetup">Setup only</button>
+      <button id="runNonNetwork">Run without network</button>
+      <button id="stopRun" disabled>Stop</button>
+      <button class="ghost" id="exportJson">Export JSON</button>
+      <button class="ghost" id="exportText">Copy summary</button>
+      <button class="ghost" id="clearRun">Clear</button>
+    </section>
+
+    <div class="errbox hide" id="cfgError"></div>
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="n" id="cTotal">0</div><div class="l">Planned</div></div>
+    <div class="card"><div class="n n-ok" id="cPass">0</div><div class="l">Pass</div></div>
+    <div class="card"><div class="n n-bad" id="cFail">0</div><div class="l">Fail</div></div>
+    <div class="card"><div class="n n-warn" id="cWarn">0</div><div class="l">Warn (informational)</div></div>
+    <div class="card"><div class="n n-skip" id="cSkip">0</div><div class="l">Skip</div></div>
+    <div class="card"><div class="n" id="cDone">0</div><div class="l">Executed</div></div>
+    <div class="card"><div class="n" id="cElapsed">0.0s</div><div class="l">Elapsed</div></div>
+  </div>
+  <div class="bar"><i id="progress"></i></div>
+
+  <section class="tools" id="groupPills"></section>
+
+  <section class="tools">
+    <select id="fOutcome" style="width:auto">
+      <option value="">All outcomes</option>
+      <option value="fail">Fail only</option>
+      <option value="warn">Warn only</option>
+      <option value="pass">Pass only</option>
+      <option value="skip">Skip only</option>
+    </select>
+    <select id="fGroup" style="width:auto"><option value="">All groups</option></select>
+    <select id="fSeverity" style="width:auto">
+      <option value="">All severities</option>
+      <option value="critical">critical</option>
+      <option value="high">high</option>
+      <option value="medium">medium</option>
+      <option value="low">low</option>
+    </select>
+    <input type="text" id="fText" placeholder="Search id, title, path…" style="width:280px">
+    <label class="chk"><input type="checkbox" id="fHidePass"> Hide passing rows</label>
+    <span class="hint" id="fCount"></span>
+  </section>
+
+  <div class="legend">
+    <span><i class="sw" style="background:var(--ok)"></i>pass</span>
+    <span><i class="sw" style="background:var(--bad)"></i>hard failure — fix before shipping</span>
+    <span><i class="sw" style="background:var(--warn)"></i>informational / plan-gated variance</span>
+    <span><i class="sw" style="background:var(--skip)"></i>skipped (prerequisite missing or filtered out)</span>
+  </div>
+
+  <div id="resultsView">
+    <table><thead><tr>
+      <th style="width:84px">Id</th>
+      <th style="width:92px">Outcome</th>
+      <th style="width:74px">Severity</th>
+      <th>Case</th>
+      <th style="width:110px">HTTP</th>
+      <th style="width:72px">Time</th>
+    </tr></thead><tbody id="rows"></tbody></table>
+    <div class="hint" id="emptyHint">Run the suite to see results here. The Plan tab shows every case up front.</div>
+  </div>
+
+  <div id="planView" class="hide"></div>
+
+  <footer>
+    Dev-only surface. Mounted only when <span class="mono">ENABLE_DEV_GATEWAY=true</span> — never enable that in production.
+    Cases marked <span class="mono">destructive</span> mutate or delete data and are opt-in.
+    Run the sweep with <span class="mono">RATE_LIMIT_ENABLED=false</span>: it fires more requests per minute than any
+    real client ever would, so the limiter would start refusing it with <span class="mono">429</span> partway through.
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ state */
+const S = {
+  plan: null,
+  byId: new Map(),
+  rows: new Map(),
+  results: [],
+  running: false,
+  abort: false,
+  startedAt: 0,
+  ctx: {},
+  groups: [],
+  activeGroups: new Set(),
+};
+
+const $ = (id) => document.getElementById(id);
+
+/* --------------------------------------------------------------- helpers */
+function getPath(obj, path) {
+  if (obj == null) return undefined;
+  let p = String(path).trim();
+  if (p.startsWith("$")) p = p.slice(1);
+  if (p.startsWith(".")) p = p.slice(1);
+  p = p.replace(/\[(\d+)\]/g, ".$1");
+  if (!p) return obj;
+  return p.split(".").reduce((acc, seg) => (acc == null ? undefined : acc[seg]), obj);
+}
+
+function hasKeyDeep(value, names, depth) {
+  depth = depth || 0;
+  if (depth > 8 || value == null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some((v) => hasKeyDeep(v, names, depth + 1));
+  for (const k of Object.keys(value)) {
+    if (names.includes(k)) return true;
+    if (hasKeyDeep(value[k], names, depth + 1)) return true;
+  }
+  return false;
+}
+
+function pretty(v) {
+  try { return JSON.stringify(v, null, 2); } catch (e) { return String(v); }
+}
+
+function esc(s) { return String(s == null ? "" : s); }
+
+function detailText(d) {
+  if (d == null) return "";
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) return d.map((x) => (x && x.msg ? x.msg : JSON.stringify(x))).join(" | ");
+  return JSON.stringify(d);
+}
+
+/* --------------------------------------------------------------- checks */
+function crc16ccittFalse(str) {
+  let crc = 0xffff;
+  for (let i = 0; i < str.length; i++) {
+    crc ^= (str.charCodeAt(i) & 0xff) << 8;
+    for (let b = 0; b < 8; b++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+  }
+  return crc;
+}
+
+function parseTlv(s) {
+  const out = [];
+  let i = 0;
+  while (i + 4 <= s.length) {
+    const tag = s.substr(i, 2);
+    const len = parseInt(s.substr(i + 2, 2), 10);
+    if (Number.isNaN(len) || i + 4 + len > s.length) break;
+    out.push([tag, s.substr(i + 4, len)]);
+    i += 4 + len;
+  }
+  return out;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const CHECKS = {
+  trace_uuid(r) {
+    const h = r.steps[0] && r.steps[0].res.headers.get("x-chmabapay-trace");
+    if (!h) return { ok: false, detail: "X-ChmabaPay-Trace header missing" };
+    return { ok: UUID_RE.test(h.trim()), detail: "trace=" + h };
+  },
+  crc16_tlv(r) {
+    const j = r.steps[0] && r.steps[0].res.json;
+    if (!j || !j.qr_string) return { ok: true, detail: "no qr_string to validate" };
+    const qr = String(j.qr_string);
+    if (!qr.startsWith("000201")) return { ok: false, detail: "payload does not start with 000201" };
+    const tags = parseTlv(qr);
+    const map = new Map(tags);
+    if (map.get("00") !== "01") return { ok: false, detail: "tag 00 (payload format) != 01" };
+    if (map.get("01") !== "12") return { ok: false, detail: "tag 01 (point of initiation) != 12" };
+    if (!map.get("30")) return { ok: false, detail: "tag 30 (merchant account info) missing" };
+    if (!map.has("53")) return { ok: false, detail: "tag 53 (currency) missing" };
+    if (!map.has("54")) return { ok: false, detail: "tag 54 (amount) missing" };
+    // EMVCo allows trailing zeros to be omitted, so "1" for 1.00 is legal — but
+    // the numeric value must equal what the caller asked for.
+    const amountRaw = String(map.get("54"));
+    const amountOk = /^\d+(\.\d{1,2})?$/.test(amountRaw);
+    const requested = getPath(r.case, "body.amount");
+    const matches = requested === undefined || requested === null
+      ? true
+      : Math.abs(Number(amountRaw) - Number(requested)) < 0.005;
+    if (!amountOk || !matches) {
+      return { ok: false, detail: "tag 54 amount=" + amountRaw + " requested=" + requested };
+    }
+    const idx = qr.lastIndexOf("6304");
+    if (idx < 0) return { ok: false, detail: "tag 63/04 CRC marker missing" };
+    const given = qr.substr(idx + 4, 4).toUpperCase();
+    const calc = crc16ccittFalse(qr.substring(0, idx + 4)).toString(16).toUpperCase().padStart(4, "0");
+    // Wallet-validity fields. A real Bakong wallet answered "QR expired" for a
+    // payload of ours that was missing Tag 99, so these are hard requirements.
+    const missing = [];
+    const t30 = map.get("30") ? new Map(parseTlv(map.get("30"))) : new Map();
+    if (!t30.get("02")) missing.push("tag 30.02 (bank label)");
+    const t99raw = map.get("99");
+    if (!t99raw) {
+      missing.push("tag 99 (validity window)");
+    } else {
+      const t99 = new Map(parseTlv(t99raw));
+      ["00", "01"].forEach((k) => {
+        if (!/^\d{13}$/.test(String(t99.get(k) || ""))) missing.push("tag 99." + k + " (needs 13-digit ms)");
+      });
+      if (Number(t99.get("01")) <= Number(t99.get("00"))) missing.push("tag 99.01 must be after 99.00");
+    }
+    if (missing.length) return { ok: false, detail: "missing/invalid: " + missing.join(", ") };
+    return { ok: given === calc, detail: "amount=" + amountRaw + " crc given=" + given + " computed=" + calc + " t99=" + t99raw };
+  },
+  payment_shape(r) {
+    const j = r.steps[0].res.json || {};
+    const problems = [];
+    if (!/^\d+\.\d{2}$/.test(String(j.amount))) problems.push("amount not 2dp: " + j.amount);
+    if (!j.checkout_url || !String(j.checkout_url).includes("/pay/")) problems.push("checkout_url not a /pay/ link");
+    if (j.qr_string && !String(j.qr_string).startsWith("000201")) problems.push("qr_string not EMVCo");
+    const delta = (new Date(j.expires_at).getTime() - new Date(j.created_at).getTime()) / 1000;
+    if (!(delta > 0 && delta <= 3600)) problems.push("expires_at-created_at=" + delta + "s");
+    return { ok: problems.length === 0, detail: problems.join("; ") || "shape ok" };
+  },
+  payment_id_shape(r) {
+    const id = String((r.steps[0].res.json || {}).id || "");
+    if (id.length < 16) return { ok: false, detail: "id too short (" + id.length + ")" };
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) return { ok: false, detail: "id is not URL-safe" };
+    return { ok: true, detail: "len=" + id.length };
+  },
+  checkout_url_shape(r) {
+    const j = r.steps[0].res.json || {};
+    let url;
+    try { url = new URL(j.checkout_url, location.origin); } catch (e) { return { ok: false, detail: "unparsable checkout_url" }; }
+    if (url.origin !== new URL(S.ctx.base_url).origin) return { ok: false, detail: "checkout_url origin mismatch: " + url.origin };
+    return { ok: url.pathname.startsWith("/pay/"), detail: url.pathname };
+  },
+  checkout_url_host(r) {
+    const j = r.steps[0].res.json;
+    if (!j) return { ok: true, detail: "no JSON body" };
+    const url = String(j.checkout_url || "");
+    const bad = url.includes("evil.example.com") || url.includes("localhost:9999");
+    return { ok: !bad, detail: bad ? "checkout_url reflects a forwarded host: " + url : url };
+  },
+  list_shape(r) {
+    const j = r.steps[0].res.json;
+    if (Array.isArray(j)) return { ok: true, detail: j.length + " rows (bare array)" };
+    if (!j || !Array.isArray(j.data)) return { ok: false, detail: "data is not an array" };
+    return { ok: true, detail: j.data.length + " rows" };
+  },
+  limit_bounds(r) {
+    const raw0 = r.steps[0].res.json;
+    if (raw0 == null) return { ok: true, detail: "no JSON body" };
+    const j = Array.isArray(raw0) ? { data: raw0 } : raw0;
+    if (!Array.isArray(j.data)) return { ok: true, detail: "not a list response" };
+    const c = r.case;
+    const raw = getPath(c, "query.limit") || getPath(c, "query.per_page");
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return { ok: true, detail: "rows=" + j.data.length };
+    const cap = Math.min(n, 100);
+    return { ok: j.data.length <= cap, detail: "rows=" + j.data.length + " cap=" + cap };
+  },
+  no_5xx(r) {
+    const bad = r.steps.filter((s) => s.res.status >= 500);
+    return { ok: bad.length === 0, detail: bad.length ? bad.length + " server errors" : "no 5xx" };
+  },
+  no_raw_script(r) {
+    // Only HTML responses can reflect markup; JSON echoing the payload back is fine.
+    const hits = [];
+    for (const s of r.steps) {
+      const ct = (s.res.headers.get("content-type") || "").toLowerCase();
+      if (!ct.includes("html")) continue;
+      const text = s.res.text || "";
+      if (text.includes("<script>alert")) hits.push("raw <script> in " + s.req.path);
+      if (text.includes("javascript:alert(")) hits.push("raw javascript: URL in " + s.req.path);
+    }
+    return { ok: hits.length === 0, detail: hits.join("; ") || "no reflected script" };
+  },
+  no_injected_header(r) {
+    // A CRLF in a user string must never become a real response header.
+    const hits = [];
+    for (const s of r.steps) {
+      s.res.headers.forEach((v, k) => {
+        if (/x-injected/i.test(k) || /x-injected/i.test(String(v))) hits.push(k);
+      });
+    }
+    return { ok: hits.length === 0, detail: hits.length ? "injected headers: " + hits.join(",") : "no injected headers" };
+  },
+  status_enum(r) {
+    const s = r.steps[r.steps.length - 1];
+    if (s.res.status !== 200) return { ok: true, detail: "not a 200 response" };
+    const st = (s.res.json || {}).status;
+    const allowed = ["PAID", "PENDING", "FAILED", "UNKNOWN"];
+    return { ok: allowed.includes(st), detail: "status=" + st + (allowed.includes(st) ? "" : " (not in PAID|PENDING|FAILED|UNKNOWN)") };
+  },
+  qr_svg_shape(r) {
+    const s = r.steps[r.steps.length - 1];
+    const ct = (s.res.headers.get("content-type") || "").toLowerCase();
+    const body = s.res.text || "";
+    const ver = s.res.headers.get("x-chmabapay-qr-version");
+    const problems = [];
+    if (!ct.includes("svg")) problems.push("content-type=" + (ct || "(none)"));
+    if (!body.includes("<svg")) problems.push("no <svg> root");
+    if (!body.includes("</svg>")) problems.push("unclosed <svg>");
+    if (body.length < 400) problems.push("suspiciously small (" + body.length + " bytes)");
+    if (!/viewBox=/.test(body)) problems.push("no viewBox");
+    const v = Number(ver);
+    if (!(v >= 1 && v <= 40)) problems.push("QR version header=" + ver);
+    return { ok: problems.length === 0, detail: problems.join("; ") || ("svg " + body.length + "B, QR version " + ver) };
+  },
+  qr_destination_is_account(r) {
+    // Tag 30.01 is the payee account a wallet resolves before anything else.
+    // Filling it with the PayWay link slug produces a code every banking app
+    // answers with "QR not found" — the exact failure this check exists for.
+    const j = r.steps[r.steps.length - 1].res.json || {};
+    if (!j.qr_string) return { ok: false, detail: "no qr_string in the response" };
+    const t30raw = new Map(parseTlv(j.qr_string)).get("30");
+    if (!t30raw) return { ok: false, detail: "no tag 30 (no destination template)" };
+    const dest = new Map(parseTlv(t30raw)).get("01") || "";
+    const ok = /^\d{9,19}$/.test(dest) || /^[A-Za-z0-9._-]{2,32}@[A-Za-z]{3,10}$/.test(dest);
+    return { ok, detail: (ok ? "destination " : "not a resolvable account: ") + dest };
+  },
+  aba_page_never_paid(r) {
+    // Measured 2026-09-15: link.payway.com.kh/<slug> is a static Nuxt template
+    // that always serves order_details.status="OPEN". It must therefore never be
+    // allowed to report PAID — that would be a false positive on a payment.
+    const s = r.steps[r.steps.length - 1];
+    if (s.res.status !== 200) return { ok: true, detail: "probe returned " + s.res.status + " — nothing trusted" };
+    const st = (s.res.json || {}).status;
+    return { ok: st !== "PAID", detail: "page-derived status=" + st };
+  },
+  bakong_confirm_paid(r) {
+    // The md5 lookup is the only source that can prove the money landed.
+    const s = r.steps[r.steps.length - 1];
+    const j = s.res.json || {};
+    if (s.res.status === 503) {
+      return { ok: false, detail: "Bakong is not configured, so the payment cannot be confirmed: " + detailText(j.detail).slice(0, 120) };
+    }
+    if (s.res.status !== 200) return { ok: false, detail: "HTTP " + s.res.status + " — " + detailText(j.detail).slice(0, 120) };
+    const st = String(j.status || "");
+    return { ok: /^(success|completed|paid)$/i.test(st), detail: "ledger status=" + (st || "(none)") };
+  },
+  bakong_confirm_contract(r) {
+    // Holds whether or not a token is configured, so this case cannot silently
+    // pass on an unconfigured box the way a bare 200/503 expectation would.
+    const s = r.steps[r.steps.length - 1];
+    const j = s.res.json || {};
+    if (s.res.status === 503) {
+      const d = detailText(j.detail);
+      return { ok: d.startsWith("bakong_not_configured"), detail: d.slice(0, 100) || "(no detail)" };
+    }
+    if (s.res.status === 200) {
+      return { ok: typeof j.found === "boolean", detail: "found=" + j.found + " status=" + j.status };
+    }
+    return { ok: false, detail: "HTTP " + s.res.status + " — expected 200 (looked) or 503 (cannot look)" };
+  },
+  payway_hosted_checkout(r) {
+    // The QR must come FROM ABA. That is the entire point: a payload we build
+    // ourselves carries no ABA transaction, which is why wallets answer
+    // "QR not found" and why there is nothing to poll afterwards.
+    const s = r.steps[r.steps.length - 1];
+    const j = s.res.json || {};
+    if (s.res.status !== 200) {
+      return { ok: false, detail: "HTTP " + s.res.status + " — " + detailText(j.detail).slice(0, 140) };
+    }
+    const problems = [];
+    const qr = String(j.qr_string || "");
+    if (qr.length < 100) problems.push("qr_string len=" + qr.length);
+    if (!qr.includes("PAYWAY@ABA")) problems.push("no PAYWAY@ABA block — this is our own build, not ABA's");
+    if (!j.client_id) problems.push("no client_id (nothing to poll)");
+    if (!j.token || j.token.length < 16) problems.push("token len=" + (j.token || "").length);
+    if (!j.request_time) problems.push("no request_time");
+    if (!(Number(j.expires_in_seconds) > 0)) problems.push("expires_in_seconds=" + j.expires_in_seconds);
+    return {
+      ok: problems.length === 0,
+      detail: problems.join("; ") || ("ABA-issued qr " + qr.length + "B, session " + j.client_id + ", expires in " + j.expires_in_seconds + "s"),
+    };
+  },
+  payway_hosted_status(r) {
+    // Holds whether or not anyone has paid, so this case never lies in either state.
+    const s = r.steps[r.steps.length - 1];
+    const j = s.res.json || {};
+    if (s.res.status === 502) {
+      const d = detailText(j.detail);
+      return { ok: d.startsWith("payway_hosted_error"), detail: d.slice(0, 140) };
+    }
+    if (s.res.status !== 200) {
+      return { ok: false, detail: "HTTP " + s.res.status + " — " + detailText(j.detail).slice(0, 140) };
+    }
+    const allowed = ["request_qr", "scanned", "rqpay", "processing-payment", "approved"];
+    const problems = [];
+    if (!allowed.includes(j.action)) problems.push("action=" + JSON.stringify(j.action) + " not in " + allowed.join("|"));
+    if (typeof j.paid !== "boolean") problems.push("paid is not a boolean");
+    else if (j.paid !== (j.action === "approved")) problems.push("paid=" + j.paid + " disagrees with action=" + j.action);
+    return { ok: problems.length === 0, detail: problems.join("; ") || ("action=" + j.action + " paid=" + j.paid) };
+  },
+  payway_hosted_paid(r) {
+    // The only assertion that means money moved.
+    const s = r.steps[r.steps.length - 1];
+    const j = s.res.json || {};
+    if (s.res.status !== 200) {
+      return { ok: false, detail: "HTTP " + s.res.status + " — " + detailText(j.detail).slice(0, 140) };
+    }
+    if (j.paid === true) {
+      return { ok: true, detail: "ABA reports approved; receipt " + String(j.receipt_url || "").slice(0, 70) };
+    }
+    return { ok: false, detail: "not paid yet — ABA action=" + j.action };
+  },
+  csv_header(r) {
+    const s = r.steps[0];
+    if (s.res.status !== 200) return { ok: true, detail: "not served (status " + s.res.status + ") — plan gated" };
+    const first = String(s.res.text || "").split("\n")[0];
+    const ok = first.startsWith("public_id,status,amount,currency");
+    return { ok, detail: ok ? first : "unexpected header: " + first };
+  },
+  signature_shape(r) {
+    const j = r.steps[0].res.json || {};
+    const sig = (j.headers_sent || {})["X-ChmabaPay-Signature"];
+    if (!sig) return { ok: false, detail: "no signature header sent" };
+    const shapeOk = /^t=\d+,v1=[0-9a-f]{64}$/i.test(sig);
+    return {
+      ok: shapeOk && j.signature_valid_vs_local !== false,
+      detail: sig.slice(0, 40) + "… local_valid=" + j.signature_valid_vs_local,
+    };
+  },
+  delivery_shape(r) {
+    const j = r.steps[0].res.json;
+    if (!Array.isArray(j)) return { ok: false, detail: "deliveries is not an array" };
+    return { ok: j.length <= 500, detail: j.length + " deliveries" };
+  },
+  secret_rotated(r) {
+    const j = r.steps[0].res.json || {};
+    const prev = S.ctx.webhook_secret;
+    if (!j.signing_secret) return { ok: false, detail: "no signing_secret returned" };
+    const changed = !prev || prev !== j.signing_secret;
+    S.ctx.webhook_secret = j.signing_secret;
+    return { ok: changed, detail: changed ? "secret rotated" : "secret unchanged after rotation" };
+  },
+  lifecycle(r) {
+    const read = r.steps.find((s) => s.name === "read_paid");
+    if (!read) return { ok: false, detail: "read_paid step missing" };
+    const j = read.res.json || {};
+    return { ok: j.status === "paid" && !!j.approved_at, detail: "status=" + j.status + " approved_at=" + j.approved_at };
+  },
+  idempotent_replay(r) {
+    const a = (r.steps[0].res.json || {}).id;
+    const b = (r.steps[1].res.json || {}).id;
+    return { ok: !!a && a === b, detail: "first=" + a + " replay=" + b };
+  },
+  distinct_ids(r) {
+    const a = (r.steps[0].res.json || {}).id;
+    const b = (r.steps[1].res.json || {}).id;
+    return { ok: !!a && !!b && a !== b, detail: "first=" + a + " second=" + b };
+  },
+  unique_ids(r) {
+    const ids = r.steps.map((s) => (s.res.json || {}).id).filter(Boolean);
+    const uniq = new Set(ids);
+    return { ok: uniq.size === 1, detail: "responses=" + ids.length + " distinct_ids=" + uniq.size };
+  },
+  single_success(r) {
+    const ok = r.steps.filter((s) => s.res.status === 200 || s.res.status === 201).length;
+    const errs = r.steps.filter((s) => s.res.status >= 500).length;
+    return { ok: ok === 1 && errs === 0, detail: "success=" + ok + " 5xx=" + errs + " attempts=" + r.steps.length };
+  },
+  unique_response_ok(r) {
+    const bad = r.steps.filter((s) => s.res.status !== 200);
+    return { ok: bad.length === 0, detail: bad.length + " non-200 responses" };
+  },
+  list_contains_payment(r) {
+    const step = r.steps[0];
+    const j = step.res.json || {};
+    const list = Array.isArray(j.data) ? j.data : j;
+    const target = S.ctx.flow_payment || S.ctx.payment;
+    const found = Array.isArray(list) && list.some((p) => p && p.id === target);
+    return { ok: found, detail: found ? "found " + target : "created payment missing from list" };
+  },
+  raw_key_once(r) {
+    const listStep = r.steps.find((s) => s.name === "list_hides_raw");
+    if (!listStep) return { ok: false, detail: "list step missing" };
+    const body = listStep.res.text || "";
+    const hasRaw = body.includes('"raw_key"') && !body.includes('"raw_key":null');
+    const hasHash = body.includes("key_hash");
+    return { ok: !hasRaw && !hasHash, detail: "raw_key_in_list=" + hasRaw + " key_hash_in_list=" + hasHash };
+  },
+  checkout_escapes_branding(r) {
+    const render = r.steps.find((s) => s.name === "render_checkout");
+    if (!render) return { ok: true, detail: "store creation was refused — nothing rendered" };
+    if (render.res.status !== 200) return { ok: true, detail: "checkout not served (" + render.res.status + ")" };
+    const t = render.res.text || "";
+    const bad = t.includes("<script>alert") || t.includes("javascript:alert(");
+    return { ok: !bad, detail: bad ? "unescaped branding reflected in checkout HTML" : "branding escaped" };
+  },
+};
+
+/* --------------------------------------------------------------- request */
+function buildHeaders(caseData, step) {
+  const h = substitute(Object.assign({}, caseData.headers || {}, step.headers || {}));
+  const lower = Object.keys(h).map((k) => k.toLowerCase());
+  const hasBody = step.body !== undefined || step.raw_body !== undefined || caseData.body !== undefined || caseData.raw_body !== undefined;
+  if (hasBody && !lower.includes("content-type")) h["Content-Type"] = "application/json";
+  const auth = step.auth || caseData.auth || "key";
+  if (auth === "key" && !lower.includes("authorization") && S.ctx.api_key) {
+    h["Authorization"] = "Bearer " + S.ctx.api_key;
+  }
+  return h;
+}
+async function performRequest(caseData, step, seq) {
+  let path = String(step.path !== undefined ? step.path : caseData.path || "/");
+  path = substitute(path);
+  let url = S.ctx.base_url.replace(/\/$/, "") + path;
+  const query = substitute(step.query !== undefined ? step.query : caseData.query);
+  const queryRaw = substitute(step.query_raw !== undefined ? step.query_raw : caseData.query_raw);
+  if (query && typeof query === "object") {
+    const qs = new URLSearchParams();
+    Object.keys(query).forEach((k) => qs.append(k, query[k] === null ? "" : String(query[k])));
+    url += (url.includes("?") ? "&" : "?") + qs.toString();
+  } else if (queryRaw) {
+    url += (url.includes("?") ? "&" : "?") + queryRaw;
+  }
+
+  const headers = buildHeaders(caseData, step);
+  const method = (step.method || caseData.method || "GET").toUpperCase();
+  let body;
+  const raw = step.raw_body !== undefined ? step.raw_body : caseData.raw_body;
+  const jsonBody = step.body !== undefined ? step.body : caseData.body;
+  if (raw !== undefined && raw !== null) body = substitute(raw);
+  else if (jsonBody !== undefined && jsonBody !== null) body = JSON.stringify(substitute(jsonBody));
+
+  const req = { method, url, path, headers, body };
+  const started = performance.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Number($("timeout").value) || 20000);
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers,
+      body: ["GET", "HEAD"].includes(method) ? undefined : body,
+      // Cases that assert "must not authorise" opt out of cookies, otherwise an
+      // ambient portal session silently authenticates them.
+      credentials: caseData.omit_credentials ? "omit" : "include",
+      signal: controller.signal,
+      redirect: "follow",
+    });
+    const text = (await res.text()).slice(0, 200000);
+    let json = null;
+    try { json = JSON.parse(text); } catch (e) { json = null; }
+    clearTimeout(timer);
+    return { req, res: { status: res.status, headers: res.headers, text, json, ms: performance.now() - started }, name: step.name || ("request " + seq) };
+  } catch (err) {
+    clearTimeout(timer);
+    const aborted = err && err.name === "AbortError";
+    return {
+      req,
+      res: { status: 0, headers: new Headers(), text: "", json: null, ms: performance.now() - started, error: aborted ? "timeout" : String(err && err.message ? err.message : err) },
+      name: step.name || ("request " + seq),
+    };
+  }
+}
+
+/* ------------------------------------------------------------ assertions */
+function evaluate(expect, step) {
+  const out = [];
+  const res = step.res;
+  const push = (ok, label, detail) => out.push({ ok, label, detail: detail === undefined ? "" : String(detail) });
+
+  if (expect.status !== undefined) push(res.status === expect.status, "status == " + expect.status, "got " + res.status);
+  if (expect.status_in !== undefined) push(expect.status_in.includes(res.status), "status in [" + expect.status_in.join(",") + "]", "got " + res.status);
+  // The 5xx safety net is skipped only when the case explicitly tolerates this
+  // exact status (e.g. 503 bakong_not_configured) — never for an unexpected 500.
+  const tolerated = expect.status_in !== undefined && expect.status_in.includes(res.status);
+  if (!tolerated) push(res.status < 500, "no 5xx", "got " + res.status);
+
+  const d = res.json ? res.json.detail : undefined;
+  if (expect.detail !== undefined) push(d === expect.detail, "detail == " + expect.detail, detailText(d));
+  if (expect.detail_contains !== undefined) push(detailText(d).toLowerCase().includes(String(expect.detail_contains).toLowerCase()), "detail contains " + expect.detail_contains, detailText(d));
+  if (expect.detail_not_contains !== undefined) push(!detailText(d).includes(String(expect.detail_not_contains)), "detail excludes payload", detailText(d).slice(0, 120));
+  if (expect.detail_in !== undefined) push(expect.detail_in.some((v) => v === null || d === v), "detail in [" + expect.detail_in.join(",") + "]", detailText(d));
+
+  (expect.json_has || []).forEach((p) => {
+    const v = getPath(res.json, p);
+    push(v !== undefined, "json has " + p, v === undefined ? "missing" : "");
+  });
+  (expect.json_absent || []).forEach((p) => {
+    const present = hasKeyDeep(res.json, [p]);
+    push(!present, "json excludes " + p, present ? "field present" : "");
+  });
+  if (expect.json_equals) {
+    Object.keys(expect.json_equals).forEach((p) => {
+      const got = getPath(res.json, p);
+      push(String(got) === String(expect.json_equals[p]), "json " + p + " == " + expect.json_equals[p], "got " + got);
+    });
+  }
+  (expect.body_has || []).forEach((s) => push((res.text || "").includes(s), "body has " + s));
+  (expect.body_absent || []).forEach((s) => push(!(res.text || "").includes(s), "body excludes " + s, "payload reflected"));
+  if (expect.header_has) {
+    Object.keys(expect.header_has).forEach((k) => {
+      const v = res.headers.get(k);
+      push(v != null && v.includes(expect.header_has[k]), "header " + k, v === null ? "missing" : v.slice(0, 60));
+    });
+  }
+  if (expect.header_not) {
+    Object.keys(expect.header_not).forEach((k) => {
+      const v = res.headers.get(k);
+      push(!(v && v.toLowerCase().includes(String(expect.header_not[k]).toLowerCase())), "header " + k + " excludes " + expect.header_not[k], v || "missing");
+    });
+  }
+  if (res.error) push(false, "transport", res.error);
+  return out;
+}
+
+/* ------------------------------------------------------------- execution */
+function substitute(value) {
+  if (typeof value === "string") {
+    return value.replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (m, name) => {
+      const v = S.ctx[name];
+      if (v === undefined || v === null) return m;
+      return JSON.stringify(String(v)).slice(1, -1);
+    });
+  }
+  if (Array.isArray(value)) return value.map(substitute);
+  if (value && typeof value === "object") {
+    const o = {};
+    Object.keys(value).forEach((k) => { o[k] = substitute(value[k]); });
+    return o;
+  }
+  return value;
+}
+
+function skipReason(caseData) {
+  if (caseData.manual && !$("optManual").checked) {
+    return "manual case — needs a human with a phone; tick “Include manual / physical-scan cases” to run it";
+  }
+  const req = caseData.requires || [];
+  const map = {
+    api_key: () => !!S.ctx.api_key,
+    store: () => !!S.ctx.store,
+    payment: () => !!S.ctx.payment,
+    webhook: () => !!S.ctx.webhook,
+    webhook_secret: () => !!S.ctx.webhook_secret,
+    session: () => !!S.ctx.session,
+    dev_rail: () => !!S.ctx.dev_rail,
+  };
+  for (const name of req) {
+    const fn = map[name];
+    if (fn && !fn()) return "needs " + name + " from Setup, which has not been resolved";
+  }
+  return null;
+}
+
+function capture(caseData, step, stepResult) {
+  const targets = {};
+  if (step.capture) Object.assign(targets, step.capture);
+  if (!step.name && caseData.produces) Object.assign(targets, caseData.produces);
+  Object.keys(targets).forEach((key) => {
+    const v = getPath(stepResult.res.json, targets[key]);
+    if (v !== undefined && v !== null && v !== "") S.ctx[key] = v;
+  });
+}
+
+/* A step can wait on the real world. `poll_until` repeats the request until a
+   JSON path reaches a value — this is what gives a human time to actually pay
+   the QR mid-case instead of the case confirming a payment nobody could have
+   made yet. The last response is the one `expect` judges. */
+async function pollStep(caseData, step, index) {
+  const p = step.poll_until || {};
+  const attempts = Math.max(1, p.attempts || 30);
+  const delayMs = Math.max(250, p.delay_ms || 4000);
+  let last = null;
+  for (let n = 0; n < attempts; n++) {
+    last = await performRequest(caseData, step, index);
+    last.pollAttempts = n + 1;
+    const seen = getPath(last.res.json, p.path);
+    if (seen === p.equals || S.abort) break;
+    if (n < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return last;
+}
+
+async function executeCase(caseData) {
+  const result = { id: caseData.id, group: caseData.group, title: caseData.title, severity: caseData.severity, outcome: "pass", ms: 0, assertions: [], steps: [], note: caseData.note || "", informational: !!caseData.informational };
+
+  const missing = skipReason(caseData);
+  if (missing) {
+    result.outcome = "skip";
+    result.assertions.push({ ok: true, label: "skipped: " + missing, detail: "" });
+    return result;
+  }
+
+  const started = performance.now();
+  const steps = caseData.steps || [{ name: "request", method: caseData.method, path: caseData.path, body: caseData.body, raw_body: caseData.raw_body, query: caseData.query, query_raw: caseData.query_raw, headers: caseData.headers, auth: caseData.auth, expect: caseData.expect, capture: caseData.produces }];
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const expect = substitute(step.expect || (caseData.steps ? {} : caseData.expect || {}));
+    let stepResult;
+    if (step.poll_until) {
+      stepResult = await pollStep(caseData, step, i);
+      stepResult.expect = expect;
+      result.steps.push(stepResult);
+      evaluate(expect, stepResult).forEach((a) =>
+        result.assertions.push(Object.assign({ step: step.name || i, polls: stepResult.pollAttempts }, a))
+      );
+    } else if (caseData.concurrency && caseData.concurrency > 1) {
+      const many = await Promise.all(
+        Array.from({ length: caseData.concurrency }, (_, n) => performRequest(caseData, step, n))
+      );
+      many.forEach((one, n) => {
+        one.outcome = null;
+        one.index = n;
+      });
+      result.steps.push.apply(result.steps, many);
+      const probe = many[0];
+      probe.expect = expect;
+      probe.caseData = caseData;
+      evaluate(expect, probe).forEach((a) => result.assertions.push(Object.assign({ step: step.name || i }, a)));
+      stepResult = probe;
+    } else {
+      stepResult = await performRequest(caseData, step, i);
+      stepResult.expect = expect;
+      result.steps.push(stepResult);
+      evaluate(expect, stepResult).forEach((a) => result.assertions.push(Object.assign({ step: step.name || i }, a)));
+    }
+    if (expect && expect.check && CHECKS[expect.check]) {
+      const sub = { case: caseData, steps: [stepResult], ctx: S.ctx };
+      const c = CHECKS[expect.check](sub);
+      result.assertions.push(Object.assign({ step: step.name || i, label: "check " + expect.check }, c));
+    }
+    capture(caseData, step, stepResult);
+    if (S.abort) break;
+  }
+
+  if (caseData.check && CHECKS[caseData.check]) {
+    const c = CHECKS[caseData.check]({ case: caseData, steps: result.steps, ctx: S.ctx });
+    result.assertions.push({ label: "check " + caseData.check, ok: c.ok, detail: c.detail });
+  }
+
+  const failed = result.assertions.filter((a) => !a.ok);
+  // A 5xx the case explicitly listed in `status_in` is a governed answer (e.g.
+  // 503 bakong_not_configured), not an unhandled crash. Counting it as a server
+  // error contradicted evaluate(), which already tolerates exactly that status.
+  const serverError = result.steps.some((s) => {
+    if (s.res.status < 500) return false;
+    const e = s.expect || {};
+    return !(Array.isArray(e.status_in) && e.status_in.includes(s.res.status));
+  });
+  result.serverError = serverError;
+  // A 5xx is never "informational": it is an unhandled exception on the server.
+  result.outcome = failed.length === 0 ? "pass" : (caseData.informational && !serverError ? "warn" : "fail");
+  result.ms = performance.now() - started;
+  result.failedCount = failed.length;
+  return result;
+}
+
+/* ------------------------------------------------------------- rendering */
+function badge(outcome) {
+  const map = { pass: "b-pass", fail: "b-fail", warn: "b-warn", skip: "b-skip", run: "b-run" };
+  return '<span class="badge ' + (map[outcome] || "b-skip") + '">' + outcome + "</span>";
+}
+
+function outcomeOf(r) { return r ? r.outcome : "run"; }
+
+function ensureRow(caseData) {
+  if (S.rows.has(caseData.id)) return S.rows.get(caseData.id);
+  const tr = document.createElement("tr");
+  tr.className = "row";
+  tr.dataset.id = caseData.id;
+  tr.innerHTML =
+    '<td class="id">' + caseData.id + "</td>" +
+    '<td class="oc">' + badge("run") + "</td>" +
+    '<td class="sev sev-' + caseData.severity + '">' + caseData.severity + "</td>" +
+    '<td><div class="t"></div><div class="sub"></div></td>' +
+    '<td class="http mono"></td>' +
+    '<td class="ms"></td>';
+  tr.querySelector(".t").textContent = caseData.title;
+  tr.querySelector(".sub").textContent = caseData.method + " " + caseData.path;
+  const detail = document.createElement("tr");
+  detail.className = "detail-row hidden";
+  detail.innerHTML = '<td colspan="6"><div class="detail"></div></td>';
+  S.rows.set(caseData.id, { tr, detail, caseData });
+  $("rows").appendChild(tr);
+  $("rows").appendChild(detail);
+  tr.addEventListener("click", () => {
+    detail.classList.toggle("hidden");
+    if (!detail.classList.contains("hidden")) renderDetail(detail.querySelector(".detail"), S.rows.get(caseData.id));
+  });
+  tr.dataset.group = caseData.group;
+  tr.dataset.severity = caseData.severity;
+  tr.dataset.text = (caseData.id + " " + caseData.title + " " + caseData.method + " " + caseData.path).toLowerCase();
+  return S.rows.get(caseData.id);
+}
+
+function renderDetail(container, row) {
+  const r = row.result;
+  const c = row.caseData;
+  const parts = [];
+  parts.push('<div class="kv"><dt>case</dt><dd>' + c.id + "</dd><dt>group</dt><dd>" + c.group + "</dd><dt>severity</dt><dd>" + c.severity + "</dd><dt>outcome</dt><dd>" + outcomeOf(r) + "</dd><dt>requires</dt><dd>" + ((c.requires || []).join(", ") || "—") + "</dd><dt>flags</dt><dd>" + [c.network ? "network" : "", c.mutates ? "mutates" : "", c.destructive ? "destructive" : "", c.informational ? "informational" : ""].filter(Boolean).join(", ") + "</dd></div>");
+  if (c.note) parts.push('<div class="sub" style="margin-top:8px">' + esc(c.note) + "</div>");
+
+  if (r) {
+    parts.push('<h4 style="margin-top:14px">Assertions</h4>');
+    r.assertions.forEach((a) => {
+      parts.push('<div class="a ' + (a.ok ? "pass" : "fail") + '"><span class="m">' + (a.ok ? "PASS" : "FAIL") + "</span><span>" + esc(a.label) + (a.detail ? ' <span class="sub">— ' + esc(a.detail) + "</span>" : "") + "</span></div>");
+    });
+    parts.push('<h4 style="margin-top:14px">Exchanges</h4><div class="cols">');
+    r.steps.forEach((s, i) => {
+      const authShown = Object.assign({}, s.req.headers);
+      if (authShown.Authorization) authShown.Authorization = authShown.Authorization.slice(0, 16) + "••••";
+      parts.push("<div>");
+      parts.push('<div class="sub mono">#' + (i + 1) + " " + s.req.method + " " + esc(s.req.path) + "</div>");
+      parts.push("<pre>" + esc(pretty({ request: { headers: authShown, body: s.req.body ? JSON.parse(s.req.body) : undefined } })) + "</pre>");
+      parts.push('<div class="sub mono">← ' + s.res.status + " · " + Math.round(s.res.ms) + "ms" + (s.res.error ? " · " + s.res.error : "") + "</div>");
+      const bodyText = s.res.json !== null ? pretty(s.res.json) : (s.res.text || "").slice(0, 4000);
+      parts.push("<pre>" + esc(bodyText || "(empty body)") + "</pre>");
+      // Any step that produced a KHQR payload gets a live, scannable code right
+      // here — this is the "scan it with your phone" half of the live-scan cases.
+      const qr = s.res.json && s.res.json.qr_string;
+      if (typeof qr === "string" && qr.length > 8) {
+        const t30 = new Map(parseTlv(new Map(parseTlv(qr)).get("30") || ""));
+        parts.push(
+          '<div class="scanbox"><img alt="scannable KHQR" src="/v1/khqr/render.svg?payload=' +
+          encodeURIComponent(qr) + '&scale=6"><div class="sub">Scan me. Destination ' +
+          esc(t30.get("01") || "(no tag 30.01)") + " · " + esc(String((s.res.json.amount || "") + " " + (s.res.json.currency || ""))).trim() +
+          "</div></div>"
+        );
+      }
+      parts.push("</div>");
+    });
+    parts.push("</div>");
+  }
+  container.innerHTML = parts.join("");
+}
+
+function applyFilters() {
+  const oc = $("fOutcome").value;
+  const gr = $("fGroup").value;
+  const sev = $("fSeverity").value;
+  const text = $("fText").value.trim().toLowerCase();
+  const hidePass = $("fHidePass").checked;
+  let shown = 0;
+  S.rows.forEach((row) => {
+    const r = row.result;
+    const outcome = outcomeOf(r);
+    let ok = true;
+    if (oc && outcome !== oc) ok = false;
+    if (gr && row.caseData.group !== gr) ok = false;
+    if (sev && row.caseData.severity !== sev) ok = false;
+    if (text && !row.tr.dataset.text.includes(text)) ok = false;
+    if (hidePass && outcome === "pass") ok = false;
+    if (S.activeGroups.size && !S.activeGroups.has(row.caseData.group)) ok = false;
+    row.tr.classList.toggle("hidden", !ok);
+    row.detail.classList.add("hidden");
+    if (ok) shown++;
+  });
+  $("fCount").textContent = shown + " of " + S.rows.size + " rows shown";
+}
+
+function refreshCounters() {
+  const c = { pass: 0, fail: 0, warn: 0, skip: 0 };
+  S.results.forEach((r) => { c[r.outcome] = (c[r.outcome] || 0) + 1; });
+  $("cPass").textContent = c.pass;
+  $("cFail").textContent = c.fail;
+  $("cWarn").textContent = c.warn;
+  $("cSkip").textContent = c.skip;
+  $("cDone").textContent = S.results.length;
+  const total = S.plannedRun || (S.plan ? S.plan.total : 0);
+  $("progress").style.width = total ? Math.min(100, (S.results.length / total) * 100) + "%" : "0%";
+  if (S.startedAt) $("cElapsed").textContent = ((performance.now() - S.startedAt) / 1000).toFixed(1) + "s";
+}
+
+/* -------------------------------------------------------------- planning */
+function selectableCases(opts) {
+  const o = opts || {};
+  const network = $("optNetwork").checked;
+  const destructive = $("optDestructive").checked;
+  const mutations = $("optMutations").checked;
+  return S.plan.cases.filter((c) => {
+    // Setup is decided by includeSetup alone. It used to fall through to the
+    // activeGroups check below, so a single-group run promised "(+ setup)" in
+    // the button label and then silently dropped it — leaving every
+    // requires:["store"] case skipped for a fixture that was never resolved.
+    if (c.group === "setup") return !!o.includeSetup;
+    if (c.network && !network) return false;
+    if (c.destructive && !destructive) return false;
+    if (c.mutates && !mutations) return false;
+    if (o.groups && !o.groups.has(c.group)) return false;
+    if (!o.groups && S.activeGroups.size && !S.activeGroups.has(c.group)) return false;
+    return true;
+  });
+}
+
+function ctxFromConfig() {
+  const link = $("paywayLink").value.trim() || S.plan.payway_link;
+  let slug = link;
+  try {
+    const u = new URL(link);
+    slug = u.pathname.replace(/^\/+|\/+$/g, "").split("/").pop() || link;
+  } catch (e) {
+    slug = link.split("?")[0].replace(/^\/+/, "");
+  }
+  S.ctx = {
+    api_key: $("apiKey").value.trim(),
+    base_url: ($("baseUrl").value.trim() || location.origin).replace(/\/$/, ""),
+    payway_link: link,
+    payway_slug: slug,
+    amount: $("amount").value || "1.00",
+    // Per-run nonce so fixtures with unique columns stay re-runnable.
+    nonce: Date.now().toString(36),
+    store: $("storeId").value.trim() || null,
+    payment: $("paymentId").value.trim() || null,
+    webhook: $("webhookId").value.trim() || null,
+    webhook_secret: S.ctx.webhook_secret || null,
+    session: S.ctx.session || null,
+    dev_rail: S.ctx.dev_rail || null,
+  };
+}
+
+async function runSelected(cases) {
+  if (S.running) return;
+  ctxFromConfig();
+  const err = $("cfgError");
+  err.classList.add("hide");
+  if (!S.ctx.api_key) {
+    err.textContent = "Paste an API key first (ck_test_… is safest).";
+    err.classList.remove("hide");
+    return;
+  }
+  if (S.ctx.api_key.startsWith("ck_live_")) $("liveWarn").classList.remove("hide");
+
+  S.running = true;
+  S.abort = false;
+  S.startedAt = performance.now();
+  S.plannedRun = cases.length;
+  // Each run is a fresh result set — clear stale rows from any previous run.
+  S.results = [];
+  S.rows.forEach((row) => { row.tr.remove(); row.detail.remove(); });
+  S.rows.clear();
+  $("emptyHint").classList.add("hide");
+  cases.forEach(ensureRow);
+  $("runAll").disabled = $("runSetup").disabled = $("runNonNetwork").disabled = true;
+  $("stopRun").disabled = false;
+  applyFilters();
+  refreshCounters();
+
+  const setup = cases.filter((c) => c.group === "setup");
+  const destructive = cases.filter((c) => c.group !== "setup" && c.destructive);
+  const normal = cases.filter((c) => c.group !== "setup" && !c.destructive);
+
+  const record = (r) => {
+    S.results.push(r);
+    const row = S.rows.get(r.id);
+    row.result = r;
+    row.tr.querySelector(".oc").innerHTML = badge(r.outcome);
+    const codes = r.steps.map((s) => s.res.status).join(" / ");
+    row.tr.querySelector(".http").textContent = codes;
+    row.tr.querySelector(".ms").textContent = Math.round(r.ms) + " ms";
+    if (!row.detail.classList.contains("hidden")) renderDetail(row.detail.querySelector(".detail"), row);
+  };
+
+  for (const c of setup) {
+    if (S.abort) break;
+    record(await executeCase(c));
+    refreshCounters();
+  }
+
+  const workers = Math.max(1, Math.min(16, Number($("workers").value) || 6));
+  let cursor = 0;
+  const stopOnFail = $("optStopOnFail").checked;
+  async function lane() {
+    while (true) {
+      if (S.abort) return;
+      const index = cursor++;
+      if (index >= normal.length) return;
+      const r = await executeCase(normal[index]);
+      record(r);
+      refreshCounters();
+      if (stopOnFail && r.outcome === "fail") { S.abort = true; return; }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(workers, normal.length) }, lane));
+
+  for (const c of destructive) {
+    if (S.abort) break;
+    record(await executeCase(c));
+    refreshCounters();
+  }
+
+  S.running = false;
+  $("runAll").disabled = $("runSetup").disabled = $("runNonNetwork").disabled = false;
+  $("stopRun").disabled = true;
+  applyFilters();
+  refreshCounters();
+}
+
+/* ---------------------------------------------------------------- wiring */
+function renderGroups() {
+  const host = $("groupPills");
+  host.innerHTML = "";
+  const counts = S.plan.by_group;
+  S.plan.groups.forEach((g) => {
+    if (!counts[g.id]) return;
+    const b = document.createElement("button");
+    b.className = "pill";
+    b.innerHTML = g.label + ' <span class="c">' + counts[g.id] + "</span>";
+    b.title = g.description;
+    b.addEventListener("click", () => {
+      if (S.running) return;
+      S.activeGroups = new Set([g.id]);
+      host.querySelectorAll(".pill").forEach((p) => p.classList.remove("on"));
+      b.classList.add("on");
+      updateRunLabel();
+      applyFilters();
+    });
+    b.addEventListener("dblclick", () => {
+      S.activeGroups.clear();
+      host.querySelectorAll(".pill").forEach((p) => p.classList.remove("on"));
+      updateRunLabel();
+      applyFilters();
+    });
+    host.appendChild(b);
+    const opt = document.createElement("option");
+    opt.value = g.id;
+    opt.textContent = g.label + " (" + counts[g.id] + ")";
+    $("fGroup").appendChild(opt);
+  });
+  const all = document.createElement("button");
+  all.className = "pill";
+  all.textContent = "clear group filter";
+  all.addEventListener("click", () => {
+    S.activeGroups.clear();
+    host.querySelectorAll(".pill").forEach((p) => p.classList.remove("on"));
+    updateRunLabel();
+    applyFilters();
+  });
+  host.appendChild(all);
+  updateRunLabel();
+}
+
+function updateRunLabel() {
+  const btn = $("runAll");
+  if (!btn) return;
+  if (S.activeGroups.size === 1) {
+    const id = Array.from(S.activeGroups)[0];
+    const g = S.plan ? S.plan.groups.find((x) => x.id === id) : null;
+    btn.textContent = "Run " + (g ? g.label + " (+ setup)" : id);
+  } else {
+    btn.textContent = "Run all cases";
+  }
+}
+
+function renderPlanView() {
+  const host = $("planView");
+  const counts = S.plan.by_group;
+  const html = [];
+  S.plan.groups.forEach((g) => {
+    const cases = S.plan.cases.filter((c) => c.group === g.id);
+    if (!cases.length) return;
+    html.push('<div class="plan-g"><h3>' + g.label + ' <span class="tag">' + cases.length + " cases</span></h3>");
+    html.push('<div style="padding:0 0 10px"><div class="sub" style="padding:10px 16px 0">' + g.description + "</div>");
+    html.push('<table><thead><tr><th style="width:84px">Id</th><th style="width:74px">Severity</th><th>Case</th><th style="width:300px">Expected</th><th style="width:120px">Needs</th></tr></thead><tbody>');
+    cases.forEach((c) => {
+      const e = c.expect || {};
+      const exp = [];
+      if (e.status !== undefined) exp.push("status " + e.status);
+      if (e.status_in !== undefined) exp.push("status ∈ [" + e.status_in.join(",") + "]");
+      if (e.detail !== undefined) exp.push("detail=" + e.detail);
+      if (e.detail_contains !== undefined) exp.push("detail~" + e.detail_contains);
+      if (e.detail_in !== undefined) exp.push("detail ∈ [" + e.detail_in.join(",") + "]");
+      if (e.json_has) exp.push("json_has " + e.json_has.join(","));
+      if (e.json_absent) exp.push("json_absent " + e.json_absent.join(","));
+      if (e.json_equals) exp.push("json_equals " + JSON.stringify(e.json_equals));
+      if (e.body_has) exp.push("body_has " + e.body_has.join(","));
+      if (e.body_absent) exp.push("body_absent " + e.body_absent.join(","));
+      if (c.check) exp.push("check " + c.check);
+      if (c.concurrency) exp.push("×" + c.concurrency + " parallel");
+      const flags = [c.network ? "network" : "", c.mutates ? "mutates" : "", c.destructive ? "destructive" : "", c.informational ? "info" : "", c.serial ? "serial" : ""].filter(Boolean);
+      html.push(
+        '<tr><td class="id">' + c.id + '</td><td class="sev sev-' + c.severity + '">' + c.severity + '</td>' +
+        '<td><div class="t">' + esc(c.title) + '</div><div class="sub mono">' + c.method + " " + esc(c.path) + (flags.length ? ' · <span style="color:var(--warn)">' + flags.join(", ") + "</span>" : "") + '</div>' +
+        (c.note ? '<div class="sub">' + esc(c.note) + "</div>" : "") + "</td>" +
+        '<td class="sub mono">' + esc(exp.join(" · ")) + "</td>" +
+        '<td class="sub mono">' + ((c.requires || []).join(", ") || "—") + "</td></tr>"
+      );
+      if (c.steps) {
+        c.steps.forEach((s) => {
+          html.push('<tr><td></td><td></td><td class="sub mono" style="padding-left:22px">↳ ' + (s.name || "") + " " + s.method + " " + esc(s.path) + "</td><td></td><td></td></tr>");
+        });
+      }
+    });
+    html.push("</tbody></table></div></div>");
+  });
+  host.innerHTML = html.join("");
+}
+
+function summaryText() {
+  const c = { pass: 0, fail: 0, warn: 0, skip: 0 };
+  S.results.forEach((r) => { c[r.outcome] = (c[r.outcome] || 0) + 1; });
+  const lines = [
+    "ChmabaPay integration run — " + new Date().toISOString(),
+    "base=" + S.ctx.base_url + "  key=" + (S.ctx.api_key || "").slice(0, 12) + "…",
+    "pass=" + c.pass + " fail=" + c.fail + " warn=" + c.warn + " skip=" + c.skip + " executed=" + S.results.length,
+    "",
+  ];
+  const serverErrors = S.results.filter((r) => r.serverError);
+  if (serverErrors.length) {
+    lines.push("UNHANDLED 5xx (" + serverErrors.length + ") — treat as bugs, not policy");
+    serverErrors.forEach((r) => lines.push("  " + r.id + " " + r.title + " — " + r.steps.map((s) => s.res.status).join("/")));
+    lines.push("");
+  }
+  const fails = S.results.filter((r) => r.outcome === "fail");
+  if (fails.length) {
+    lines.push("HARD FAILURES");
+    fails.forEach((r) => {
+      const bad = r.assertions.filter((a) => !a.ok).map((a) => a.label + (a.detail ? " (" + a.detail + ")" : ""));
+      lines.push("  " + r.id + " [" + r.severity + "] " + r.title);
+      bad.forEach((b) => lines.push("      - " + b));
+    });
+    lines.push("");
+  }
+  const warns = S.results.filter((r) => r.outcome === "warn");
+  if (warns.length) {
+    lines.push("INFORMATIONAL / GATED (" + warns.length + ")");
+    warns.forEach((r) => lines.push("  " + r.id + " " + r.title + " — " + r.assertions.filter((a) => !a.ok).map((a) => a.label).join(", ")));
+  }
+  const skips = S.results.filter((r) => r.outcome === "skip");
+  if (skips.length) lines.push("SKIPPED (" + skips.length + "): " + skips.map((r) => r.id).join(", "));
+  return lines.join("\n");
+}
+
+function download(name, text, type) {
+  const blob = new Blob([text], { type: type || "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+function wire() {
+  $("runAll").addEventListener("click", () => {
+    // A group pill filter narrows the run; "clear group filter" widens it again.
+    runSelected(selectableCases({ includeSetup: true }));
+  });
+  $("runSetup").addEventListener("click", () => runSelected(selectableCases({ includeSetup: true, groups: new Set(["setup"]) })));
+  $("runNonNetwork").addEventListener("click", () => {
+    $("optNetwork").checked = false;
+    runSelected(selectableCases({ includeSetup: true }));
+  });
+  $("stopRun").addEventListener("click", () => { S.abort = true; });
+  $("clearRun").addEventListener("click", () => {
+    S.results = [];
+    S.rows.forEach((row) => { row.tr.remove(); row.detail.remove(); });
+    S.rows.clear();
+    S.startedAt = 0;
+    $("emptyHint").classList.remove("hide");
+    refreshCounters();
+  });
+  $("exportJson").addEventListener("click", () => {
+    download("chmabapay-integration-run.json", JSON.stringify({
+      generated_at: new Date().toISOString(),
+      base_url: S.ctx.base_url,
+      plan_total: S.plan ? S.plan.total : 0,
+      executed: S.results.length,
+      summary: S.results.reduce((acc, r) => { acc[r.outcome] = (acc[r.outcome] || 0) + 1; return acc; }, {}),
+      server_errors: S.results.filter((r) => r.serverError).map((r) => r.id),
+      results: S.results.map((r) => ({
+        id: r.id, group: r.group, title: r.title, severity: r.severity, outcome: r.outcome, ms: Math.round(r.ms),
+        server_error: !!r.serverError,
+        requests: r.steps.map((s) => ({ method: s.req.method, path: s.req.path, status: s.res.status })),
+        assertions: r.assertions.map((a) => ({ ok: a.ok, label: a.label, detail: a.detail })),
+      })),
+    }, null, 2));
+  });
+  $("exportText").addEventListener("click", async () => {
+    const text = summaryText();
+    try { await navigator.clipboard.writeText(text); $("exportText").textContent = "Copied"; }
+    catch (e) { download("chmabapay-integration-summary.txt", text, "text/plain"); }
+    setTimeout(() => { $("exportText").textContent = "Copy summary"; }, 1500);
+  });
+  ["fOutcome", "fGroup", "fSeverity", "fHidePass"].forEach((id) => $(id).addEventListener("change", applyFilters));
+  $("fText").addEventListener("input", applyFilters);
+  $("viewPlan").addEventListener("click", () => { $("planView").classList.remove("hide"); $("resultsView").classList.add("hide"); });
+  $("viewResults").addEventListener("click", () => { $("planView").classList.add("hide"); $("resultsView").classList.remove("hide"); });
+  $("apiKey").addEventListener("input", () => {
+    $("liveWarn").classList.toggle("hide", !$("apiKey").value.trim().startsWith("ck_live_"));
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("runAll").click();
+  });
+}
+
+async function boot() {
+  $("baseUrl").value = location.origin;
+  try {
+    const res = await fetch("/_dev/integration-test/manifest", { cache: "no-store" });
+    if (!res.ok) throw new Error("manifest HTTP " + res.status);
+    S.plan = await res.json();
+    S.plan.cases.forEach((c) => S.byId.set(c.id, c));
+    $("paywayLink").value = S.plan.payway_link;
+    $("planMeta").textContent = S.plan.total + " cases · v" + S.plan.version;
+    $("cTotal").textContent = S.plan.total;
+    $("liveWarn").classList.add("hide");
+    renderGroups();
+    renderPlanView();
+    wire();
+    refreshCounters();
+    $("fCount").textContent = "0 of 0 rows shown";
+    // Exposed for automation / the browser console: inspect or export a run
+    // without touching the UI (window.CP_TEST_RUNNER.results).
+    window.CP_TEST_RUNNER = S;
+    window.CP_TEST_SUMMARY = summaryText;
+  } catch (err) {
+    $("planMeta").textContent = "manifest unavailable";
+    const box = $("cfgError");
+    box.textContent = "Could not load the test plan manifest: " + err.message + ". Is ENABLE_DEV_GATEWAY=true on this server?";
+    box.classList.remove("hide");
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
