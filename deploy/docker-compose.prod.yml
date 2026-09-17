@@ -59,10 +59,26 @@ x-logging: &logging
     max-size: "10m"
     max-file: "5"
 
+# ---------------------------------------------------------------------------- #
+# Memory caps
+# ---------------------------------------------------------------------------- #
+# This VPS has 1.9GB of RAM and already runs the POS stack, which is live and
+# revenue-generating. ChmabaPay adds five containers to that same 2GB.
+#
+# These are ceilings, not reservations: they cost nothing while the services behave,
+# and they change the failure mode when one does not. Without them, a runaway Next.js
+# build or a leaking worker asks the kernel for memory the POS also needs, and the
+# OOM killer chooses a victim — possibly a POS container, taking down a live service
+# to fix a problem it did not cause. With them, the greedy ChmabaPay container is
+# killed and restarted on its own.
+#
+# The POS stack is deliberately left uncapped. These limits protect it from us; it is
+# not this deployment's place to cap a service already in production.
+x-limits: &limits
+  mem_limit: 512m
+
 x-backend-env: &backend-env
   # Built from the same three variables the `db` service is initialised with, so a
-  # mismatch between the database's user and the URL that reads it is not possible.
-  #
   # `POSTGRES_PASSWORD` is required rather than defaulted: the development stack
   # uses `chmaba:chmaba`, and that value reaching production is exactly the kind of
   # thing that is invisible until it matters.
@@ -171,6 +187,7 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    <<: *limits
     logging: *logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-chmaba}
@@ -199,6 +216,7 @@ services:
       dockerfile: Dockerfile
     command: ["alembic", "upgrade", "head"]
     environment: *api-env
+    <<: *limits
     logging: *logging
     depends_on:
       db:
@@ -211,6 +229,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     logging: *logging
+    <<: *limits
     environment: *api-env
     # No `ports:`. The only published port in this whole file is the proxy's. The API
     # is reached as `api:8000` on the compose network, by the proxy. Publishing 8000
@@ -243,6 +262,7 @@ services:
         NEXT_PUBLIC_API_URL: http://api:8000
     restart: unless-stopped
     logging: *logging
+    <<: *limits
     environment:
       NEXT_PUBLIC_API_URL: http://api:8000
     depends_on:
@@ -268,6 +288,7 @@ services:
         NEXT_PUBLIC_API_URL: http://api:8000
     restart: unless-stopped
     logging: *logging
+    <<: *limits
     environment:
       NEXT_PUBLIC_API_URL: http://api:8000
     depends_on:
@@ -288,6 +309,7 @@ services:
     image: nginx:1.27-alpine
     restart: unless-stopped
     logging: *logging
+    <<: *limits
     ports:
       # The only host port this stack takes. 443 inside the container; 8443 on the
       # VPS, because 80 and 443 belong to the POS project's edge.
