@@ -754,9 +754,32 @@ The production edge config was validated on this machine, against stub upstreams
 - with an empty directory mounted where the certificate belongs, nginx refused to start
   and named the missing file. See "The certificate" above for the message.
 
-**Not verified in production, and it needs a real run:** anything behind Cloudflare
-itself — the Origin Rule, the Full (strict) handshake against the real Origin CA
-certificate, and a real browser session. The above was exercised locally against stub
-upstreams on localhost, not from the VPS. Two specific unknowns: whether Cloudflare's
-caching-disabled note for non-443 ports applies to an origin-port rewrite, and whether
-any WAF or managed rule interferes.
+**Deployed and verified on the real host** (2026-09-17). Everything below was run
+against `163.245.204.122`, not localhost:
+
+- the stack is at `/opt/chmabapay`, commit `92ae073`, alongside `/opt/chmabapos`;
+- `db`, `api`, `landing`, `admin` and `proxy` all reached **healthy**; `migrate`
+  exited **0**; the schema is at Alembic revision **`0006`** with 14 tables;
+- `GET /health` answers `{"status":"ok","app":"ChmabaPay"}`;
+- `landing` fetched `/v1/billing/plans` from `api` and got **200** — the frontend and
+  API are genuinely wired, not merely both running;
+- the origin on **8443** serves the Cloudflare Origin CA certificate for both
+  hostnames, negotiates **TLS 1.3**, routes `pay.chmaba.com` to the website,
+  `admin-pay.chmaba.com` to the console, `/health` to the API, and answers an
+  unrecognised `Host` with **404**;
+- `/nginx-health` on the proxy's port 80 returns **200** while every other path
+  returns **301** — checked *inside* the container, because host port 80 belongs to
+  the POS and asking for it from the host reaches the POS instead. That is the port
+  isolation working as designed;
+- the POS stack was not restarted: `deploy-front-1` and `deploy-api-1` up 7 days,
+  `deploy-db-1` up 8 days and healthy throughout;
+- memory: ChmabaPay uses ~390 MB across five containers, with ~850 MB still
+  available on the 1.9 GB host.
+
+**Still not verified:** anything that depends on Cloudflare actually connecting to
+8443 — i.e. the full public path. That needs the Origin Rule below. Until it exists,
+Cloudflare connects to the origin's 443, which is the POS edge, and serves the POS
+site for `pay.chmaba.com` — observed, not predicted: all three hostnames returned
+`<title>Chmaba | Cloud POS for growing stores</title>`. The two unknowns named
+earlier (Cloudflare's caching note for non-443 ports, and WAF interference) remain
+open for the same reason.
