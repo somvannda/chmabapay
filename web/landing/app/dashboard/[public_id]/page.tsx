@@ -243,7 +243,7 @@ export default function StoreOverviewPage({
       {!storeLoading && store && (
         <section className="dash-hero">
           <div className="dash-hero-left">
-            <div className="dash-hello">This store at a glance</div>
+            <h1 className="dash-hello">This store at a glance</h1>
             <div className="dash-sub">
               Per-store metrics and recent activity, scoped to this ChmabaPay
               store.

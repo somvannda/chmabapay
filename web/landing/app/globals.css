@@ -2424,7 +2424,7 @@ body {
   flex-direction: column;
   gap: 14px;
 }
-.dash-hello { font-size: 16px; font-weight: 500; color: #0f172a; }
+.dash-hello { font-size: 16px; font-weight: 500; color: #0f172a; margin: 0; }
 .dash-sub { color: #475569; font-size: 14px; line-height: 1.6; }
 .dash-actions {
   display: flex;
@@ -4686,6 +4686,7 @@ body.dash-path-dashboard > .landing-footer {
   font-weight: 800;
   letter-spacing: -0.03em;
   color: var(--ink);
+  margin: 0;
 }
 .dash-sub {
   font-size: var(--fs-14);
