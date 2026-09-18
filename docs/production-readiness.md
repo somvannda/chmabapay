@@ -671,6 +671,15 @@ the name says. Left alone deliberately: making the branch reachable would hand
 platform-admin powers to API keys, which is an authentication decision, not an
 audit one. Worth a separate decision.
 
+**Confirmed at runtime** against the compose stack, after the fact:
+`GET /v1/admin/accounts` with `Authorization: Bearer ck_…` and no cookie answers
+`401 {"detail":"invalid_session"}` — the session sub-dependency's error, not the
+hybrid dependency's own `unauthorized`, which is what proves the branch is
+unreachable rather than merely rejected. `web/admin/README.md` used to claim the
+key worked; that claim is now corrected. The dead branch itself is still here,
+pending the decision above — the fix if machine access is ever wanted is a key
+scope, not simply deleting the sub-dependency.
+
 ### P1-3 Observability
 
 - [x] Structured logs carrying the trace id; counters and a latency histogram;
@@ -873,7 +882,10 @@ requires exactly that of the per-merchant credentials we hold:
 **Terms and Privacy pages now exist — they were also dead links.** The landing
 footer has linked `/terms` and `/privacy` since it was built, and both 404'd.
 `web/landing/app/terms/page.tsx` and `.../privacy/page.tsx` now serve them, with
-the data inventory written from the schema rather than a template.
+the data inventory written from the schema rather than a template. `/contact`, the
+third dead footer link, followed: `web/landing/app/contact/page.tsx` now serves it
+with the three addresses (support, legal, privacy) that the pages above send people
+to, and `sitemap.ts` lists all three.
 
 **The on-behalf-of question now has a written position**:
 `docs/legal/on-behalf-of.md`. Its substantive finding is that the architecture has
@@ -921,14 +933,18 @@ accepted as a risk for now**, because it must be recoverable to sign with.
 
 #### Found while doing this, not fixed
 
-- **`accounts.account_type` is vestigial.** It holds `individual`/`business`, the
-  onboarding step that set it was deleted (*"single account type"*), and **nothing
-  in `src/` reads it to make a decision** — the only comparison is a change
-  detection for the diff. `billing.py` still auto-switches it on a plan upgrade,
-  to no effect. Either give it meaning or drop the column; carrying a field that
-  looks like it gates something and does not is a trap for the next person.
-- **`/contact` is also a dead footer link**, in the same footer as the two this
-  item fixed. Out of scope for Terms/Privacy, but it 404s in production today.
+- **`accounts.account_type` is vestigial, and the decision is unresolved.** It holds
+  `individual`/`business`, the onboarding step that set it was deleted (*"single
+  account type"*), and **nothing in `src/` reads it to make a decision** — the only
+  comparison is a change detection for the diff. `billing.py` still auto-switches it
+  on a plan upgrade, to no effect. It is echoed in `/v1/me`, in the admin account
+  row and in the change-plan response, and it is written by `PATCH /v1/me`. The one
+  place that branches on it is `web/user/`, the older portal — which **no compose
+  service in either stack builds or runs**, since `/dashboard` in `web/landing`
+  replaced it. So: give it meaning or drop the column. Dropping it is a migration
+  plus the `/v1/me` PATCH and change-plan contracts; keeping it means accepting a
+  field that looks like it gates something and does not, which is a trap for the
+  next person.
 
 ---
 

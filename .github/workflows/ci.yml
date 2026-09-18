@@ -85,3 +85,48 @@ jobs:
       - name: Types (advisory)
         run: uv run mypy
         continue-on-error: true
+
+  frontend:
+    name: typecheck and build the web apps
+    runs-on: ubuntu-latest
+
+    # Node 20 and pnpm 9 are copied from `web/Dockerfile` rather than chosen here.
+    # That file is what builds the deployable images and it pins both — pnpm 9
+    # because it wrote `pnpm-lock.yaml` (lockfileVersion 9.0) and a newer pnpm
+    # refuses a lockfile it did not write. A frontend job on a different toolchain
+    # would be checking a build nobody deploys.
+    #
+    # This job did not exist until the audit found that nothing checked either app:
+    # `next dev` ran fine, so every frontend change was verified by hand and a
+    # broken `next build` — which is the only build that matters — would have gone
+    # green.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # `--prod=false` is spelled out for the same reason the Dockerfile spells it
+      # out: pnpm 9 reads NODE_ENV when pruning, and `typescript` is a
+      # devDependency. Without it Next cannot load tsconfig `paths`, and every `@/`
+      # import fails over files that are sitting right there.
+      - name: Install
+        run: pnpm install --frozen-lockfile --prod=false
+
+      # `next lint` is deliberately not run: eslint is not a dependency of either
+      # app, so it would prompt to install itself and hang on a runner.
+      - name: Typecheck and build landing
+        run: |
+          pnpm --filter @chmabapay/landing typecheck
+          pnpm --filter @chmabapay/landing build
+
+      - name: Typecheck and build admin
+        run: |
+          pnpm --filter @chmabapay/admin typecheck
+          pnpm --filter @chmabapay/admin build
