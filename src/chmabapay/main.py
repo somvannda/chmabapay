@@ -19,7 +19,7 @@ from secrets import compare_digest
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import observability
+from . import errors, observability
 from .config import (
     assert_a_queue_will_be_drained,
     assert_session_secret_is_chosen,
@@ -104,6 +104,8 @@ def create_app() -> FastAPI:
                 "the path at the proxy); it discloses platform-wide volumes"
             )
 
+        errors.warn_if_unconfigured()
+
         stop = asyncio.Event()
         tasks: list[asyncio.Task] = []
 
@@ -185,6 +187,17 @@ def create_app() -> FastAPI:
         token = observability.bind_trace_id(trace_id)
         try:
             response = await call_next(request)
+        except Exception as exc:
+            # Captured here rather than in a handler for `Exception`, deliberately. Such
+            # a handler is installed as ServerErrorMiddleware, which sits *outside* this
+            # middleware — so by the time it ran, the trace id would already be unbound
+            # and the report could not name it. The exception is re-raised so the
+            # response is exactly what Starlette would have sent without us.
+            template = getattr(request.scope.get("route"), "path", None) or "<unmatched>"
+            await errors.report_exception(
+                exc, where=f"api {request.method} {template}", context=request.url.path
+            )
+            raise
         finally:
             observability.release_trace_id(token)
         response.headers["X-ChmabaPay-Trace"] = trace_id

@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     # means the loop is gone rather than busy.
     alert_worker_stall_seconds: float = 60.0
     alert_webhook_backlog: int = 50
+    # Error tracking (P1-3) shares that channel. First sighting of an exception is
+    # sent immediately; repeats inside this window are counted and summarised with
+    # the next report. Five minutes is long enough that a hot error cannot flood the
+    # channel and short enough that an ongoing one is not forgotten.
+    error_report_interval_seconds: float = 300.0
 
     # P1-4 compliance. The published version of the merchant agreement, recorded
     # against the account when it is accepted. Bump it when the text changes so

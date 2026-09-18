@@ -22,12 +22,13 @@ wallet and settled. The second also delivered a **signature-verified**
 `payment.completed` — HMAC recomputed from the exact 498 bytes that went over the
 wire — 104 ms after the row was written. `P0-2` is closed.
 
-**Verified absent** (checked in source, not assumed): **error tracking**. Audit
-coverage outside plan/billing, metrics, CI, Alembic and rate limiting were all on
-this list and now exist — see P0-1, P0-4, P1-1, P1-2 and P1-3.
+**Verified absent** (checked in source, not assumed): *error tracking* was the last
+entry on this list. Audit coverage outside plan/billing, metrics, CI, Alembic, rate
+limiting and exception reporting were all on it, and all now exist — see P0-1,
+P0-4, P1-1, P1-2 and P1-3.
 
 **Gate in place.** `ruff`, `alembic upgrade head` + `alembic check`, and `pytest`
-(169 selected, 2 `live` deselected, on Postgres 16 and Redis 7) run on every push
+(184 selected, 2 `live` deselected, on Postgres 16 and Redis 7) run on every push
 and pull request. Making the suite offline-runnable is what turned it from
 something that only passed on a developer's laptop into a gate. Locally it defaults
 to SQLite, which spends ~13 s per test rebuilding the schema — set
@@ -715,6 +716,7 @@ its own), one handler, `propagate = False`.
 | `chmabapay_queue_jobs` | `queue`, `outcome` | transport, at scrape time |
 | `chmabapay_worker_heartbeat_age_seconds` | `queue` | transport, at scrape time |
 | `chmabapay_alerts_raised_total` | `condition` | the watcher |
+| `chmabapay_errors_total` | `where`, `type` | `errors.report_exception` |
 
 Three decisions worth keeping:
 
@@ -815,9 +817,52 @@ stated rather than implied:
   > remains untested is narrower: no *condition* has ever fired, since no worker has
   > stalled and no double charge has occurred. See `docs/deploy.md` §11.
 
-Error tracking (Sentry or equivalent) was on the "verified absent" list below and
-is **still absent** — this item covered metrics and alerting, not exception
-reporting.
+*Error tracking.* Listed as absent when this item was written; it now exists, in
+`errors.py`. This is not Sentry and does not pretend to be: no grouping UI, no
+stack-trace search, nothing survives a redeploy but the log lines. What it is is
+the capture point plus the channel P0-5 built — which is the part that reaches a
+human today, and a Sentry-style transport would attach at `_send` rather than
+replace any of this. Two properties make it safe to switch on:
+
+- **Reported once, then summarised.** A fingerprint — the site, the exception type,
+  and the message with its variable parts collapsed to `#` — is sent the first time
+  it is seen. Repeats inside `error_report_interval_seconds` (default 300s) are
+  counted, not sent, and the count rides along with the next report. A hot error
+  that sends a message per occurrence gets the channel muted, and a muted channel
+  loses the *next* genuine alert — worse than no tracking at all. The dashes in a
+  uuid have to collapse as one unit for this to hold: the bare hex rule fragments
+  `8f3c1d2e-4a5b-…` into `#-#-#-#-#`, which no longer matches the same payment's
+  short id, and matching those two spellings is the entire point of the rule.
+- **Never raises, never swallows.** The traceback is logged at ERROR
+  *unconditionally, before delivery is attempted*, so the log is complete even when
+  the channel is not; a failed delivery is logged and dropped rather than allowed
+  to replace the failure being reported. The counter is deliberately separate from
+  the message: the gap between "counted 400 times" and "sent once" is the severity.
+
+Two attach points. Unhandled **API** exceptions are captured in the trace
+middleware rather than in a handler for `Exception` — such a handler is installed
+as `ServerErrorMiddleware`, which sits *outside* the middleware, so by the time it
+ran the trace id would already be unbound and the report could not name it. The
+exception is re-raised, so the response is exactly what Starlette would have sent
+without us. **Workers** report on every failed attempt, not only the one that kills
+the job: the first retry is the earliest signal that something new is broken, and
+the dedup is what makes that free. `where` is a metric label, so it is a small
+fixed set — `api <METHOD> <route template>` and `worker:<queue>` — while the
+free-text detail (the concrete path, the job's dedup key and attempt) never becomes
+one.
+
+**Tests.** `tests/test_errors.py`, 10 cases: a new error is sent and a repeat is
+not; the next window carries how many were suppressed; the window is per error, not
+global; ids, uuids and amounts collapse to one fingerprint while genuinely
+different messages stay distinct; the same message from two sites is two errors;
+every occurrence is counted even when it is not sent; a delivery failure does not
+become a second exception; an unhandled route answers `500` *and* reports with the
+request's trace id still bound — asserted as *not* the unbound `-`, which is what
+it would say if the capture sat one layer too far out; and a worker failure reports
+its queue and its job. The window is tested with a hand-cranked clock rather than a
+sleep, and the helper replaces `errors.time` instead of patching `time.monotonic`:
+the latter edits the shared module object and stops the clock for the whole
+process.
 
 ### P1-4 Compliance baseline
 

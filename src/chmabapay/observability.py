@@ -143,6 +143,14 @@ ALERTS_RAISED = Counter(
     "Operator alerts raised, by condition.",
     ["condition"],
 )
+# Distinct from ALERTS_RAISED: this counts every occurrence of an unhandled
+# exception, including the ones the alert channel deliberately suppressed. The gap
+# between the two is how you tell "one error" from "one error, ten thousand times".
+ERRORS_TOTAL = Counter(
+    "chmabapay_errors_total",
+    "Unhandled exceptions captured, by site and exception type.",
+    ["where", "type"],
+)
 
 
 def _as_utc(value: datetime) -> datetime:

@@ -11,6 +11,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
+from .. import errors
 from .job import Job
 
 
@@ -147,6 +148,15 @@ class QueueTransport(ABC):
             raise
         except Exception as exc:  # noqa: BLE001 - retries own policy
             success = False
+            # Reported on every failure, not only on the one that kills the job: the
+            # first retry is the earliest signal that something new is broken. Repeats
+            # of the same exception are counted rather than sent, so a job that burns
+            # ten attempts is one alert carrying a count, not ten messages.
+            await errors.report_exception(
+                exc,
+                where=f"worker:{queue_name}",
+                context=f"{job.dedup_key or 'job'} attempt {job.attempts}",
+            )
             if job.attempts >= job.max_attempts:
                 result = {"error": f"dead:{type(exc).__name__}:{exc}"}
                 retry_after = None
@@ -155,7 +165,6 @@ class QueueTransport(ABC):
                 result = {"error": f"{type(exc).__name__}:{exc}", "backoff": backoff_sec}
                 retry_after = backoff_sec
         await self.mark_done(job, success=success, result=result, retry_after_seconds=retry_after)
-        _ = queue_name  # reserved for future queue-specific logging
 
 
 class Worker(ABC):
