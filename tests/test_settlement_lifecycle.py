@@ -207,7 +207,7 @@ async def test_a_settled_payment_can_be_reversed(client):
     platform can learn that money went back.
     """
     account = await make_account()
-    await make_store(account, name="Refund Store", owner="Refund")
+    store = await make_store(account, name="Refund Store", owner="Refund")
     raw_key, _ = await make_key(account)
     headers = {"Authorization": f"Bearer {raw_key}"}
 
@@ -247,6 +247,38 @@ async def test_a_settled_payment_can_be_reversed(client):
     audited = await _rows(models.AuditLog, action="payment.reversed")
     assert len(audited) == 1
     assert str(audited[0].target_id) == str(row.id)
+
+    # The dashboards read their money cards from this summary, so a refund has to
+    # move the money and not only flip a status. `total_matching_paid_*` counts just
+    # status=paid, so the reversed totals are the only thing that explains why the
+    # settled figure is below what was actually collected.
+    summary = (
+        await client.get("/v1/reports/payments.json", headers=headers)
+    ).json()["summary"]
+    assert summary["total_matching_rows"] == 1
+    assert summary["total_matching_paid_count"] == 0
+    assert summary["total_matching_paid_amount_cents"] == 0
+    assert summary["total_matching_reversed_count"] == 1
+    assert summary["total_matching_reversed_amount_cents"] == 950
+
+    # Same figures through the store scope the store overview asks for.
+    scoped = (
+        await client.get(
+            f"/v1/reports/payments.json?store_id={store.public_id}", headers=headers
+        )
+    ).json()["summary"]
+    assert scoped["total_matching_reversed_count"] == 1
+    assert scoped["total_matching_reversed_amount_cents"] == 950
+
+    # The caller's own status filter must not zero the refund count: this request is
+    # asking for paid rows, and refunds are reported beside them, not within them.
+    filtered = (
+        await client.get(
+            "/v1/reports/payments.json?statuses=paid", headers=headers
+        )
+    ).json()["summary"]
+    assert filtered["total_matching_paid_count"] == 0
+    assert filtered["total_matching_reversed_count"] == 1
 
 
 async def test_reversing_is_refused_for_money_that_never_arrived(client):

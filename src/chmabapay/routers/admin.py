@@ -700,6 +700,245 @@ async def list_all_invoices(
 
 
 # --------------------------------------------------------------------------- #
+# Payments
+# --------------------------------------------------------------------------- #
+
+
+class AdminPaymentRowOut(BaseModel):
+    id: str
+    status: str
+    amount_cents: int
+    currency: str
+    reference_id: str | None
+    account_id: int
+    account_email: str | None
+    store_public_id: str
+    store_name: str
+    created_at: datetime
+    expires_at: datetime
+    paid_at: datetime | None
+    reversed_at: datetime | None
+    # When reconciliation for this payment stopped. Null means we are still watching
+    # it, which is the difference between "we looked and found nothing" and "we
+    # never looked" — the distinction an operator needs when a customer claims the
+    # money left their account.
+    detection_closed_at: datetime | None
+
+
+class AdminPaymentListOut(BaseModel):
+    data: list[AdminPaymentRowOut]
+    pagination: Pagination
+
+
+@router.get("/payments", response_model=AdminPaymentListOut)
+async def list_all_payments(
+    status: str | None = None,
+    account_id: int | None = None,
+    q: str | None = None,
+    page: int = 1,
+    per_page: int = 25,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Every payment on the platform, newest first, with its account and store.
+
+    Read-only and unscoped on purpose: the operator's question is "is anything
+    wrong anywhere", and until this existed the console could only count payments
+    per account — it could not show one. A merchant reporting that a payment
+    "never settled" had no in-product answer platform-side.
+
+    `q` matches the payment's public id or the merchant's own `reference_id`,
+    which is the string a support thread actually contains. `status` covers the
+    states worth hunting for (`pending`, `scanned`, `failed`, `expired`,
+    `superseded`, `reversed`), and `account_id` narrows it to one merchant.
+    """
+    page, per_page, offset = _clamp_paging(page, per_page)
+
+    filters = []
+    if status:
+        filters.append(models.Payment.status == status)
+    if account_id is not None:
+        filters.append(models.Store.account_id == account_id)
+    if q:
+        needle = f"%{q.strip()}%"
+        filters.append(
+            or_(
+                models.Payment.public_id.ilike(needle),
+                models.Payment.reference_id.ilike(needle),
+            )
+        )
+
+    total_rows = (
+        await session.execute(
+            select(func.count(models.Payment.id))
+            .join(models.Store, models.Store.id == models.Payment.store_id)
+            .where(*filters)
+        )
+    ).scalar_one() or 0
+
+    rows = (
+        await session.execute(
+            select(models.Payment, models.Store, models.Account)
+            .join(models.Store, models.Store.id == models.Payment.store_id)
+            .join(models.Account, models.Account.id == models.Store.account_id)
+            .where(*filters)
+            # By `id`, not `created_at`: ids are monotonic and created_at is not
+            # guaranteed distinct, so a tie would let a row appear on two pages.
+            .order_by(models.Payment.id.desc())
+            .limit(per_page)
+            .offset(offset)
+        )
+    ).all()
+
+    return AdminPaymentListOut(
+        data=[
+            AdminPaymentRowOut(
+                id=payment.public_id,
+                status=payment.status,
+                amount_cents=payment.amount_cents,
+                currency=payment.currency,
+                reference_id=payment.reference_id,
+                account_id=account.id,
+                account_email=account.email,
+                store_public_id=store.public_id,
+                store_name=store.name,
+                created_at=payment.created_at,
+                expires_at=payment.expires_at,
+                paid_at=payment.paid_at,
+                reversed_at=payment.reversed_at,
+                detection_closed_at=payment.detection_closed_at,
+            )
+            for payment, store, account in rows
+        ],
+        pagination=Pagination(
+            page=page,
+            per_page=per_page,
+            total_rows=total_rows,
+            total_pages=(total_rows + per_page - 1) // per_page,
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Webhook deliveries
+# --------------------------------------------------------------------------- #
+
+
+class AdminDeliveryRowOut(BaseModel):
+    id: int
+    event_id: str
+    event_type: str
+    status: str
+    attempts: int
+    last_response_status: int | None
+    last_error: str | None
+    next_attempt_at: datetime | None
+    account_id: int
+    account_email: str | None
+    endpoint_id: int
+    endpoint_url: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminDeliveryListOut(BaseModel):
+    data: list[AdminDeliveryRowOut]
+    pagination: Pagination
+
+
+@router.get("/deliveries", response_model=AdminDeliveryListOut)
+async def list_all_deliveries(
+    status: str | None = None,
+    endpoint_id: int | None = None,
+    account_id: int | None = None,
+    page: int = 1,
+    per_page: int = 25,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Every webhook delivery attempt on the platform, newest first.
+
+    The merchant-facing route (`GET /v1/webhooks/{id}/deliveries`) answers "did
+    *my* endpoint receive it", and only for an endpoint the caller owns. Nobody
+    could answer "is the webhook rail delivering at all", which is the question
+    that matters when three merchants report silence at once and each of them
+    reasonably suspects their own integration.
+
+    `status` filters on `pending`/`retrying`/`success`/`failed`; a pile of
+    `retrying` rows with `next_attempt_at` far in the past is the signature of a
+    stalled sender. `last_error` is carried through because the transport-level
+    reason — DNS, TLS, a refused connection — is what tells an operator whether
+    the destination or our sender is at fault.
+    """
+    page, per_page, offset = _clamp_paging(page, per_page)
+
+    filters = []
+    if status:
+        filters.append(models.EventDelivery.status == status)
+    if endpoint_id is not None:
+        filters.append(models.EventDelivery.endpoint_id == endpoint_id)
+    if account_id is not None:
+        filters.append(models.WebhookEndpoint.account_id == account_id)
+
+    total_rows = (
+        await session.execute(
+            select(func.count(models.EventDelivery.id))
+            .join(
+                models.WebhookEndpoint,
+                models.WebhookEndpoint.id == models.EventDelivery.endpoint_id,
+            )
+            .where(*filters)
+        )
+    ).scalar_one() or 0
+
+    rows = (
+        await session.execute(
+            select(
+                models.EventDelivery, models.Event, models.WebhookEndpoint, models.Account
+            )
+            .join(models.Event, models.Event.id == models.EventDelivery.event_id)
+            .join(
+                models.WebhookEndpoint,
+                models.WebhookEndpoint.id == models.EventDelivery.endpoint_id,
+            )
+            .join(models.Account, models.Account.id == models.WebhookEndpoint.account_id)
+            .where(*filters)
+            .order_by(models.EventDelivery.id.desc())
+            .limit(per_page)
+            .offset(offset)
+        )
+    ).all()
+
+    return AdminDeliveryListOut(
+        data=[
+            AdminDeliveryRowOut(
+                id=delivery.id,
+                event_id=delivery.event_id,
+                event_type=event.type,
+                status=delivery.status,
+                attempts=delivery.attempts,
+                last_response_status=delivery.last_response_status,
+                last_error=delivery.last_error,
+                next_attempt_at=delivery.next_attempt_at,
+                account_id=account.id,
+                account_email=account.email,
+                endpoint_id=endpoint.id,
+                endpoint_url=endpoint.url,
+                created_at=delivery.created_at,
+                updated_at=delivery.updated_at,
+            )
+            for delivery, event, endpoint, account in rows
+        ],
+        pagination=Pagination(
+            page=page,
+            per_page=per_page,
+            total_rows=total_rows,
+            total_pages=(total_rows + per_page - 1) // per_page,
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Overview
 # --------------------------------------------------------------------------- #
 

@@ -1,10 +1,10 @@
-"""Password sign-in and the admin plan CRUD surface."""
+"""Password sign-in, the admin plan CRUD surface, and the console's read-only views."""
 
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest_asyncio
-from conftest import make_account
+from conftest import make_account, make_key, make_store, make_webhook
 from sqlalchemy import select
 
 from chmabapay import models
@@ -232,6 +232,169 @@ async def test_me_reports_how_the_session_was_created(client):
 
     assert res.status_code == 200
     assert res.json()["auth_method"] == "google"
+
+
+async def test_admin_payment_feed_spans_the_platform(client):
+    """The console could count a merchant's payments but never show one.
+
+    That gap is the whole reason this endpoint exists: a merchant reporting that a
+    payment "never settled" had no in-product answer platform-side.
+    """
+    admin = await make_admin()
+    merchant = await make_account(email="sokha@chmaba.test", name="Sokha Cafe")
+    store = await make_store(merchant, name="Sokha Cafe", owner="Sokha")
+    raw_key, _ = await make_key(merchant)
+
+    created = (
+        await client.post(
+            "/v1/payments",
+            json={
+                "amount": 4.5,
+                "reference_id": "order_7",
+                "store": store.public_id,
+                "hosted_qr": False,
+            },
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+    ).json()
+    assert created["status"] == "pending"
+
+    await sign_in(client, admin.email, PASSWORD)
+
+    body = (await client.get("/v1/admin/payments")).json()
+    row = next(p for p in body["data"] if p["id"] == created["id"])
+    assert row["account_id"] == merchant.id
+    assert row["account_email"] == merchant.email
+    assert row["store_public_id"] == store.public_id
+    assert row["store_name"] == "Sokha Cafe"
+    assert row["amount_cents"] == 450
+    assert row["currency"] == "USD"
+    assert row["reference_id"] == "order_7"
+    # A pending code we are still reconciling, which is what distinguishes it from
+    # one the detection window has already closed on.
+    assert row["paid_at"] is None
+    assert row["detection_closed_at"] is None
+
+    # `q` is the string a support thread actually contains: our public id, or the
+    # merchant's own reference.
+    by_reference = (await client.get("/v1/admin/payments?q=order_7")).json()
+    assert [p["id"] for p in by_reference["data"]] == [created["id"]]
+    by_public_id = (await client.get(f"/v1/admin/payments?q={created['id']}")).json()
+    assert [p["id"] for p in by_public_id["data"]] == [created["id"]]
+
+    # ...and a partial match still finds it, because an operator pastes whatever
+    # the merchant sent them rather than a tidied-up identifier.
+    partial = (await client.get("/v1/admin/payments?q=order")).json()
+    assert created["id"] in [p["id"] for p in partial["data"]]
+
+    narrowed = (await client.get(f"/v1/admin/payments?account_id={merchant.id}")).json()
+    assert [p["id"] for p in narrowed["data"]] == [created["id"]]
+    # The admin's own account owns no stores, so it has taken no payments.
+    assert (await client.get(f"/v1/admin/payments?account_id={admin.id}")).json()["data"] == []
+
+    assert (await client.get("/v1/admin/payments?status=paid")).json()["data"] == []
+    assert [
+        p["id"] for p in (await client.get("/v1/admin/payments?status=pending")).json()["data"]
+    ] == [created["id"]]
+
+    # Settling it moves the timestamp an operator reads to answer "did the money
+    # arrive", rather than only changing the status pill.
+    assert (await client.post(f"/_dev/payments/{created['id']}/pay")).status_code == 200
+    settled = (await client.get("/v1/admin/payments?status=paid")).json()["data"]
+    assert [p["id"] for p in settled] == [created["id"]]
+    assert settled[0]["paid_at"] is not None
+
+
+async def test_admin_delivery_feed_shows_a_stalled_sender(client):
+    """`GET /v1/admin/deliveries` answers "is the webhook rail delivering at all".
+
+    The merchant-facing route answers "did *my* endpoint receive it" and only for
+    an endpoint the caller owns, so three merchants reporting silence at once each
+    had to suspect their own integration.
+    """
+    admin = await make_admin()
+    merchant = await make_account(email="sokha@chmaba.test", name="Sokha Cafe")
+    store = await make_store(merchant, name="Sokha Cafe", owner="Sokha")
+    endpoint = await make_webhook(merchant, url="https://hooks.example.com/sokha")
+    raw_key, _ = await make_key(merchant)
+
+    created = (
+        await client.post(
+            "/v1/payments",
+            json={
+                "amount": 2.0,
+                "store": store.public_id,
+                "hosted_qr": False,
+            },
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+    ).json()
+    # Settling a payment is what fans the event out to the account's endpoints, so
+    # this goes through the real enqueue path rather than inserting rows by hand.
+    assert (await client.post(f"/_dev/payments/{created['id']}/pay")).status_code == 200
+
+    async with session_factory() as session:
+        delivery = (
+            (
+                await session.execute(
+                    select(models.EventDelivery).order_by(models.EventDelivery.id.desc())
+                )
+            )
+            .scalars()
+            .first()
+        )
+        assert delivery is not None
+        delivery.status = models.DELIVERY_RETRYING
+        delivery.attempts = 3
+        delivery.last_response_status = 502
+        delivery.last_error = "ConnectError: connection refused"
+        # Two hours in the past: the sender should have tried again long ago, which
+        # is the signature of a stalled worker rather than an endpoint refusing.
+        delivery.next_attempt_at = datetime.now(UTC) - timedelta(hours=2)
+        await session.commit()
+
+    await sign_in(client, admin.email, PASSWORD)
+    body = (await client.get("/v1/admin/deliveries")).json()
+    row = next(d for d in body["data"] if d["endpoint_id"] == endpoint.id)
+    assert row["account_id"] == merchant.id
+    assert row["account_email"] == merchant.email
+    assert row["endpoint_url"] == "https://hooks.example.com/sokha"
+    assert row["event_type"] == models.EVENT_COMPLETED
+    assert row["status"] == "retrying"
+    assert row["attempts"] == 3
+    assert row["last_response_status"] == 502
+    assert row["last_error"] == "ConnectError: connection refused"
+
+    # The filters an operator reaches for when deciding whether this is one endpoint
+    # or the whole rail.
+    retrying = (await client.get("/v1/admin/deliveries?status=retrying")).json()
+    assert [d["id"] for d in retrying["data"]] == [row["id"]]
+    assert (await client.get("/v1/admin/deliveries?status=success")).json()["data"] == []
+
+    both = await client.get(f"/v1/admin/deliveries?status=retrying&account_id={merchant.id}")
+    assert [d["id"] for d in both.json()["data"]] == [row["id"]]
+    assert (await client.get(f"/v1/admin/deliveries?account_id={admin.id}")).json()["data"] == []
+
+    by_endpoint = await client.get(f"/v1/admin/deliveries?endpoint_id={endpoint.id}")
+    assert [d["id"] for d in by_endpoint.json()["data"]] == [row["id"]]
+
+
+async def test_admin_read_views_are_closed_to_everyone_else(client):
+    """Both feeds expose every account's money and integration health."""
+    for path in ("/v1/admin/payments", "/v1/admin/deliveries"):
+        assert (await client.get(path)).status_code == 401
+
+    # A signed-in merchant who is not a platform admin. The gate is on
+    # `is_platform_admin`, not on holding a session, so signing in is not enough.
+    merchant = await make_account(email="sokha@chmaba.test", name="Sokha Cafe")
+    async with session_factory() as session:
+        row = await session.get(models.Account, merchant.id)
+        row.password_hash = hash_password(PASSWORD)
+        await session.commit()
+
+    assert (await sign_in(client, merchant.email, PASSWORD)).status_code == 200
+    for path in ("/v1/admin/payments", "/v1/admin/deliveries"):
+        assert (await client.get(path)).status_code == 403
 
 
 async def seed_default_plans_via_session() -> None:

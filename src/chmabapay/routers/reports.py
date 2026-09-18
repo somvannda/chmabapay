@@ -258,6 +258,28 @@ async def export_payments_json(
     paid_count_res = await session.execute(paid_count_stmt)
     total_matching_paid_count = paid_count_res.scalar_one() or 0
 
+    # Refunds get their own line because the two figures above count only
+    # `status == "paid"` — a reversed payment is already excluded from the paid
+    # total, so a dashboard reading it has no way to say why the number is lower
+    # than the merchant expects. One query for both the count and the sum: they
+    # are always wanted together.
+    reversed_stmt = select(
+        func.count(models.Payment.id),
+        func.coalesce(func.sum(models.Payment.amount_cents), 0),
+    ).where(models.Payment.status == models.PAYMENT_REVERSED)
+    reversed_params = dict(params_dict)
+    # The caller's own `statuses` filter must not narrow this: a request for
+    # `?statuses=paid` is asking for paid rows, not for a refund count that
+    # silently reads zero.
+    reversed_params["statuses_list"] = []
+    reversed_stmt = await _build_filter_stmt(
+        reversed_stmt, ctx.account, ctx, reversed_params, session
+    )
+    reversed_res = await session.execute(reversed_stmt)
+    total_matching_reversed_count, total_matching_reversed_amount_cents = (
+        reversed_res.one()
+    )
+
     total_pages = (total_matching_rows + per_page - 1) // per_page if total_matching_rows > 0 else 0
 
     stmt = select(
@@ -293,6 +315,10 @@ async def export_payments_json(
             "total_matching_paid_count": total_matching_paid_count,
             "total_matching_paid_amount_cents": total_matching_paid_amount_cents,
             "total_matching_paid_amount_formatted": money_to_str(total_matching_paid_amount_cents),
+            "total_matching_reversed_count": int(total_matching_reversed_count or 0),
+            "total_matching_reversed_amount_cents": int(
+                total_matching_reversed_amount_cents or 0
+            ),
             "filters_applied": filters_applied,
         },
         "pagination": {

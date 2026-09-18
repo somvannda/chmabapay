@@ -443,8 +443,6 @@ def _setup_cases() -> list[dict[str, Any]]:
             body={
                 "name": "Integration Test Store",
                 "external_id": "integration-test-$nonce",
-                "owner_name": "Integration Test",
-                "owner_email": "integration@example.com",
                 "link": {"raw_link": "$payway_link", "merchant_account_id": "$payway_slug"},
             },
             expect={"status": 201, "json_has": ["id", "status"]},

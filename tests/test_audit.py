@@ -44,6 +44,7 @@ AUDITED: dict[tuple[str, str], tuple[str, ...]] = {
     ("put", "/v1/stores/{public_id}"): ("store.updated", "store.link_set"),
     ("patch", "/v1/stores/{public_id}"): ("store.updated", "store.link_set"),
     ("post", "/v1/stores/{public_id}/disable"): ("store.disabled",),
+    ("post", "/v1/stores/{public_id}/enable"): ("store.enabled",),
 }
 
 # Mutating verbs that change no state, so there is no action to attribute. Both
@@ -333,6 +334,17 @@ async def test_store_mutations_are_recorded(client):
     disabled = await client.post(f"/v1/stores/{public_id}/disable", headers=headers)
     assert disabled.status_code == 200
 
+    enabled = await client.post(f"/v1/stores/{public_id}/enable", headers=headers)
+    assert enabled.status_code == 200
+    # This store never had a link, so it comes back as a draft rather than active:
+    # `active` would advertise a store with nowhere to send money.
+    assert enabled.json()["status"] == "draft"
+
+    # Enabling a store that is not disabled changes nothing, so it records nothing —
+    # the rule an empty PATCH follows.
+    again = await client.post(f"/v1/stores/{public_id}/enable", headers=headers)
+    assert again.status_code == 200
+
     written = {entry.action: entry for entry in await rows()}
     assert written["store.created"].details == {
         "name": "Draft Only",
@@ -342,6 +354,8 @@ async def test_store_mutations_are_recorded(client):
     assert "store.link_set" not in written
     assert written["store.updated"].details["fields"] == ["name"]
     assert written["store.disabled"].actor_account_id == account.id
+    assert written["store.enabled"].details == {"name": "Renamed", "status": "draft"}
+    assert len(await rows("store.enabled")) == 1
 
 
 async def test_an_empty_store_patch_is_not_recorded(client):

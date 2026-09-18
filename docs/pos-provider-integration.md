@@ -68,8 +68,6 @@ Content-Type: application/json
 {
   "name": "Alpha Mart",
   "external_id": "merchant-alpha-77",
-  "owner_name": "Alpha",
-  "owner_email": "owner@alphamart.example",
   "support_email": "help@alphamart.example",
   "brand_color": "#0f766e",
   "logo_image_url": "https://cdn.example.com/alpha.png",
@@ -95,7 +93,7 @@ Fields:
 | `link.merchant_name` | recommended | The business name the payer sees in their banking app. |
 | `logo_image_url`, `brand_color`, `whitelabel_css` | no | Branding fields, see the note below. Requires the white-label entitlement. |
 | `redirect_success_url`, `redirect_failure_url` | no | Where the hosted checkout page redirects the payer. |
-| `owner_name`, `owner_email`, `owner_phone`, `city`, `support_email`, `telegram_chat_id` | no | Descriptive metadata. |
+| `city`, `support_email`, `telegram_chat_id` | no | Descriptive metadata. |
 
 **Status.** A store created *with* a `link` becomes `active`. A store created *without* one stays
 `draft` and cannot take payments (`400 payment_link_disabled`) until you attach a link.
@@ -230,7 +228,6 @@ Body:
     "store": {
       "id": "st_ro-ZI6Qcwo5ZZwvXL8or-RY-",
       "name": "Alpha Mart",
-      "owner_email": "owner@alphamart.example",
       "redirect_success_url": "https://pos.example.com/paid/merchant-alpha-77"
     },
     "merchant": { "external_id": "merchant-alpha-77" }

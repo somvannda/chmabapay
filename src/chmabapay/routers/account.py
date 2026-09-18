@@ -40,10 +40,17 @@ def _account_profile(account: models.Account) -> dict[str, Any]:
 
 
 class AccountPatch(BaseModel):
+    """Fields a merchant may change about their own account.
+
+    Only fields that `_apply_account_patch` actually writes belong here: an
+    accepted-but-ignored field is worse than a missing one, because the caller
+    gets a 200 and believes the change happened. (`owner_name`/`owner_phone`
+    used to sit here for that reason — they are **store** columns, not account
+    columns, and nothing ever wrote them.)
+    """
+
     name: str | None = Field(default=None, max_length=120)
     email: str | None = Field(default=None, max_length=255)
-    owner_name: str | None = Field(default=None, max_length=120)
-    owner_phone: str | None = Field(default=None, max_length=40)
     account_type: Literal["individual", "business"] | None = None
 
 

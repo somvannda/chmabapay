@@ -165,8 +165,6 @@ async def make_store(
             StoreCreate(
                 name=name,
                 external_id=external_id,
-                owner_name=owner,
-                owner_email=f"{owner}@example.com",
                 link=LinkIn(
                     raw_link=f"https://link.payway.com.kh/{owner.lower()}",
                     merchant_account_id=f"{owner.lower()}payway",

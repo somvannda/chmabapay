@@ -38,7 +38,6 @@ account's. Stores are created manually in the dashboard **or automatically via t
 | account_id | fk → accounts (the hosting platform) |
 | created_via | dashboard / api |
 | name | merchant name shown on QR (≤ 25 chars KHQR limit) |
-| owner_name, owner_phone, owner_email | the sub-merchant's human identity (routing + support) |
 | logo_image_url, brand_color, whitelabel_css | white-label branding for hosted checkout; rendered only when the owning account has `whitelabel_enabled` |
 | city | KHQR field (≤ 15 chars) |
 | support_email | |

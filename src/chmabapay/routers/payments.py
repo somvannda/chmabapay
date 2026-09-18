@@ -91,6 +91,7 @@ def payment_out(
         bakong_ref=payment.bakong_ref,
         reissued_from=reissued_from,
         reversed_at=payment.reversed_at,
+        reversal_reason=payment.reversal_reason,
         detection_closed_at=payment.detection_closed_at,
     )
 
@@ -346,20 +347,39 @@ async def list_payments(
     ctx: AuthContext = Depends(get_current_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
-    target = await resolve_target(session, ctx, store, merchant)
-    payments = await svc.list_payments(session, target.id, status=status, limit=limit)
+    """List payments, newest first.
+
+    Scoped by `store` or `merchant` when given. With neither, the whole account is
+    listed across all of its stores — which is what the portal's payments page asks
+    for and what this endpoint has always documented ("list the account's
+    payments"). It previously fell back to the account's only active store, so any
+    account running two or more stores got 400 `store_required_or_merchant_required`
+    and an empty list.
+    """
+    if store or merchant:
+        target = await resolve_target(session, ctx, store, merchant)
+        payments = await svc.list_payments(
+            session, target.id, status=status, limit=limit
+        )
+        rows = [(payment, target) for payment in payments]
+    else:
+        rows = await svc.list_payments_for_account(
+            session, ctx.account.id, status=status, limit=limit
+        )
     items = [
         schemas.PaymentListed(
-            id=p.public_id,
-            status=p.status,
-            amount=money_to_str(p.amount_cents),
-            currency=p.currency,
-            reference_id=p.reference_id,
-            created_at=p.created_at,
-            expires_at=p.expires_at,
-            approved_at=p.approved_at,
+            id=payment.public_id,
+            status=payment.status,
+            amount=money_to_str(payment.amount_cents),
+            currency=payment.currency,
+            reference_id=payment.reference_id,
+            store=target_store.public_id,
+            created_at=payment.created_at,
+            expires_at=payment.expires_at,
+            approved_at=payment.approved_at,
+            paid_at=payment.paid_at,
         )
-        for p in payments
+        for payment, target_store in rows
     ]
     return PaymentListResponse(data=items)
 

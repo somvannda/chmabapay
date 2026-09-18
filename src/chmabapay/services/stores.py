@@ -49,9 +49,6 @@ async def create_store(session: AsyncSession, account: models.Account, payload: 
         created_via="api",
         name=payload.name,
         external_id=payload.external_id,
-        owner_name=payload.owner_name,
-        owner_phone=payload.owner_phone,
-        owner_email=payload.owner_email,
         city=payload.city,
         support_email=payload.support_email,
         redirect_success_url=payload.redirect_success_url,
@@ -185,6 +182,51 @@ async def disable_store(
         details={"name": store.name},
     )
     await session.commit()
+    return store
+
+
+async def enable_store(
+    session: AsyncSession, account: models.Account, store_public_id: str
+) -> models.Store:
+    """Bring a disabled store back.
+
+    `disable_store` had no counterpart, and both `update_store` and `set_store_link`
+    refuse a disabled store with `store_disabled` — so in practice disabling was
+    one-way: the merchant's own dashboard offers the button, one press stops the
+    store's payment links, keys and webhooks from working, and the only route back
+    was a manual UPDATE on the database.
+
+    The status it returns to is derived rather than remembered, because
+    `disable_store` overwrites whatever was there. `active` only when the store still
+    has a payment link; otherwise `draft`. Restoring `active` unconditionally would
+    advertise a store as able to take payments when it has no destination to send
+    them to — which is the state the link check in `create_payment` exists to catch.
+    """
+    store = await get_store(session, account, store_public_id)
+    if store.status != models.STORE_DISABLED:
+        # Already live. Nothing changed, so nothing is recorded — the same rule
+        # `update_store` follows for an empty PATCH.
+        return store
+
+    has_link = (
+        await session.execute(
+            select(models.PaymentLink.id).where(
+                models.PaymentLink.store_id == store.id
+            )
+        )
+    ).scalar_one_or_none()
+    restored = models.STORE_ACTIVE if has_link is not None else models.STORE_DRAFT
+    store.status = restored
+    audit.record(
+        session,
+        actor=account,
+        action="store.enabled",
+        target_type="Store",
+        target_id=store.id,
+        details={"name": store.name, "status": restored},
+    )
+    await session.commit()
+    await session.refresh(store)
     return store
 
 

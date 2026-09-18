@@ -105,7 +105,6 @@ def _build_test_event_payload() -> dict:
             "store": {
                 "id": "store_test_" + secrets.token_urlsafe(4),
                 "name": "Test Store",
-                "owner_email": "test@example.com",
                 "redirect_success_url": "https://example.com/success",
             },
         },

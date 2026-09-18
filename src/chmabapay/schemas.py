@@ -30,9 +30,6 @@ class LinkCreate(BaseModel):
 class StoreCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     external_id: str | None = Field(default=None, max_length=255)
-    owner_name: str | None = Field(default=None, max_length=120)
-    owner_phone: str | None = Field(default=None, max_length=40)
-    owner_email: str | None = Field(default=None, max_length=255)
     city: str = Field(default="Phnom Penh", max_length=15)
     support_email: str | None = Field(default=None, max_length=255)
     redirect_success_url: str | None = None
@@ -71,8 +68,6 @@ class StoreOut(BaseModel):
     db_id: int
     name: str
     external_id: str | None
-    owner_name: str | None
-    owner_email: str | None
     city: str
     status: str
     support_email: str | None
@@ -92,8 +87,6 @@ class StoreOut(BaseModel):
             db_id=store.id,
             name=store.name,
             external_id=store.external_id,
-            owner_name=store.owner_name,
-            owner_email=store.owner_email,
             city=store.city,
             status=store.status,
             support_email=store.support_email,
@@ -111,9 +104,6 @@ class StoreOut(BaseModel):
 class StorePatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     external_id: str | None = Field(default=None, max_length=255)
-    owner_name: str | None = Field(default=None, max_length=120)
-    owner_phone: str | None = Field(default=None, max_length=40)
-    owner_email: str | None = Field(default=None, max_length=255)
     city: str | None = Field(default=None, max_length=15)
     support_email: str | None = Field(default=None, max_length=255)
     redirect_success_url: str | None = None
@@ -182,9 +172,16 @@ class PaymentListed(BaseModel):
     amount: str
     currency: str
     reference_id: str | None
+    # Which store took the payment. Required by any list that spans stores, which is
+    # exactly what an account-wide list is — without it the portal can only guess.
+    store: str | None = None
     created_at: datetime
     expires_at: datetime
     approved_at: datetime | None
+    # When the money actually arrived. This was missing while `PaymentOut` had it, so
+    # the store overview filtered a field the list endpoint never sent and its
+    # "Paid today" card read $0.00 no matter how much had been collected.
+    paid_at: datetime | None = None
 
 
 class PaymentOut(PaymentListed):
@@ -201,6 +198,10 @@ class PaymentOut(PaymentListed):
     # because the money did move and then moved back — collapsing the two into a
     # single state would misstate the period in one direction or the other.
     reversed_at: datetime | None = None
+    # The merchant's own note for the reversal, when they gave one. Without it the
+    # dashboard can say *that* a payment was refunded but never *why*, which is the
+    # half that makes the record auditable months later.
+    reversal_reason: str | None = None
     # When we stopped reconciling this payment. Null means still being watched; set
     # means the detection window closed and the outcome is as final as it gets.
     detection_closed_at: datetime | None = None

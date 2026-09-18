@@ -143,6 +143,18 @@ async def disable_store(
     return await _with_link(session, store)
 
 
+@router.post("/{public_id}/enable", response_model=schemas.StoreOut)
+async def enable_store(
+    public_id: str,
+    ctx: AuthContext = Depends(_require_store_manage),
+    session: AsyncSession = Depends(get_session),
+):
+    """Reverse `disable`. Answers `active`, or `draft` when the store has no link
+    left to receive money — see `services.stores.enable_store`."""
+    store = await svc.enable_store(session, ctx.account, public_id)
+    return await _with_link(session, store)
+
+
 class TelegramTestResponse(BaseModel):
     ok: bool = True
     chat_id: str | None

@@ -1,7 +1,12 @@
 # Public API spec (v1)
 
 Mirrors CutLuy's developer surface so existing mental models (and SDK examples) map 1:1.
-Base URL `https://<host>/v1`. JSON in/out. Auth: `Authorization: Bearer ck_live_…` / `ck_test_…`.
+Base URL `https://pay.chmaba.com/v1` — the API is served from the same origin as the dashboard,
+so there is no separate `api.` host. JSON in/out. Auth: `Authorization: Bearer ck_live_…`.
+
+Only `ck_live_` keys are issued: `POST /v1/keys` always mints live mode, and there is no
+`ck_test_` issuance path. A few endpoints are session-cookie only (`/v1/me`, `/v1/billing/*`)
+and an API key is not accepted there; those are marked below.
 
 ## Endpoints
 
@@ -9,11 +14,18 @@ Base URL `https://<host>/v1`. JSON in/out. Auth: `Authorization: Bearer ck_live_
 | --- | --- | --- |
 | POST | `/v1/payments` | Create a payment (KHQR + hosted checkout) |
 | GET | `/v1/payments/:id` | Fetch current state |
-| GET | `/v1/payments` | List own store's payments (newest first) |
+| GET | `/v1/payments` | List payments (newest first); whole account, or scoped by `store`/`merchant` |
+| POST | `/v1/payments/:id/reissue` | Replace a dead code (expired/failed/superseded) |
+| POST | `/v1/payments/:id/reverse` | Record a refund of a settled payment |
 | GET | `/pay/:id` | **Public** hosted checkout page (no auth) |
-| GET | `/api/render/khqr/:payload.svg` | Free KHQR-card SVG renderer (no auth) |
+| GET | `/pay/:id/qr.svg` | **Public** QR image; `410` once the code is dead |
+| GET | `/v1/khqr/render.svg` | KHQR SVG renderer (no auth), `ecc`/`scale` params |
 
-Dashboard/settings/billing/webhook-management are web UI endpoints, not part of the public API.
+Keys, stores, webhooks, billing, reports and the account profile are all real HTTP endpoints on
+this same API (`/v1/keys`, `/v1/stores`, `/v1/webhooks`, `/v1/billing`, `/v1/reports`, `/v1/me`);
+they are documented on the public API page rather than repeated here. The platform-admin routes
+(`/v1/admin/*`) and the dev rail (`/_dev/*`, mounted only when `ENABLE_DEV_GATEWAY=true`) are
+internal and are not part of the public surface.
 
 ## POST /v1/payments
 
@@ -23,11 +35,22 @@ Request body:
 { "amount": 1.50, "reference_id": "order_1024", "metadata": {}, "idempotency_key": "retry-safe-key" }
 ```
 
-`reference_id`, `metadata`, `idempotency_key` optional. `idempotency_key` also honoured via the
-`Idempotency-Key` header. Validation: `amount ≥ 0.01`, ≤ link max, ≤ 2 decimals, `amount_too_low`,
-`amount_too_high`, `invalid_amount` otherwise. Missing/invalid key → `401 unauthorized`.
-Quota exhausted → `402 quota_exceeded`. No link / disabled → `404 payment_link_not_found` /
-`400 payment_link_disabled`. API provider unreachable → `502 payment_provider_error`.
+`reference_id`, `metadata`, `idempotency_key` optional. Also required to address the store:
+`store=<store public id>` (account-scoped keys) or `merchant=<store external_id>`. `hosted_qr`
+defaults to on and is what makes ABA issue a payable code; `hosted_qr=false` builds the code
+offline and is refused with `400 offline_qr_requires_a_confirmation_source` unless the
+deployment can confirm it. `amount` is a decimal in the store link's currency, not necessarily
+USD.
+
+Idempotency is the **body field** `idempotency_key` only — the `Idempotency-Key` header is not
+read. Retry with the same value to get the same payment back.
+
+Validation: `amount ≥ 0.01`, ≤ link max, ≤ 2 decimals — `amount_too_low` / `amount_too_high`
+(`400` from the service, `422` from the request schema) and `invalid_amount` (`422`).
+Missing/invalid key → `401 unauthorized`; suspended account → `403 account_suspended`.
+Quota exhausted → `402 quota_exceeded`. No link / disabled → `400 payment_link_disabled` /
+`400 store_disabled`. Unknown store → `404 store_not_found`, or `404 merchant_not_found` when
+addressed by `merchant=`.
 
 Response `201 Created` (or `200` on idempotent replay):
 
@@ -52,8 +75,15 @@ QR library (render at ECC H so the centre medallion survives). Generated server-
 
 ## GET /v1/payments/:id and GET /v1/payments
 
-`GET /v1/payments` params: `status` (filter), `limit` (default 20, max 100). Returns under `data`.
-`metadata` only present on retrieve (parity with CutLuy), `qr_string`/`checkout_url` on create+list.
+`GET /v1/payments` lists newest first. Scoped by `store` (a store's public id) or `merchant`
+(its `external_id`) when either is given; with neither it lists **every** store on the account.
+Also accepts `status` (filter) and `limit` (default 20, max 100), and returns under `data`.
+
+Each row carries `store` — which store took the payment — and `paid_at`. It does *not* carry
+`metadata`, `qr_string` or `checkout_url`; `metadata` and `qr_string` are on `GET /v1/payments/:id`.
+`checkout_url` is returned by the calls that mint or replace a code — `POST /v1/payments`,
+`POST /v1/payments/:id/reissue` and `POST /v1/payments/:id/reverse` — and by neither read, so a
+payment fetched by id has to be turned into a link as `/pay/{id}` on your own checkout origin.
 
 ## Payment object / statuses
 
@@ -73,9 +103,12 @@ QR library (render at ECC H so the centre medallion survives). Generated server-
 **Expiry is the rail's, not ours.** For an ABA-hosted checkout ABA returns
 `expire_in_sec` (180 s observed) and we mirror it, so the 5-minute
 `checkout_ttl_seconds` applies only to codes we build ourselves. Once the window
-closes the code stops being served (`410`) and `payment.expired` fires — but **that
-is not the end of the sale.** ABA keeps accepting the payment, and on 2026-09-17 one
-settled nine minutes after its own expiry event. We keep reconciling for
+closes the QR image stops being served — `GET /pay/:id/qr.svg` answers `410` — and
+`payment.expired` fires. (`GET /pay/:id` still renders; it is the JSON status and the
+QR image that carry the dead state, and `GET /v1/payments/:id` returns `200` with
+`status: "expired"` rather than an error.) But **that is not the end of the sale.**
+ABA keeps accepting the payment, and on 2026-09-17 one settled nine minutes after its
+own expiry event. We keep reconciling for
 `detection_window_seconds` (1 h by default) and promote the row when the money turns
 up, so `expired → paid` is a normal, expected transition.
 
@@ -196,7 +229,8 @@ Delivery: any 2xx = ack; else retry with exponential backoff up to 8 times. Dash
 ## Errors
 
 Every failure uses FastAPI's default envelope — a single `detail` field, not a
-`{ "error", "message" }` pair.
+`{ "error", "message" }` pair. The one exception is `429`, which carries `limit`,
+`window_seconds` and `retry_after` next to `detail` (see “Rate limits”).
 
 ```json
 { "detail": "amount_too_low" }
@@ -217,21 +251,62 @@ Schema validation failures (`422`) nest one entry per bad field:
 }
 ```
 
-Codes returned in `detail`: `unauthorized` 401, `quota_exceeded` 402, `whitelabel_not_enabled` 403,
-`invalid_request` 400, `invalid_amount` 400, `invalid_status` 400, `payload_too_large` 413,
-`amount_too_low`/`amount_too_high` 400, `payment_link_not_found` 404, `payment_link_disabled` 400,
-`payment_not_found` 404, `store_not_found` 404, `store_disabled` 400, `method_not_allowed` 405,
-`payment_provider_error` 502.
+Codes returned in `detail` (verified against `src/`):
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `unauthorized` | 401 | Missing or invalid key |
+| `invalid_session` | 401 | Cookie-only endpoint called without a valid session |
+| `account_suspended` | 403 | The account is suspended |
+| `quota_exceeded` | 402 | Plan quota reached |
+| `whitelabel_not_enabled` | 403 | Branding fields sent without the entitlement |
+| `csv_export_*` | 403 | CSV export is gated per plan on `csv_export_enabled`. Note this one is a human sentence, not a code: *"CSV exports are not available on the Free plan. Upgrade to Starter to unlock."* |
+| `invalid_amount` / `amount_too_low` / `amount_too_high` | 422 (or 400 from the service) | Amount rejected |
+| `payment_link_disabled` / `store_disabled` | 400 | Store has no link, or is disabled |
+| `offline_qr_requires_a_confirmation_source` | 400 | `hosted_qr=false` where nothing can confirm it |
+| `payload_too_long` | 400 | `GET /v1/khqr/render.svg` only: the payload does not fit a QR code. Not a request-body limit. |
+| `invalid_payload` | 400 | `GET /v1/khqr/render.svg`: the payload could not be encoded |
+| `payment_not_found` / `store_not_found` / `merchant_not_found` | 404 | Not found in this account |
+| `payment_not_paid` / `payment_already_reversed` | 409 | Reversal preconditions |
+| `email_already_taken` | 400 | Profile email in use |
+| `terms_version_superseded` | 409 | Accepted a terms version we no longer publish |
+| `bakong_not_configured` | 503 | Bakong ledger endpoints without platform credentials |
+| `rate_limited: <rule>` | 429 | Rate limit hit; the value is prefixed, e.g. `rate_limited: auth` |
 
 ## Quota
 
-- Quota = successful (`paid`) transactions over the account's current 30-day period, pooled
-  across stores. Exhausted → create returns `402` until reset/upgrade.
-- Body ≤ 5 MB; metadata ≤ 1,000 top-level keys / 1 MB / 8 nesting levels.
-- There is **no per-key rate limiting** in the API today: no `429`, no `Retry-After`, and no
-  `X-RateLimit-*` headers are emitted. (The `retry_after` values inside `src/chmabapay/workers/`
-  are internal job-queue backoff, not an HTTP contract.) Any 429 handling on the client side is
-  dead code until this is implemented.
+- Quota = successful (`paid`) transactions in the current **calendar month**, pooled across all
+  stores on the account. Pending, scanned, expired and failed payments never count, and the
+  window is keyed on `paid_at` — the month the money landed, not the month the code was minted.
+  Exhausted → create returns `402` until the month rolls over or the plan is upgraded.
+- `metadata` is **not** validated: no key count, byte size or nesting depth is enforced, so keep
+  it small yourself. The only hard ceiling on a request body is the edge's
+  `client_max_body_size`, which is nginx's 1 MB default — nothing in this repository raises it.
+  (The "5 MB / 1,000 keys / 8 levels" figures previously written here were a spec that was never
+  implemented.)
+
+## Rate limits
+
+Limits are real and enforced per key or per IP, in a 60-second window. A rejected request
+returns `429` with a JSON body and three headers — `Retry-After`, `X-RateLimit-Limit`,
+`X-RateLimit-Remaining` — all of which are CORS-exposed so browser clients can read them:
+
+```json
+{ "detail": "rate_limited: auth", "limit": 20, "window_seconds": 60, "retry_after": 12 }
+```
+
+Rules, by route (each limit is configurable per minute — see `config.py`):
+
+| Rule | Identity | Applies to |
+| --- | --- | --- |
+| `payment_create` | API key | `POST /v1/payments`, `POST /v1/payments/{id}/reissue` — the calls that mint an ABA QR |
+| `api` | API key | everything else under `/v1/` |
+| `khqr` | IP | `/v1/khqr/*` (unauthenticated by design) |
+| `auth` | IP | `/auth/*`, `/api/v1/auth/*`, `/user/google/auth/*` |
+| `checkout` | IP | `/pay/*` |
+
+Counters live in the API process, so with N replicas the effective allowance is N times the
+configured value. Treat the numbers as a ceiling, not a guarantee.
 
 ## Signature details (reference implementation sketch)
 

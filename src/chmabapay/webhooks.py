@@ -79,7 +79,6 @@ def build_event_payload(event_id: str, event_type: str, payment, store) -> dict:
             "store": {
                 "id": store.public_id,
                 "name": store.name,
-                "owner_email": store.owner_email,
                 "redirect_success_url": store.redirect_success_url,
             },
             # The caller's own merchant identifier for this store, so a POS

@@ -107,11 +107,7 @@ def build_khqr_payload(
     except ValueError:
         currency_iso = "840"
 
-    merchant_name = (
-        link.merchant_name
-        or getattr(store, "owner_name", None)
-        or store.name
-    ) or store.name
+    merchant_name = link.merchant_name or store.name
 
     now_dt = datetime.now(UTC)
     ttl_sec = max(1, int((expires_at.replace(tzinfo=expires_at.tzinfo or UTC) - now_dt).total_seconds()))

@@ -47,8 +47,6 @@ async def _bootstrap() -> None:
             slug = f"{owner.replace(' ', '').lower()}-{name.replace(' ', '').lower()}"
             return StoreCreate(
                 name=name,
-                owner_name=owner,
-                owner_email=f"{owner.replace(' ', '.').lower()}@example.com",
                 external_id=f"ext_{slug}",
                 link=LinkIn(
                     raw_link=f"https://link.payway.com.kh/{slug}",

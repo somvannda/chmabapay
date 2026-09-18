@@ -268,7 +268,6 @@ async def _maybe_promote_admin_and_seed_hq(
                     name="ChmabaPay HQ",
                     status=models.ACCOUNT_ACTIVE,
                     city="Phnom Penh",
-                    owner_name="Platform",
                 )
                 session.add(store)
                 await session.flush()

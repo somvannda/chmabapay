@@ -316,6 +316,34 @@ async def list_payments(
     return list(res.scalars().all())
 
 
+async def list_payments_for_account(
+    session: AsyncSession,
+    account_id: int,
+    status: str | None = None,
+    limit: int = 20,
+) -> list[tuple[models.Payment, models.Store]]:
+    """Every payment on the account, newest first, across all of its stores.
+
+    The portal's payments page asks for "All stores". Until this existed the endpoint
+    had to resolve a single target store, so it fell back to "the account's only
+    active store" and answered 400 `store_required_or_merchant_required` for any
+    account with two or more — which is why that page rendered an empty list. The
+    store is returned with each payment because a cross-store list that cannot name
+    the store is not much use.
+    """
+    stmt = (
+        select(models.Payment, models.Store)
+        .join(models.Store, models.Store.id == models.Payment.store_id)
+        .where(models.Store.account_id == account_id)
+        .order_by(models.Payment.id.desc())
+        .limit(max(1, min(limit, 100)))
+    )
+    if status:
+        stmt = stmt.where(models.Payment.status == status)
+    res = await session.execute(stmt)
+    return [(payment, store) for payment, store in res.all()]
+
+
 async def mark_scanned(session: AsyncSession, payment_id: int) -> None:
     res = await session.execute(
         update(models.Payment)

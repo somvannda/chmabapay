@@ -280,7 +280,7 @@ async def test_store_provisioning_api(client):
     created = (
         await client.post(
             "/v1/stores",
-            json={"name": "New Store", "owner_name": "Owner", "owner_email": "o@example.com"},
+            json={"name": "New Store"},
             headers=headers,
         )
     ).json()
@@ -316,6 +316,22 @@ async def test_store_provisioning_api(client):
     )
     assert r.status_code == 400
 
+    # enable is the way back. This store still has its link, so it returns to active
+    # and can take payments again — before this route existed the disable above was
+    # permanent, because both the settings PATCH and the link attach refuse a
+    # disabled store.
+    enabled = (
+        await client.post(f"/v1/stores/{created['id']}/enable", headers=headers)
+    ).json()
+    assert enabled["status"] == "active"
+
+    r = await client.post(
+        "/v1/payments",
+        json={"amount": 1.0, "store": created["id"], "hosted_qr": False},
+        headers=headers,
+    )
+    assert r.status_code == 201
+
 
 async def test_account_key_requires_store_when_multiple_stores(client):
     account = await make_account()
@@ -326,6 +342,66 @@ async def test_account_key_requires_store_when_multiple_stores(client):
         "/v1/payments", json={"amount": 1.0}, headers={"Authorization": f"Bearer {raw_key}"}
     )
     assert r.status_code == 400
+
+
+async def test_payment_list_spans_every_store_on_the_account(client):
+    """`GET /v1/payments` with no `store` lists the whole account.
+
+    The portal's payments page asks for "All stores". Creating a payment without a
+    store *is* refused on a multi-store account (see the test above), but *listing*
+    was refused too, which is a different thing: it left that page rendering "No
+    payments yet." for every merchant running more than one store.
+    """
+    account = await make_account()
+    cafe = await make_store(account, name="Sokha Cafe", owner="Sokha")
+    shop = await make_store(account, name="Dara Shop", owner="Dara")
+    raw_key, _ = await make_key(account)
+    headers = {"Authorization": f"Bearer {raw_key}"}
+
+    first = (
+        await client.post(
+            "/v1/payments",
+            json={"amount": 1.5, "store": cafe.public_id, "hosted_qr": False},
+            headers=headers,
+        )
+    ).json()
+    second = (
+        await client.post(
+            "/v1/payments",
+            json={"amount": 2.5, "store": shop.public_id, "hosted_qr": False},
+            headers=headers,
+        )
+    ).json()
+
+    listing = (await client.get("/v1/payments", headers=headers)).json()
+    assert [p["id"] for p in listing["data"]] == [second["id"], first["id"]]
+    # Every row names its own store — a cross-store list that cannot say which store
+    # a payment belongs to is not readable.
+    assert {p["store"] for p in listing["data"]} == {
+        cafe.public_id,
+        shop.public_id,
+    }
+
+    # `paid_at` travels in the list, not only in the single-payment response. The
+    # store overview filters exactly this field to build its "Paid today" card.
+    assert all(p["paid_at"] is None for p in listing["data"])
+    paid = await client.post(f"/_dev/payments/{first['id']}/pay")
+    assert paid.status_code == 200
+    after = (await client.get("/v1/payments", headers=headers)).json()
+    row = next(p for p in after["data"] if p["id"] == first["id"])
+    assert row["status"] == "paid"
+    assert row["paid_at"] is not None
+
+    # Status filtering still applies across stores, and scoping to one store is
+    # unchanged.
+    only_paid = (
+        await client.get("/v1/payments?status=paid", headers=headers)
+    ).json()
+    assert [p["id"] for p in only_paid["data"]] == [first["id"]]
+    scoped = (
+        await client.get(f"/v1/payments?store={shop.public_id}", headers=headers)
+    ).json()
+    assert [p["id"] for p in scoped["data"]] == [second["id"]]
 
 
 async def test_expiry_worker(client):
