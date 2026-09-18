@@ -345,5 +345,89 @@ services:
       start_period: 5s
       retries: 5
 
+  # Monitoring: scrape this deployment and forward it to Grafana Cloud. Closes the
+  # last caveat in P1-3 — until now /metrics was published and never fetched, so
+  # every number in it evaporated.
+  #
+  # **Behind a profile, opt-in, and not in the default stack on purpose.** The plain
+  # `up -d --build` must not depend on a third-party account: if the GRAFANA_*
+  # variables are unset, a mandatory service would refuse to start and take the live
+  # stack down over a dashboard. Same reasoning as the `worker` service in the
+  # development compose file, and the same shape.
+  #
+  #   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env \
+  #       --profile monitoring up -d prometheus
+  #
+  # Agent mode rather than a full Prometheus. This host has ONE core and 1.9GB of RAM
+  # shared with a live POS stack, and a full Prometheus would add a TSDB, a query API
+  # and a rule engine that nobody would ever query locally — the data is read in
+  # Grafana Cloud. Agent mode keeps only a ~2h WAL, so delivery survives a Grafana
+  # outage and the process stays small enough for the cap below.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    logging: *logging
+    # Half the app ceiling on purpose. `*limits` exists to stop a ChmabaPay container
+    # starving the POS stack; a metrics forwarder has no business claiming 512MB of a
+    # 1.9GB host, and agent mode needs well under this.
+    mem_limit: 256m
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        # Checked here, not in the `environment:` block, and that distinction is
+        # load-bearing: compose interpolates the ENTIRE file at parse time, including
+        # services whose profile is not active. A required-variable form (`:?`) in the
+        # environment block therefore broke `up -d --build` — the plain production
+        # deploy — over a variable that deploy never reads. Verified by running it:
+        # the default stack refused to render with "required variable
+        # GRAFANA_METRICS_TOKEN is missing a value". Defaulting those variables to
+        # empty and refusing HERE means a missing value can only ever fail the
+        # monitoring container itself.
+        : "$${METRICS_TOKEN:?METRICS_TOKEN is not set in deploy/.env - see docs/deploy.md section 13}"
+        : "$${GRAFANA_REMOTE_WRITE_URL:?GRAFANA_REMOTE_WRITE_URL is not set in deploy/.env - see docs/deploy.md section 13}"
+        : "$${GRAFANA_METRICS_USERNAME:?GRAFANA_METRICS_USERNAME is not set in deploy/.env - see docs/deploy.md section 13}"
+        : "$${GRAFANA_METRICS_TOKEN:?GRAFANA_METRICS_TOKEN is not set in deploy/.env - see docs/deploy.md section 13}"
+        sed -e "s|__METRICS_TOKEN__|$$METRICS_TOKEN|g" \
+            -e "s|__GRAFANA_METRICS_USERNAME__|$$GRAFANA_METRICS_USERNAME|g" \
+            -e "s|__GRAFANA_METRICS_TOKEN__|$$GRAFANA_METRICS_TOKEN|g" \
+            -e "s|__GRAFANA_REMOTE_WRITE_URL__|$$GRAFANA_REMOTE_WRITE_URL|g" \
+            /etc/prometheus/prometheus.yml.tpl > /tmp/prometheus.yml
+        /bin/promtool check config /tmp/prometheus.yml
+        exec /bin/prometheus \
+          --config.file=/tmp/prometheus.yml \
+          --agent \
+          --storage.agent.path=/prometheus \
+          --web.listen-address=:9090
+    environment:
+      # Deliberately NOT the app environment (`*backend-env`). A metrics forwarder has
+      # no business holding DATABASE_URL, and inheriting it here would put the
+      # production database password into a container whose only job is to read a
+      # public-by-design metrics endpoint.
+      #
+      # Defaulted to empty rather than using a required-variable form (`:?`), because
+      # compose interpolates every service in the file whether or not its profile is
+      # active — so a `:?` here would break the ordinary production deploy over a
+      # variable it never reads. The entrypoint refuses on an empty value instead,
+      # which confines the failure to the monitoring container. See `command:` above.
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      GRAFANA_REMOTE_WRITE_URL: ${GRAFANA_REMOTE_WRITE_URL:-}
+      GRAFANA_METRICS_USERNAME: ${GRAFANA_METRICS_USERNAME:-}
+      GRAFANA_METRICS_TOKEN: ${GRAFANA_METRICS_TOKEN:-}
+    volumes:
+      # The template alone. The rendered config, and the token inside it, exist only
+      # on the container's writable layer — no secret is written back to the host.
+      - ./prometheus/prometheus.yml.tpl:/etc/prometheus/prometheus.yml.tpl:ro
+      # Agent-mode WAL: the retry buffer for samples Grafana has not accepted yet.
+      # A named volume rather than the container layer so that recreating the
+      # container does not discard a pending backlog — and so that repeated deploys
+      # do not leave a trail of orphaned anonymous volumes on a host with 20GB free.
+      - prometheusdata:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   pgdata:
+  prometheusdata:

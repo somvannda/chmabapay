@@ -853,3 +853,84 @@ Every hostname Cloudflare proxies in this zone has a matching origin certificate
 wildcard, and `pay.chmaba.com` and `admin-pay.chmaba.com` by this stack's — so
 switching the zone to Full (strict) is safe for all of them. Re-check each one
 immediately afterwards, and remember the setting is per-zone: it governs the POS too.
+
+## 13. Monitoring
+
+The API has published `/metrics` since P1-3 and nothing ever fetched it: the numbers
+were rendered on request and discarded. This is the one service that reads them.
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env \
+    --profile monitoring up -d prometheus
+```
+
+**Opt-in, and the failure is confined.** The default `up -d --build` must not depend
+on a third-party account: required unconditionally, a missing Grafana token would
+refuse to start the whole stack and take live payments down over a dashboard.
+
+> **The first version of this got that wrong, and the way it was wrong is worth
+> keeping.** It used `${VAR:?}` in the service's `environment:` block, on the
+> assumption that the `monitoring` profile would keep the main stack clear of it.
+> That assumption is false: **compose interpolates the entire file at parse time,
+> including services whose profile is not active.** So the ordinary production
+> deploy refused to render, with `required variable GRAFANA_METRICS_TOKEN is missing
+> a value` — a variable that deploy never reads. It was found by running
+> `docker compose config` without the profile, which is the check that matters here.
+> The variables are now defaulted to empty and the *entrypoint* refuses on an empty
+> value; that is the only construction that actually confines the failure to the
+> monitoring container.
+>
+> The lesson generalises: a profile gates what `up` *starts*, not what compose
+> *parses*. Anything that must not affect the default deploy has to be inert at parse
+> time.
+
+**Agent mode, not Prometheus.** This host has **one core** and 1.9GB of RAM shared
+with a live POS stack, and it was already swapping before this existed. A full
+Prometheus would add a TSDB, a query API and a rule engine that nobody here would
+query locally — the data is read in Grafana Cloud. `--agent` keeps only scrape and
+remote_write, with a ~2h WAL so a Grafana outage does not lose samples. Measured
+locally: **~25 MB RSS, 0.6% CPU**, against a 256 MB cap.
+
+> The flag is `--agent`. `--enable-feature=agent` is the pre-3.x spelling and is
+> *silently ignored* by 3.x — it logs `Unknown option for --enable-feature`, after
+> which `--storage.agent.path` is rejected as agent-mode-only and the process exits
+> 3. Found by running it, not by reading the docs.
+
+**`/metrics` stays private.** The scrape runs across the compose network to
+`api:8000`, so no edge rule, certificate or firewall change is needed and the public
+refusals listed above are untouched. This is why the approach was chosen over
+Grafana Cloud's agentless "Metrics Endpoint" scrape, which would mean publishing
+`/metrics` to the internet with only a bearer token in front of it.
+
+**One copy of the token.** Prometheus cannot read environment variables from its own
+configuration file — there is no expansion for `remote_write.url`, and `basic_auth`
+takes literals. So `deploy/prometheus/prometheus.yml.tpl` is a template; the compose
+entrypoint renders it to `/tmp/prometheus.yml` from the environment and runs
+`promtool check config` on the result *before* starting Prometheus. A bad render
+fails at boot instead of producing an instance that runs happily and forwards
+nothing. The token is never written to the host filesystem — the rendered config
+lives on the container's writable layer.
+
+**When it is not working.** Agent mode disables the *query* API but still serves the
+targets API, which is the fastest answer to "is this actually scraping":
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env \
+    exec -T prometheus wget -qO- localhost:9090/api/v1/targets
+```
+
+| Observation | Meaning |
+|---|---|
+| `chmabapay-api  health=up` | scraping and authenticating |
+| `health=down` + `401 Unauthorized` | `METRICS_TOKEN` in `deploy/.env` does not match the API's |
+| `health=down` + connection refused | the API is down, or this container is off the compose network |
+
+A wrong token is *visible*, not silent — verified by running it both ways rather than
+assumed. And because agent mode has no local query, `up` and the
+`prometheus_remote_storage_*` series are only queryable in Grafana Cloud: the
+self-scrape job in the template is what makes a broken `remote_write` observable at
+all, rather than presenting as an empty dashboard with no stated cause.
+
+**What this does not do.** It is not paging. Alerts live in the application (P0-5,
+P1-3) and go out over Telegram whether this container runs or not; losing the agent
+costs history, not notification.
