@@ -934,3 +934,29 @@ all, rather than presenting as an empty dashboard with no stated cause.
 **What this does not do.** It is not paging. Alerts live in the application (P0-5,
 P1-3) and go out over Telegram whether this container runs or not; losing the agent
 costs history, not notification.
+
+**Deployed and verified on the host** (2026-09-18), commit `1d2826c`:
+
+- `migrate` exited **0** — enabling a profile re-runs the migration gate, and it is
+  worth knowing that it does; `db` and `api` were left `Running`, not recreated;
+- the agent logged `SUCCESS: /tmp/prometheus.yml is valid prometheus config file
+  syntax` and then `Starting Prometheus Agent mode=agent version=3.5.0`, so the render
+  and the flag are both confirmed on the real host and not only locally;
+- `chmabapay-api` reports **`"health":"up"` with an empty `lastError`**, scraping
+  `http://api:8000/metrics` every 60s in ~40ms — the token-gated endpoint, over the
+  compose network. The `prometheus` self-scrape is up as well;
+- delivery is live: `prometheus_remote_storage_samples_total` advancing against
+  `https://prometheus-prod-37-prod-ap-southeast-1.grafana.net/api/prom/push` with
+  `prometheus_remote_storage_samples_failed_total` at **0**;
+- the agent costs **22.6 MiB of its 256 MiB cap at 0.28% CPU**, and the host had
+  **~1 GB available** afterwards — so the concern that justified agent mode did not
+  materialise;
+- the POS stack was untouched: `deploy-front-1` and `deploy-api-1` up 8 days,
+  `deploy-db-1` up 9 days;
+- nothing at the edge changed: `https://pay.chmaba.com/health` is `ok` and
+  `/metrics` still returns **404** from the public internet.
+
+One operational note for whoever rotates credentials: `deploy/.env` is the only place
+these three values live, and the monitoring service re-reads them on start. After
+changing the token, `docker compose ... --profile monitoring up -d --force-recreate
+prometheus` is enough — the rest of the stack does not need to move.
