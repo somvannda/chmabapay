@@ -34,6 +34,20 @@ const I = {
       <path d="M18 20c0-2.4-.8-4.3-2.2-5.4 3 .2 5.2 2.3 5.2 5.4" />
     </>
   ),
+  payments: (
+    <>
+      <rect x="2.5" y="6" width="19" height="12" rx="2.5" />
+      <circle cx="12" cy="12" r="2.4" />
+      <path d="M6 9.5v5" />
+      <path d="M18 9.5v5" />
+    </>
+  ),
+  deliveries: (
+    <>
+      <path d="M21 3 10.5 13.5" />
+      <path d="m21 3-6.8 18-3.7-7.5L3 9.8 21 3Z" />
+    </>
+  ),
   plans: (
     <>
       <path d="M4 6.5 12 3l8 3.5-8 3.5-8-3.5Z" />
@@ -61,6 +75,13 @@ const NAV_GROUP: { label: string; items: NavItem[] } = {
   items: [
     { key: "overview", href: "/", label: "Overview", icon: I.overview },
     { key: "accounts", href: "/accounts", label: "Accounts", icon: I.accounts },
+    { key: "payments", href: "/payments", label: "Payments", icon: I.payments },
+    {
+      key: "deliveries",
+      href: "/deliveries",
+      label: "Deliveries",
+      icon: I.deliveries,
+    },
     { key: "plans", href: "/plans", label: "Plans", icon: I.plans },
     { key: "invoices", href: "/invoices", label: "Invoices", icon: I.invoices },
     { key: "audit", href: "/audit", label: "Audit trail", icon: I.audit },
@@ -70,6 +91,8 @@ const NAV_GROUP: { label: string; items: NavItem[] } = {
 const SECTION_LABELS: Record<string, string> = {
   overview: "Overview",
   accounts: "Accounts",
+  payments: "Payments",
+  deliveries: "Deliveries",
   plans: "Plans",
   invoices: "Invoices",
   audit: "Audit trail",

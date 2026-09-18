@@ -56,6 +56,17 @@ function subscriptionPill(status: string | null | undefined): {
   }
 }
 
+function accountStatusPill(status: string | null | undefined): {
+  className: string;
+  label: string;
+} {
+  const s = (status || "").toLowerCase();
+  if (s === "suspended") {
+    return { className: "dash-pill dash-pill-failed", label: "suspended" };
+  }
+  return { className: "dash-pill dash-pill-paid", label: s || "active" };
+}
+
 export default function AdminAccountsPage() {
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -167,6 +178,7 @@ export default function AdminAccountsPage() {
                 <th>Type</th>
                 <th>Plan</th>
                 <th>Subscription</th>
+                <th>Status</th>
                 <th>Stores</th>
                 <th>Payments</th>
                 <th>Created</th>
@@ -175,6 +187,7 @@ export default function AdminAccountsPage() {
             <tbody>
               {rows.map((row) => {
                 const sub = subscriptionPill(row.subscription_status);
+                const standing = accountStatusPill(row.status);
                 return (
                   <tr key={row.id}>
                     <td>
@@ -198,6 +211,9 @@ export default function AdminAccountsPage() {
                     <td>{row.plan_name || "—"}</td>
                     <td>
                       <span className={sub.className}>{sub.label}</span>
+                    </td>
+                    <td>
+                      <span className={standing.className}>{standing.label}</span>
                     </td>
                     <td>{nf.format(row.stores_count)}</td>
                     <td>{nf.format(row.payments_count)}</td>

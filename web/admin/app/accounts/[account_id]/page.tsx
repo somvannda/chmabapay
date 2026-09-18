@@ -88,6 +88,17 @@ function subscriptionPill(status: string | null | undefined): {
   }
 }
 
+function accountStatusPill(status: string | null | undefined): {
+  className: string;
+  label: string;
+} {
+  const s = (status || "").toLowerCase();
+  if (s === "suspended") {
+    return { className: "dash-pill dash-pill-failed", label: "suspended" };
+  }
+  return { className: "dash-pill dash-pill-paid", label: s || "active" };
+}
+
 function invoicePill(status: string | null | undefined): {
   className: string;
   label: string;
@@ -164,6 +175,7 @@ export default function AdminAccountDetailPage({
   const sub = subscriptionPill(detail?.plan.subscription_status);
   const { notify } = useToast();
   const [entitlementSaving, setEntitlementSaving] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
 
   // White-label checkout branding is an entitlement, not a plan field: the operator
   // grants it here and the store API refuses branding writes without it.
@@ -189,6 +201,48 @@ export default function AdminAccountDetailPage({
       setEntitlementSaving(false);
     }
   }, [account, accountId, notify]);
+
+  // Standing was writable only by hand before this: the API has supported
+  // `{status, reason}` (with `account.suspended`/`account.activated` audit
+  // actions) but nothing in the console called it, so an abuse report had no
+  // in-product response.
+  const changeStatus = useCallback(async () => {
+    if (!account) return;
+    const next = account.status === "suspended" ? "active" : "suspended";
+    const reason = window.prompt(
+      next === "suspended"
+        ? `Reason for suspending ${account.email} (recorded in the audit trail):`
+        : `Reason for reactivating ${account.email} (optional):`,
+      "",
+    );
+    if (reason === null) return;
+    if (next === "suspended" && !reason.trim()) {
+      notify("A reason is required to suspend an account.", "error");
+      return;
+    }
+    setStatusSaving(true);
+    try {
+      const res = await fetch(`/v1/admin/accounts/${accountId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: next,
+          reason: reason.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(await readApiError(res));
+      const updated = (await res.json()) as AccountProfile;
+      setDetail((d) => (d ? { ...d, account: { ...d.account, ...updated } } : d));
+      notify(next === "suspended" ? "Account suspended" : "Account activated");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setStatusSaving(false);
+    }
+  }, [account, accountId, notify]);
+
+  const standing = accountStatusPill(account?.status);
 
   return (
     <>
@@ -272,7 +326,14 @@ export default function AdminAccountDetailPage({
                     <td>
                       <div className="dash-stat-label">Payments</div>
                     </td>
-                    <td>{nf.format(detail.counts.payments)}</td>
+                    <td>
+                      <Link
+                        className="dash-link-btn"
+                        href={`/payments?account_id=${accountId}`}
+                      >
+                        {nf.format(detail.counts.payments)}
+                      </Link>
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -307,9 +368,19 @@ export default function AdminAccountDetailPage({
                       <div className="dash-stat-label">Status</div>
                     </td>
                     <td>
-                      <span className="dash-pill dash-pill-pending">
-                        {account.status}
-                      </span>
+                      <span className={standing.className}>{standing.label}</span>{" "}
+                      <button
+                        type="button"
+                        className="dash-btn dash-btn-secondary dash-btn-sm"
+                        onClick={() => void changeStatus()}
+                        disabled={statusSaving}
+                      >
+                        {statusSaving
+                          ? "Saving…"
+                          : account.status === "suspended"
+                            ? "Activate"
+                            : "Suspend"}
+                      </button>
                     </td>
                   </tr>
                   <tr>

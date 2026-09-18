@@ -2412,6 +2412,18 @@ body {
   background: #fef2f2;
   color: #991b1b;
 }
+.dash-pill-reversed {
+  background: #fdf2f8;
+  color: #9d174d;
+}
+.dash-pill-superseded {
+  background: #eff6ff;
+  color: #1e40af;
+}
+.dash-pill-retrying {
+  background: #fffbeb;
+  color: #92400e;
+}
 .dash-table {
   width: 100%;
   border-collapse: separate;

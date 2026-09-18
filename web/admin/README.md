@@ -34,15 +34,29 @@ only" gate. `is_platform_admin` is granted by listing the address in
 | `/login` | Email + password sign-in. The only way into the console |
 | `/` | Platform totals: accounts, stores (total + active), payments paid (all-time + this month), MRR |
 | `/accounts` | Every account with plan, subscription status, store/payment counts. Search by email or name; 25 per page |
-| `/accounts/[account_id]` | One account: plan & usage, profile, stores, last 24 invoices. The Profile panel's Whitelabel row toggles the white-label checkout entitlement |
+| `/accounts/[account_id]` | One account: plan & usage, profile, stores, last 24 invoices. The Profile panel's Whitelabel row toggles the white-label checkout entitlement. The Payments count links to `/payments?account_id=` |
+| `/payments` | Every payment on the platform, newest first, with the account and store that took it. Search by payment id or the merchant's reference, filter by status or account. The "Settled" column carries the reconciliation story — paid, refunded, or the point at which we stopped watching |
+| `/deliveries` | Every webhook delivery attempt across all accounts: endpoint, status, tries, last HTTP response, transport error and next attempt. A `retrying` row whose next attempt is in the past is marked overdue, which is what a stalled sender looks like |
 | `/plans` | Full plan CRUD — create, edit and delete, including the pricing copy (tagline + feature bullets) the website and user portal render. Deleting a plan that subscriptions reference retires it instead |
 | `/invoices` | Plan invoices across every account. Filter by `YYYY-MM` period and status |
 
 ## Backend contract
 
-All calls go to `/v1/admin/*` and require an admin session cookie or a `Bearer ck_`
-platform-admin key. The dev server proxies them to `NEXT_PUBLIC_API_URL`
-(default `http://127.0.0.1:8000`) via the rewrites in `next.config.js`.
+All calls go to `/v1/admin/*` and require an **admin session cookie**. A `Bearer ck_`
+platform-admin key is *not* accepted, despite the `Bearer ck_` branch inside
+`get_hybrid_admin_context`: that dependency takes `get_current_session_account` as a
+sub-dependency, and it raises 401 when no cookie is present, so FastAPI aborts before the
+key branch is ever reached. `/v1/admin/*` answers `{"detail":"invalid_session"}` to a
+cookie-less request no matter which key it carries.
+
+Leaving the branch unreachable is deliberate, and pending a decision (P1-2 in
+`docs/production-readiness.md`): reaching it would let any API key belonging to a
+platform-admin account act as a platform admin, which is a much wider credential than the
+merchant-scoped key it was minted as. If machine access to this API is ever needed, the
+answer is a key scope, not simply deleting the sub-dependency.
+
+The dev server proxies them to `NEXT_PUBLIC_API_URL` (default `http://127.0.0.1:8000`)
+via the rewrites in `next.config.js`.
 
 ## Styling
 
