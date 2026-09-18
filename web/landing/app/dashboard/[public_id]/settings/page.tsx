@@ -33,25 +33,9 @@ type StoreSettings = {
   [k: string]: unknown;
 };
 
-function CopyField({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  const onCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-    }
-  }, [value]);
-  return (
-    <div className="dash-copy-field">
-      <div className="dash-copy-field-value">{value}</div>
-      <button type="button" className="dash-copy-btn" onClick={onCopy}>
-        {copied ? "Copied" : "Copy"}
-      </button>
-    </div>
-  );
-}
+// There is no store-level public payment page: a customer page is minted per
+// payment (`/pay/{payment_public_id}`) and the merchant shares that checkout
+// URL. A store-level link is therefore not a thing to advertise.
 
 export default function StoreSettingsPage({
   params,
@@ -281,11 +265,6 @@ export default function StoreSettingsPage({
     }
   }, [tgTestResult]);
 
-  const paymentLinkUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/s/${publicId}`
-      : `/s/${publicId}`;
-
   return (
     <div>
       <div className="dash-page-head">
@@ -457,15 +436,6 @@ export default function StoreSettingsPage({
                   {plError}
                 </div>
               )}
-
-              <div className="dash-field">
-                <label>Public payment link URL</label>
-                <CopyField value={paymentLinkUrl} />
-                <div className="dash-hint">
-                  Share this link with customers. They can enter any amount and
-                  pay instantly.
-                </div>
-              </div>
 
               {paywayUnsupported && (
                 <div className="dash-warn">

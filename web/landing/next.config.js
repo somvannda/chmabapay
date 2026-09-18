@@ -23,6 +23,20 @@ const nextConfig = {
         destination: "/dashboard/payments/:pay_id",
         permanent: false,
       },
+      // Two conventional entry points people type or guess. Neither has a page
+      // of its own: sign-in is Google OAuth, and pricing is the `#plans`
+      // section of the landing page. Without this they are bare 404s, which is
+      // what the production audit found.
+      {
+        source: "/login",
+        destination: "/auth/google/login",
+        permanent: false,
+      },
+      {
+        source: "/pricing",
+        destination: "/#plans",
+        permanent: false,
+      },
     ];
   },
   async rewrites() {

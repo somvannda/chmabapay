@@ -116,13 +116,12 @@ export default function DashboardReportsPage() {
             ? data.data
             : [];
 
-      const header = ["ID", "Name", "Status", "City", "Owner Email", "Created At"];
+      const header = ["ID", "Name", "Status", "City", "Created At"];
       const rows = items.map((s) => [
         s.id ?? "",
         s.name ?? "",
         s.status ?? "",
         s.city ?? "",
-        s.owner_email ?? "",
         s.created_at ?? "",
       ]);
       const csvText =

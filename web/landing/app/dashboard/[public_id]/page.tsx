@@ -22,8 +22,22 @@ type StoreDetail = {
   [k: string]: unknown;
 };
 
+type ReportSummary = {
+  total_matching_rows: number;
+  total_matching_paid_count: number;
+  total_matching_paid_amount_cents: number;
+  total_matching_reversed_count?: number;
+  total_matching_reversed_amount_cents?: number;
+};
+
 function formatDollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+function isoDateParam(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
 }
 
 function formatAmountFromStr(str: string | number | null | undefined): number {
@@ -32,23 +46,6 @@ function formatAmountFromStr(str: string | number | null | undefined): number {
   const n = parseFloat(str);
   if (Number.isNaN(n)) return 0;
   return Math.round(n * 100);
-}
-
-function isToday(iso: string | null | undefined): boolean {
-  if (!iso) return false;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return false;
-  const now = new Date();
-  const start = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    0,
-    0,
-    0,
-    0,
-  );
-  return d >= start;
 }
 
 function timeAgo(iso: string | null | undefined): string {
@@ -76,6 +73,10 @@ function pillClassForStatus(status: string): string {
       return "dash-pill dash-pill-expired";
     case "failed":
       return "dash-pill dash-pill-failed";
+    case "reversed":
+      return "dash-pill dash-pill-reversed";
+    case "superseded":
+      return "dash-pill dash-pill-superseded";
     case "pending":
     default:
       return "dash-pill dash-pill-pending";
@@ -99,6 +100,9 @@ export default function StoreOverviewPage({
   const [store, setStore] = useState<StoreDetail | null>(null);
   const [storeMissing, setStoreMissing] = useState(false);
   const [paymentsList, setPaymentsList] = useState<Payment[]>([]);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryAll, setSummaryAll] = useState<ReportSummary | null>(null);
+  const [summaryToday, setSummaryToday] = useState<ReportSummary | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -130,7 +134,7 @@ export default function StoreOverviewPage({
     (async () => {
       try {
         const res = await fetch(
-          `/v1/payments?store=${encodeURIComponent(publicId)}&limit=200`,
+          `/v1/payments?store=${encodeURIComponent(publicId)}&limit=20`,
           { credentials: "include" },
         );
         if (res.ok) {
@@ -154,17 +158,58 @@ export default function StoreOverviewPage({
     };
   }, [publicId]);
 
-  const paidPayments = paymentsList.filter((p) => p.status === "paid");
-  const paidToday = paidPayments.filter((p) => isToday(p.paid_at));
-  const paidTodayCents = paidToday.reduce((sum, p) => sum + amountCents(p), 0);
-  const settledCents = paidTodayCents;
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      // The store's totals come from the reports summary, not from adding up the
+      // payments list. That list is one page — the API clamps `limit` to 100 — so
+      // arithmetic over it stops counting at 100 payments while the cards carry on
+      // describing the store as a whole. `per_page=1` because only `summary` is
+      // read; the rows themselves are not wanted here.
+      try {
+        const today = isoDateParam(new Date());
+        const scope = `store_id=${encodeURIComponent(publicId)}`;
+        const [allRes, todayRes] = await Promise.all([
+          fetch(`/v1/reports/payments.json?${scope}&per_page=1`, {
+            credentials: "include",
+          }),
+          fetch(
+            `/v1/reports/payments.json?${scope}&from=${today}&to=${today}&per_page=1`,
+            { credentials: "include" },
+          ),
+        ]);
+        if (allRes.ok) {
+          const data = await allRes.json().catch(() => null);
+          if (alive && data?.summary) setSummaryAll(data.summary as ReportSummary);
+        }
+        if (todayRes.ok) {
+          const data = await todayRes.json().catch(() => null);
+          if (alive && data?.summary) {
+            setSummaryToday(data.summary as ReportSummary);
+          }
+        }
+      } catch {
+      } finally {
+        if (alive) setSummaryLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [publicId]);
+
+  // `total_matching_paid_*` counts only `status == paid`, so refunds are already
+  // excluded from it. They are shown beside it rather than folded in, because a
+  // total that quietly dropped is the thing a merchant queries.
+  const settledCents = summaryAll?.total_matching_paid_amount_cents ?? 0;
+  const totalPaidCount = summaryAll?.total_matching_paid_count ?? 0;
+  const transactionsCount = summaryAll?.total_matching_rows ?? 0;
+  const refundedCount = summaryAll?.total_matching_reversed_count ?? 0;
+  const refundedCents = summaryAll?.total_matching_reversed_amount_cents ?? 0;
+  const paidTodayCents = summaryToday?.total_matching_paid_amount_cents ?? 0;
+  const paidTodayCount = summaryToday?.total_matching_paid_count ?? 0;
   const avgCents =
-    paidPayments.length > 0
-      ? Math.round(
-          paidPayments.reduce((s, p) => s + amountCents(p), 0) /
-            paidPayments.length,
-        )
-      : 0;
+    totalPaidCount > 0 ? Math.round(settledCents / totalPaidCount) : 0;
 
   const recentPayments = [...paymentsList]
     .sort((a, b) => {
@@ -174,7 +219,7 @@ export default function StoreOverviewPage({
     })
     .slice(0, 5);
 
-  const dataReady = !paymentsLoading && !storeLoading;
+  const dataReady = !paymentsLoading && !storeLoading && !summaryLoading;
 
   // Any unknown first segment under /dashboard resolves to this route, so a stale
   // or mistyped store id has to say so instead of rendering an all-zero dashboard.
@@ -215,10 +260,12 @@ export default function StoreOverviewPage({
                   </code>
                 </li>
                 <li>
-                  {paidPayments.length} total paid {paidPayments.length === 1 ? "payment" : "payments"}
+                  {totalPaidCount} total paid{" "}
+                  {totalPaidCount === 1 ? "payment" : "payments"}
                 </li>
                 <li>
-                  {paymentsList.length} total {paymentsList.length === 1 ? "transaction" : "transactions"}
+                  {transactionsCount} total{" "}
+                  {transactionsCount === 1 ? "transaction" : "transactions"}
                 </li>
               </ul>
             </div>
@@ -233,7 +280,7 @@ export default function StoreOverviewPage({
             {dataReady ? formatDollars(paidTodayCents) : "—"}
           </div>
           <div className="dash-stat-trend">
-            {paidToday.length} {paidToday.length === 1 ? "payment" : "payments"}
+            {paidTodayCount} {paidTodayCount === 1 ? "payment" : "payments"}
           </div>
         </div>
         <div className="dash-stat-card">
@@ -241,7 +288,11 @@ export default function StoreOverviewPage({
           <div className="dash-stat-value">
             {dataReady ? formatDollars(settledCents) : "—"}
           </div>
-          <div className="dash-stat-trend">No refunds (M1)</div>
+          <div className="dash-stat-trend">
+            {refundedCount > 0
+              ? `all time · ${refundedCount} refunded (${formatDollars(refundedCents)})`
+              : "all time · no refunds"}
+          </div>
         </div>
         <div className="dash-stat-card">
           <div className="dash-stat-label">Avg. payment</div>
@@ -249,13 +300,13 @@ export default function StoreOverviewPage({
             {dataReady ? formatDollars(avgCents) : "—"}
           </div>
           <div className="dash-stat-trend">
-            {paidPayments.length} total paid
+            {totalPaidCount} total paid
           </div>
         </div>
         <div className="dash-stat-card">
           <div className="dash-stat-label">Transactions</div>
           <div className="dash-stat-value">
-            {dataReady ? String(paymentsList.length) : "—"}
+            {dataReady ? String(transactionsCount) : "—"}
           </div>
           <div className="dash-stat-trend">
             <Link
@@ -267,10 +318,6 @@ export default function StoreOverviewPage({
           </div>
         </div>
       </section>
-
-      <h2 className="dash-payments-section-head">
-        Payments · last 14 days
-      </h2>
 
       <section
         aria-label="Getting started and activity"

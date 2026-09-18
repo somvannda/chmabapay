@@ -113,6 +113,35 @@ body {
   transform: translateY(0);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Sticky footer                                                              */
+/*                                                                            */
+/* On a short page — /contact, /terms, a 404 — the footer used to sit directly  */
+/* under the content with blank page beneath it, because the body was only as   */
+/* tall as its content. Making the body a column at least one viewport tall and */
+/* letting the page's own <main> absorb the slack pushes the footer to the      */
+/* bottom edge, and changes nothing on a page that is already tall enough.      */
+/*                                                                            */
+/* Scoped away from the dashboard, which hides the landing chrome entirely      */
+/* (`display: none !important`, below) and owns its own full-height layout:     */
+/* those routes set `dash-hide-landing-chrome` on the body from an inline       */
+/* script as the first thing inside <body>, so the selector is already correct  */
+/* at first paint.                                                            */
+/* -------------------------------------------------------------------------- */
+.landing-body:not(.dash-hide-landing-chrome) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.landing-body:not(.dash-hide-landing-chrome) > main {
+  flex: 1 0 auto;
+}
+
+.landing-body:not(.dash-hide-landing-chrome) > .landing-footer {
+  flex: 0 0 auto;
+}
+
 .landing-header {
   position: sticky;
   top: 0;
@@ -128,9 +157,15 @@ body {
   grid-template-columns: max-content 1fr max-content;
   align-items: center;
   gap: 18px;
-  max-width: none;
-  margin: 0 67px;
-  padding: 0 32px;
+  /* The same box as `.landing-shell`, which the footer and every page section
+     use, so the brandmark sits on the same left edge as the footer brandmark and
+     the hero copy. It used to be `max-width: none; margin: 0 67px; padding: 0
+     32px`, and a `@media (min-width: 1024px)` block re-applied those 67px margins
+     with `!important` — so on every desktop width the header started 99px in
+     while the footer started at 144px, and no two containers agreed. */
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 24px;
   height: 76px;
 }
 
@@ -261,12 +296,106 @@ body {
   color: var(--ink);
 }
 
+/* -------------------------------------------------------------------------- */
+/* Mobile navigation. The desktop links are hidden at 768px and below, which   */
+/* used to leave no way to reach any of them on a phone.                       */
+/* -------------------------------------------------------------------------- */
+.landing-mobile-nav {
+  display: none;
+  position: relative;
+}
+
+.landing-mobile-toggle {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 36px;
+  height: 36px;
+  padding: 0 8px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.landing-mobile-toggle-bar {
+  display: block;
+  width: 100%;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
+.landing-mobile-panel {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 224px;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: 0 18px 40px rgba(17, 18, 23, 0.12);
+}
+
+.landing-mobile-link {
+  padding: 10px 12px;
+  border-radius: var(--r-xs);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.landing-mobile-link:hover {
+  background: var(--surface);
+}
+
+.landing-mobile-signin {
+  margin-top: 6px;
+  border-top: 1px solid var(--line-soft);
+  border-radius: 0 0 var(--r-xs) var(--r-xs);
+}
+
+.landing-mobile-cta {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: var(--r-xs);
+  background: var(--violet);
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+
+.landing-mobile-cta:hover {
+  background: var(--violet-hover);
+}
+
 .landing-section {
   padding: 104px 0;
 }
 
+/* -------------------------------------------------------------------------- */
+/* The one content container                                                   */
+/*                                                                            */
+/* Header, footer, homepage sections and every static page all use this box, so */
+/* there is a single left edge to reason about. It is 1240px wide with 24px of  */
+/* inner padding, which leaves 1192px of content — wide enough to keep the hero */
+/* headline on two lines. Both numbers matter: at 1200px the hero copy column    */
+/* drops under the 470px the headline needs and it silently re-wraps to three    */
+/* lines inside a fixed-height section.                                        */
+/* -------------------------------------------------------------------------- */
 .landing-shell {
-  max-width: 1200px;
+  max-width: 1240px;
   margin: 0 auto;
   padding: 0 24px;
 }
@@ -1023,6 +1152,30 @@ body {
   color: #111217;
 }
 
+/* The plans are owned by the admin console and fetched from the API — nothing is
+   hardcoded — so a failed request used to leave the grid rendering as an empty
+   band under a "Start small. Stay in control." heading. This is that state: one
+   card spanning the row, so the section still reads as finished. */
+.landing-plan-card-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 40px 24px 36px;
+}
+
+.landing-plan-card-empty .landing-plan-caption {
+  max-width: 460px;
+}
+
+/* Both dark buttons are `width: 100%` for the plan cards; across a full-width
+   card that reads as a banner, not a button. */
+.landing-plan-card-empty .landing-button-dark-secondary {
+  width: auto;
+  min-width: 160px;
+}
+
 .landing-plan-badge {
   position: absolute;
   top: 16px;
@@ -1290,10 +1443,6 @@ body {
   gap: 10px;
 }
 
-.landing-footer-brandmark {
-  text-decoration: none;
-}
-
 .landing-footer-copy {
   color: #92939d;
 }
@@ -1307,6 +1456,139 @@ body {
   line-height: 16px;
   font-weight: 400;
   color: #92939d;
+}
+
+/* ---------------------------------------------------------------------- */
+/* 404 — a wrong address still looks like the product.                    */
+/* ---------------------------------------------------------------------- */
+.nf-section {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 58vh;
+  padding: 96px 0 104px;
+}
+
+.nf-card {
+  max-width: 560px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.nf-eyebrow {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: var(--r-pill);
+  background: var(--violet-soft);
+  color: var(--violet);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+}
+
+.nf-title {
+  margin: 20px 0 12px;
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.nf-copy {
+  margin: 0 auto 32px;
+  max-width: 440px;
+  font-size: 16px;
+  line-height: 28px;
+  color: var(--muted);
+}
+
+.nf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.nf-help {
+  margin: 32px 0 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--subtle);
+}
+
+.nf-inline-link {
+  margin-left: 4px;
+  color: var(--violet);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.nf-inline-link:hover {
+  text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Contact — the footer has always linked here; until now it 404'd.        */
+/* ---------------------------------------------------------------------- */
+.contact-lede {
+  margin: 20px 0 0;
+  max-width: 620px;
+  font-size: 16px;
+  line-height: 28px;
+  color: var(--muted);
+}
+
+.contact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 40px;
+}
+
+.contact-card {
+  padding: 24px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
+.contact-card-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--subtle);
+}
+
+.contact-card-link {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--violet);
+  text-decoration: none;
+}
+
+.contact-card-link:hover {
+  text-decoration: underline;
+}
+
+.contact-card-copy {
+  margin: 12px 0 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--muted);
+}
+
+.contact-note {
+  margin: 32px 0 0;
+  max-width: 620px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--muted);
 }
 
 .docs-hero {
@@ -1605,67 +1887,44 @@ body {
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Desktop section sizing                                                      */
+/*                                                                            */
+/* This block used to re-declare a private 1240px content box for every         */
+/* homepage section, and pin the header with `margin: 0 67px`, so a single page */
+/* had three different left edges: header 99px, sections 100px, footer 144px.   */
+/* Those horizontal overrides are gone — every container inherits the shared    */
+/* `.landing-shell` box instead, and this block owns only the vertical rhythm.  */
+/*                                                                            */
+/* The heights are `min-height`, not `height`. As `height` they clipped the     */
+/* 1024–1100px range, where `.landing-hero-grid` and `.landing-feature-grid`    */
+/* collapse to one column and need roughly twice the space: the content used to */
+/* paint straight over the section below instead of pushing it down.           */
+/* -------------------------------------------------------------------------- */
 @media (min-width: 1024px) {
   section#product {
     box-sizing: border-box;
-    height: 667px;
-    padding-top: 80px;
-    padding-right: 32px;
-    padding-bottom: 80px;
-    padding-left: 32px;
+    min-height: 667px;
+    padding: 80px 0;
   }
 
+  /* Vertical only. The section owns the spacing and the height, so the shell   */
+  /* must not add its responsive 96px/144px vertical padding on top of that —   */
+  /* horizontal padding stays on `.landing-shell` so the content lands on the   */
+  /* shared edge.                                                              */
   section#product > .landing-hero-shell {
-    max-width: 1240px !important;
-    padding: 0 !important;
-  }
-
-  header > nav.landing-header-nav {
-    box-sizing: border-box;
-    height: 76px;
-    margin-left: 67px !important;
-    margin-right: 67px !important;
-    padding-left: 32px !important;
-    padding-right: 32px !important;
-  }
-
-  main > section.landing-band {
-    box-sizing: border-box;
-    margin-left: 0;
-    margin-right: 0;
-    padding-left: 0;
-    padding-right: 0;
-  }
-
-  main > section.landing-band > div {
-    max-width: 1240px !important;
-    padding: 0 !important;
+    padding-top: 0;
+    padding-bottom: 0;
   }
 
   section#how-it-works {
     box-sizing: border-box;
-    height: 634px;
-    margin-left: 0;
-    margin-right: 0;
-    padding-left: 0;
-    padding-right: 0;
-  }
-
-  section#how-it-works > div {
-    max-width: 1240px !important;
-    padding: 0 !important;
+    min-height: 634px;
   }
 
   section#plans {
     box-sizing: border-box;
     height: auto;
-    padding-left: 32px;
-    padding-right: 32px;
-  }
-
-  section#plans > div {
-    max-width: 1240px !important;
-    padding: 0 !important;
   }
 
   section#plans > div > div.landing-pricing-head > p.landing-pricing-copy {
@@ -1705,21 +1964,65 @@ body {
   }
 }
 
-@media (max-width: 768px) {
+/* Below 480px the header keeps the brandmark and the menu button only. "Sign in"
+   and "Start free" are the widest things in the bar and both are already inside
+   the menu panel, so showing them twice is what makes a 360px phone overflow. */
+@media (max-width: 480px) {
+  .landing-header-actions .landing-header-signin,
+  .landing-header-actions .nav-cta-primary {
+    display: none;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* The header collapses at 960px, not 768px.                                   */
+/*                                                                             */
+/* Measured, not guessed. The original desktop bar — brandmark + five links +   */
+/* actions in a 3-column grid, inset by `margin: 0 67px` — needed about 795px   */
+/* before the actions overflowed, and about 950px before the links stopped      */
+/* wrapping: at 769px it overflowed by 26px, and from 901px to ~949px "How it   */
+/* works" wrapped onto a second line and squashed the row.                      */
+/*                                                                             */
+/* The bar then moved onto the shared `.landing-shell` box, which gives it more */
+/* room; re-measured, it now clears both failure modes down to about 805px and  */
+/* reports `scrollWidth === clientWidth` with every link on one baseline at      */
+/* every width from 961px up. So 960px is safe but conservative — it hides a    */
+/* bar that would still fit — and lowering it is a display decision, not a fix.  */
+/*                                                                             */
+/* The general mobile rules further down still use 768px; only the header needs */
+/* the wider breakpoint.                                                       */
+/* -------------------------------------------------------------------------- */
+@media (max-width: 960px) {
   .landing-header-links {
     display: none;
   }
 
+  .landing-mobile-nav {
+    display: block;
+  }
+
   .landing-header-nav {
-    grid-template-columns: max-content 1fr max-content;
-    margin: 0;
+    /* Two tracks, not three. `.landing-header-links` is `display: none` here,
+       so a three-track grid leaves an empty third track whose gap still counts
+       and whose `1fr` second track still has min-content as its floor — which
+       pushed the actions past the right edge and cut the menu button off
+       below ~380px. */
+    grid-template-columns: max-content max-content;
+    justify-content: space-between;
     padding: 0 24px;
     height: auto;
     min-height: 76px;
   }
+}
 
+@media (max-width: 768px) {
+  /* Vertical only, and deliberately not the `padding: 72px 0` shorthand: the hero
+     shell carries `.landing-section` and `.landing-shell` on the *same* element,
+     so a shorthand here reset its horizontal padding to zero and dropped the hero
+     content to x=0 while the header and footer stayed at 24px. */
   .landing-section {
-    padding: 72px 0;
+    padding-top: 72px;
+    padding-bottom: 72px;
   }
 
   .landing-hero-shell {
@@ -2412,6 +2715,24 @@ body {
   background: #fef2f2;
   color: #991b1b;
 }
+/* A refunded payment is terminal and it is a money event, not a failure. It used to
+   fall through to the grey "pending" pill, which read as a payment still waiting to
+   be made. */
+.dash-pill-reversed {
+  background: #fdf2f8;
+  color: #9d174d;
+}
+/* A code that a newer one replaced — neither live nor lost. */
+.dash-pill-superseded {
+  background: #eff6ff;
+  color: #1e40af;
+}
+/* A webhook delivery we have not given up on yet: it failed, we are waiting to
+   try again. Amber rather than red, because it is not over. */
+.dash-pill-retrying {
+  background: #fffbeb;
+  color: #92400e;
+}
 .dash-table {
   width: 100%;
   border-collapse: separate;
@@ -2578,6 +2899,29 @@ body {
   width: 100%;
   padding: 24px;
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+/* The delivery log is a table, not a form: the 520px default squeezes six columns
+   into a space meant for a URL and a checkbox. */
+.dash-modal-wide {
+  max-width: 880px;
+}
+/* Raw wire content — a response body, the headers we sent. It has to keep its own
+   whitespace and wrap rather than scroll sideways, so `pre-wrap`, and it is capped
+   and scrollable because a response body has no length limit. */
+.dash-code-block {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: #0f172a;
+  background: #f8f8fb;
+  border: 1px solid #ebeaf2;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
 }
 .dash-modal-head {
   display: flex;
@@ -3275,14 +3619,6 @@ ol.dash-steps {
 body.dash-path-dashboard > .landing-header,
 body.dash-path-dashboard > .landing-footer {
   display: none !important;
-}
-
-.dash-payments-section-head {
-  font-size: 18px;
-  font-weight: 700;
-  color: #0f172a;
-  margin: 0;
-  letter-spacing: -0.01em;
 }
 
 /* ==========================================================
@@ -3985,12 +4321,6 @@ body.dash-path-dashboard > .landing-footer {
   font-size: var(--fs-14);
   line-height: var(--lh-snug);
   color: var(--muted);
-}
-.dash-payments-section-head {
-  font-size: var(--fs-16);
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  color: var(--ink);
 }
 
 /* Surfaces */

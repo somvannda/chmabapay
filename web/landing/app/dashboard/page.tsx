@@ -6,12 +6,24 @@ import { useSession, type Profile } from "@/components/portal/useSession";
 
 type Payment = {
   id: string | number;
-  amount_cents: number;
+  // `GET /v1/payments` returns `amount` as a decimal string; the reports
+  // summary returns integer cents. Both shapes are accepted.
+  amount?: string | number | null;
+  amount_cents?: number;
   status: string;
   reference_id?: string | null;
-  paid_at?: string | null;
   created_at?: string | null;
   [k: string]: unknown;
+};
+
+type ReportSummary = {
+  total_matching_paid_count: number;
+  total_matching_paid_amount_cents: number;
+  // Refunds are counted separately because the paid totals above exclude them —
+  // a reversed payment is no longer `paid`. Without these the "Settled" card can
+  // only show a number that dropped for a reason it cannot name.
+  total_matching_reversed_count?: number;
+  total_matching_reversed_amount_cents?: number;
 };
 
 type Store = {
@@ -37,21 +49,16 @@ function formatDollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
-function isToday(iso: string | null | undefined): boolean {
-  if (!iso) return false;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return false;
-  const now = new Date();
-  const start = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    0,
-    0,
-    0,
-    0,
-  );
-  return d >= start;
+function amountCents(p: Payment): number {
+  if (typeof p.amount_cents === "number") return p.amount_cents;
+  const n = Number.parseFloat(String(p.amount ?? ""));
+  return Number.isFinite(n) ? Math.round(n * 100) : 0;
+}
+
+function isoDateParam(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
 }
 
 function timeAgo(iso: string | null | undefined): string {
@@ -79,6 +86,10 @@ function pillClassForStatus(status: string): string {
       return "dash-pill dash-pill-expired";
     case "failed":
       return "dash-pill dash-pill-failed";
+    case "reversed":
+      return "dash-pill dash-pill-reversed";
+    case "superseded":
+      return "dash-pill dash-pill-superseded";
     case "pending":
     default:
       return "dash-pill dash-pill-pending";
@@ -118,6 +129,9 @@ export default function DashboardOverviewPage() {
   const [paymentsList, setPaymentsList] = useState<Payment[]>([]);
   const [storesList, setStoresList] = useState<Store[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryAll, setSummaryAll] = useState<ReportSummary | null>(null);
+  const [summaryToday, setSummaryToday] = useState<ReportSummary | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -192,17 +206,49 @@ export default function DashboardOverviewPage() {
     };
   }, []);
 
-  const paidPayments = paymentsList.filter((p) => p.status === "paid");
-  const paidToday = paidPayments.filter((p) => isToday(p.paid_at));
-  const paidTodayCents = paidToday.reduce((sum, p) => sum + (p.amount_cents || 0), 0);
-  const settledCents = paidTodayCents;
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      // The reports summary is the only place these totals exist: the payments
+      // list returns `amount` without `amount_cents`/`paid_at` and is capped at
+      // one page, so summing it silently undercounts.
+      try {
+        const today = isoDateParam(new Date());
+        const [allRes, todayRes] = await Promise.all([
+          fetch("/v1/reports/payments.json?per_page=1", {
+            credentials: "include",
+          }),
+          fetch(
+            `/v1/reports/payments.json?from=${today}&to=${today}&per_page=1`,
+            { credentials: "include" },
+          ),
+        ]);
+        if (allRes.ok) {
+          const data = await allRes.json().catch(() => null);
+          if (alive && data?.summary) setSummaryAll(data.summary);
+        }
+        if (todayRes.ok) {
+          const data = await todayRes.json().catch(() => null);
+          if (alive && data?.summary) setSummaryToday(data.summary);
+        }
+      } catch {
+      } finally {
+        if (alive) setSummaryLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const todayCents = summaryToday?.total_matching_paid_amount_cents ?? 0;
+  const todayCount = summaryToday?.total_matching_paid_count ?? 0;
+  const allTimeCents = summaryAll?.total_matching_paid_amount_cents ?? 0;
+  const allTimeCount = summaryAll?.total_matching_paid_count ?? 0;
   const avgCents =
-    paidPayments.length > 0
-      ? Math.round(
-          paidPayments.reduce((s, p) => s + (p.amount_cents || 0), 0) /
-            paidPayments.length,
-        )
-      : 0;
+    allTimeCount > 0 ? Math.round(allTimeCents / allTimeCount) : 0;
+  const refundedCount = summaryAll?.total_matching_reversed_count ?? 0;
+  const refundedCents = summaryAll?.total_matching_reversed_amount_cents ?? 0;
   const activeStores = storesList.filter(
     (s) => (s.status || "").toLowerCase() === "active",
   ).length;
@@ -215,7 +261,7 @@ export default function DashboardOverviewPage() {
     })
     .slice(0, 5);
 
-  const dataReady = !paymentsLoading && !storesLoading;
+  const dataReady = !paymentsLoading && !storesLoading && !summaryLoading;
   const isFirstRun = dataReady && storesList.length === 0;
 
   if (loading || !profile) {
@@ -298,25 +344,29 @@ export default function DashboardOverviewPage() {
         <div className="dash-stat-card dash-stat-accent">
           <div className="dash-stat-label">Paid today</div>
           <div className="dash-stat-value">
-            {dataReady ? formatDollars(paidTodayCents) : "—"}
+            {dataReady ? formatDollars(todayCents) : "—"}
           </div>
           <div className="dash-stat-trend">
-            {paidToday.length} payment{paidToday.length === 1 ? "" : "s"}
+            {todayCount} payment{todayCount === 1 ? "" : "s"} today
           </div>
         </div>
         <div className="dash-stat-card">
           <div className="dash-stat-label">Settled</div>
           <div className="dash-stat-value">
-            {dataReady ? formatDollars(settledCents) : "—"}
+            {dataReady ? formatDollars(allTimeCents) : "—"}
           </div>
-          <div className="dash-stat-trend">No refunds (M1)</div>
+          <div className="dash-stat-trend">
+            {refundedCount > 0
+              ? `all time · ${refundedCount} refunded (${formatDollars(refundedCents)})`
+              : "all time · no refunds"}
+          </div>
         </div>
         <div className="dash-stat-card">
           <div className="dash-stat-label">Avg. payment</div>
           <div className="dash-stat-value">
             {dataReady ? formatDollars(avgCents) : "—"}
           </div>
-          <div className="dash-stat-trend">{paidPayments.length} total paid</div>
+          <div className="dash-stat-trend">{allTimeCount} total paid</div>
         </div>
         <div className="dash-stat-card">
           <div className="dash-stat-label">Active stores</div>
@@ -414,7 +464,7 @@ export default function DashboardOverviewPage() {
                   </div>
                   <div className="dash-activity-right">
                     <div className="dash-activity-amount">
-                      {formatDollars(p.amount_cents || 0)}
+                      {formatDollars(amountCents(p))}
                     </div>
                   </div>
                 </Link>

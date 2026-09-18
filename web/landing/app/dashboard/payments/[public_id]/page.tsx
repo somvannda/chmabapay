@@ -28,6 +28,8 @@ type Payment = {
   expires_at?: string | null;
   bakong_ref?: string | null;
   reissued_from?: string | null;
+  reversed_at?: string | null;
+  reversal_reason?: string | null;
   [k: string]: unknown;
 };
 
@@ -61,6 +63,13 @@ function pillClassForStatus(status: string): string {
       return "dash-pill dash-pill-expired";
     case "failed":
       return "dash-pill dash-pill-failed";
+    // `reversed` and `superseded` used to fall through to the grey "pending" pill,
+    // so a refunded payment read as one still waiting for money and a replaced code
+    // read as live. Both are terminal.
+    case "reversed":
+      return "dash-pill dash-pill-reversed";
+    case "superseded":
+      return "dash-pill dash-pill-superseded";
     default:
       return "dash-pill dash-pill-pending";
   }
@@ -84,6 +93,7 @@ export default function DashboardPaymentDetailPage({
   const [checkoutOrigin, setCheckoutOrigin] = useState("");
   const [copied, setCopied] = useState(false);
   const [reissuing, setReissuing] = useState(false);
+  const [refunding, setRefunding] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -192,6 +202,66 @@ export default function DashboardPaymentDetailPage({
     return s?.name || payment.store;
   }
 
+  /**
+   * Record that the merchant refunded the customer.
+   *
+   * This is bookkeeping, not a transfer. ChmabaPay never holds the merchant's
+   * money — it settles straight into their own ABA or Bakong account — so there is
+   * nothing here to send back, and ABA reports no reversal we could detect. The
+   * merchant refunds through their own bank and records it here; the point of the
+   * record is that the reports and the monthly quota stop counting a sale that was
+   * given back.
+   */
+  async function handleRefund() {
+    if (!payment) return;
+    const note = window.prompt(
+      `Record a refund of ${formatAmount(payment.amount)} for this payment?\n\n` +
+        "This does not move money. Send the refund back to the customer from your " +
+        "own ABA or bank account — ChmabaPay never holds your funds and cannot " +
+        "return them.\n\n" +
+        "Note for your records (optional):",
+      "",
+    );
+    // An empty box means "refund, no note" (the API allows it — refusing to record
+    // a real refund for want of a note would leave the ledger knowingly wrong).
+    // Cancel means no refund at all, so null is the only abort case.
+    if (note === null) return;
+
+    setRefunding(true);
+    setError(null);
+    try {
+      const res = await fetch(`/v1/payments/${payment.id}/reverse`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: note.trim() || null }),
+      });
+      if (res.ok) {
+        // The response is the updated payment, so there is no second round trip to
+        // race against.
+        setPayment((await res.json()) as Payment);
+        setFlash("Refund recorded.");
+        setTimeout(() => setFlash(null), 4000);
+        return;
+      }
+      const err = await res.json().catch(() => ({}));
+      const detail = typeof err?.detail === "string" ? err.detail : "";
+      setError(
+        detail === "payment_already_reversed"
+          ? "This payment already has a refund recorded against it."
+          : detail === "payment_not_paid"
+            ? "Only a settled payment can be refunded."
+            : detail === "payment_not_found"
+              ? "Payment not found."
+              : "Could not record the refund. Try again in a moment.",
+      );
+    } catch {
+      setError("Network error recording the refund.");
+    } finally {
+      setRefunding(false);
+    }
+  }
+
   async function handleCopy(text: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -225,16 +295,30 @@ export default function DashboardPaymentDetailPage({
     }
   }
 
+  // The page's own origin wins, because it is where this dashboard is actually
+  // being served and `/pay/{id}` resolves there. The server's `checkout_url` is
+  // built from `request.base_url`, which behind a proxy is the backend's own
+  // address — so recording a refund made this field flip from the host the
+  // merchant was looking at to the internal one, and copying it then produced a
+  // link that does not work. The server value is still the fallback for the first
+  // paint, before `window.location.origin` is known.
   const checkoutUrl = payment
-    ? payment.checkout_url || `${checkoutOrigin}/pay/${payment.id}`
+    ? checkoutOrigin
+      ? `${checkoutOrigin}/pay/${payment.id}`
+      : payment.checkout_url || ""
     : "";
+
+  const status = (payment?.status || "").toLowerCase();
+  const isReversed = status === "reversed";
 
   // `/pay/{id}/qr.png` never existed on the backend and onError hid the 404, so
   // this page promised a scannable code and showed nothing. The QR route now
-  // answers 410 once the code is dead, so don't point an <img> at a dead one.
-  const isDead = payment?.status === "expired" || payment?.status === "failed";
-  const qrSrc =
-    payment?.qr_string && !isDead ? `/pay/${publicId}/qr.svg` : "";
+  // answers 410 once the code is dead — expired, failed, superseded or reversed —
+  // so don't point an <img> at a dead one.
+  const isDead = ["expired", "failed", "superseded", "reversed"].includes(status);
+  // A refunded sale does not want a fresh code; only one that ran out of time does.
+  const canReissue = status === "expired" || status === "failed";
+  const qrSrc = payment?.qr_string && !isDead ? `/pay/${publicId}/qr.svg` : "";
 
   return (
     <>
@@ -250,20 +334,32 @@ export default function DashboardPaymentDetailPage({
           </h2>
           <div className="dash-page-subtitle">Payment details</div>
         </div>
-        {profile?.is_platform_admin && payment && (
-          <div>
-            <button
-              type="button"
-              className="dash-btn dash-btn-secondary"
-              onClick={handleMarkPaid}
-              disabled={markingPaid || payment.status === "paid"}
-            >
-              {markingPaid
-                ? "…"
-                : payment.status === "paid"
-                  ? "Already paid"
-                  : "Test: Mark paid"}
-            </button>
+        {payment && (payment.status === "paid" || profile?.is_platform_admin) && (
+          <div className="dash-toolbar-filters">
+            {payment.status === "paid" && (
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary"
+                onClick={handleRefund}
+                disabled={refunding}
+              >
+                {refunding ? "Recording…" : "Record a refund"}
+              </button>
+            )}
+            {profile?.is_platform_admin && (
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary"
+                onClick={handleMarkPaid}
+                disabled={markingPaid || payment.status === "paid"}
+              >
+                {markingPaid
+                  ? "…"
+                  : payment.status === "paid"
+                    ? "Already paid"
+                    : "Test: Mark paid"}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -286,12 +382,25 @@ export default function DashboardPaymentDetailPage({
                       Customer scans this QR with their Bakong or ABA mobile app
                       to pay <strong>{formatAmount(payment.amount)}</strong>.
                     </>
-                  ) : isDead ? (
+                  ) : isReversed ? (
+                    <>
+                      This payment was refunded on{" "}
+                      {formatDate(payment.reversed_at)}, so its code cannot be shown
+                      again. Nothing moved from here — the money went back to the
+                      customer from your own ABA or bank account.
+                    </>
+                  ) : canReissue ? (
                     <>
                       This code stopped working at{" "}
                       {formatDate(payment.expires_at)} and cannot be shown again.
                       Generate a new one and send the new link to the customer.
                     </>
+                  ) : isDead ? (
+                    // `superseded`: a newer code replaced this one, so the button
+                    // above must not appear. Offering "Generate new QR" here would
+                    // spend a second ABA session for a sale that already has a live
+                    // successor.
+                    <>A newer code replaced this one, so it cannot be shown again.</>
                   ) : (
                     <>This payment carries no QR payload to display.</>
                   )}
@@ -304,26 +413,35 @@ export default function DashboardPaymentDetailPage({
                       expired.
                     </div>
                   ) : null}
-                  <div className="dash-empty-cta-row">
-                    <a
-                      className="dash-btn dash-btn-secondary dash-btn-sm"
-                      href={`/pay/${payment.id}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open checkout page ↗
-                    </a>
-                    {isDead ? (
-                      <button
-                        type="button"
-                        className="dash-btn dash-btn-primary dash-btn-sm"
-                        onClick={handleReissue}
-                        disabled={reissuing}
-                      >
-                        {reissuing ? "Generating…" : "Generate new QR"}
-                      </button>
-                    ) : null}
-                  </div>
+                  {/* Only rendered when it has something in it. A reversed or
+                      superseded payment has no checkout page to open — `/pay/:id`
+                      answers 410 for every dead status, so the link is withheld
+                      rather than offered and then refused — and no new code to
+                      mint either. */}
+                  {(!isDead || canReissue) && (
+                    <div className="dash-empty-cta-row">
+                      {!isDead && (
+                        <a
+                          className="dash-btn dash-btn-secondary dash-btn-sm"
+                          href={`/pay/${payment.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open checkout page ↗
+                        </a>
+                      )}
+                      {canReissue ? (
+                        <button
+                          type="button"
+                          className="dash-btn dash-btn-primary dash-btn-sm"
+                          onClick={handleReissue}
+                          disabled={reissuing}
+                        >
+                          {reissuing ? "Generating…" : "Generate new QR"}
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -383,6 +501,22 @@ export default function DashboardPaymentDetailPage({
                     </td>
                     <td>{formatDate(payment.paid_at)}</td>
                   </tr>
+                  {isReversed && (
+                    <tr>
+                      <td>
+                        <div className="dash-stat-label">Refunded at</div>
+                      </td>
+                      <td>{formatDate(payment.reversed_at)}</td>
+                    </tr>
+                  )}
+                  {isReversed && payment.reversal_reason ? (
+                    <tr>
+                      <td>
+                        <div className="dash-stat-label">Refund note</div>
+                      </td>
+                      <td>{payment.reversal_reason}</td>
+                    </tr>
+                  ) : null}
                   <tr>
                     <td>
                       <div className="dash-stat-label">Bakong ref</div>

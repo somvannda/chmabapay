@@ -279,16 +279,17 @@ export default function BillingPage() {
   async function handlePayInvoice(invoiceId: string | number) {
     try {
       const res = await fetch(`/v1/billing/invoices/${invoiceId}/khqr`, {
-        method: "POST",
         credentials: "include",
       });
-      if (res.ok) {
-        const data = (await res.json()) as { checkout_url?: string };
-        if (data.checkout_url) {
-          window.open(data.checkout_url, "_blank", "noopener,noreferrer");
-        }
+      if (!res.ok) throw new Error(await readApiError(res));
+      const data = (await res.json()) as { checkout_url?: string };
+      if (data.checkout_url) {
+        window.open(data.checkout_url, "_blank", "noopener,noreferrer");
+      } else {
+        notify("No checkout link was returned for this invoice.", "error");
       }
-    } catch {
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), "error");
     }
   }
 

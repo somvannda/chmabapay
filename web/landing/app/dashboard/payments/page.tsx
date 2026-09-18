@@ -52,6 +52,12 @@ function pillClassForStatus(status: string): string {
       return "dash-pill dash-pill-expired";
     case "failed":
       return "dash-pill dash-pill-failed";
+    // Both are terminal. Falling through to the grey "pending" pill made a refunded
+    // payment read as one still waiting for money, and a replaced code read as live.
+    case "reversed":
+      return "dash-pill dash-pill-reversed";
+    case "superseded":
+      return "dash-pill dash-pill-superseded";
     default:
       return "dash-pill dash-pill-pending";
   }
@@ -64,6 +70,8 @@ const STATUS_OPTIONS = [
   { value: "scanned", label: "Scanned" },
   { value: "expired", label: "Expired" },
   { value: "failed", label: "Failed" },
+  { value: "reversed", label: "Refunded" },
+  { value: "superseded", label: "Superseded" },
 ];
 
 export default function DashboardPaymentsPage() {

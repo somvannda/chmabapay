@@ -1,5 +1,16 @@
 import { brandColors } from "@shared/theme";
 
+/**
+ * The pricing cards are the homepage's only API dependency, and the page is
+ * prerendered — in the production image that happens at `docker build` time, before
+ * any container is up, so `api:8000` cannot resolve and `fetchPublicPlans()` falls
+ * back to `[]`. A failed fetch leaves no revalidate hint behind, which would make the
+ * route plain static and serve that empty state until the next deploy. Declaring the
+ * window on the route itself means the page instead regenerates in the background and
+ * the real plans appear on the first request after it expires.
+ */
+export const revalidate = 60;
+
 const primaryCtaHref = "/auth/google/login";
 
 const featureCards = [
@@ -49,6 +60,10 @@ async function fetchPublicPlans(): Promise<PublicPlan[]> {
   try {
     const res = await fetch(`${backendBaseUrl()}/v1/billing/plans`, {
       next: { revalidate: 60 },
+      // A hung API must not hold the marketing page hostage. Unreachable is already
+      // fast (connection refused), but "accepting and silent" is not, so the wait
+      // is bounded here and the section falls back to its empty state.
+      signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return [];
     const data = (await res.json()) as PublicPlan[];
@@ -94,14 +109,9 @@ function HeroSection() {
             </div>
 
             <div className="landing-proof-row">
-              <div className="landing-avatar-stack">
-                <span className="landing-avatar-chip landing-avatar-green">A</span>
-                <span className="landing-avatar-chip landing-avatar-gold">B</span>
-                <span className="landing-avatar-chip landing-avatar-purple">C</span>
-                <span className="landing-avatar-chip landing-avatar-pink">D</span>
-              </div>
               <div className="landing-proof-copy">
-                <strong>2,400+</strong> teams already trust the Chmaba product family
+                Money settles straight into your own ABA PayWay account. ChmabaPay never holds
+                your funds.
               </div>
             </div>
           </div>
@@ -114,7 +124,7 @@ function HeroSection() {
                   <span />
                   <span />
                 </div>
-                <div className="landing-window-status">Payment rails healthy</div>
+                <div className="landing-window-status">Dashboard preview</div>
               </div>
 
               <div className="landing-dashboard-shell">
@@ -130,7 +140,7 @@ function HeroSection() {
 
                 <div className="landing-dashboard-main">
                   <div className="landing-dashboard-head">
-                    <div className="landing-dashboard-date">Friday, 11 September 2026</div>
+                    <div className="landing-dashboard-date">Illustrative data</div>
                     <div className="landing-dashboard-user">CP</div>
                   </div>
                   <div className="landing-dashboard-greeting">Payment overview</div>
@@ -169,12 +179,11 @@ function HeroSection() {
                     </div>
 
                     <div className="landing-items-card">
-                      <div className="landing-panel-title">Active rails</div>
+                      <div className="landing-panel-title">Your stores</div>
                       {[
-                        ["AB", "ABA PayWay", "$412"],
-                        ["BK", "Bakong KHQR", "$355"],
-                        ["DB", "Direct Bank", "$188"],
-                        ["CL", "Checkout Link", "$96"],
+                        ["MS", "Main Store", "$412"],
+                        ["DT", "Downtown", "$355"],
+                        ["ON", "Online shop", "$188"],
                       ].map(([initials, label, amount]) => (
                         <div key={label} className="landing-items-row">
                           <div className="landing-items-left">
@@ -271,6 +280,23 @@ async function PricingSection() {
         </div>
 
         <div className="landing-pricing-grid">
+          {plans.length === 0 ? (
+            // Plans come from the API only — nothing is hardcoded here on purpose,
+            // because the admin console owns them and a baked-in copy would drift.
+            // A failed fetch must therefore degrade visibly instead of leaving the
+            // grid silently empty under a "Start small" heading.
+            <div className="landing-plan-card landing-plan-card-empty">
+              <div className="landing-plan-name-dark">Plans aren’t loading right now</div>
+              <div className="landing-plan-caption">
+                The current plans come straight from our billing system, and that request just
+                failed. Refresh in a moment, or contact us and we’ll send you the details.
+              </div>
+              <a className="landing-button-dark-secondary" href="/contact">
+                Contact us
+              </a>
+            </div>
+          ) : null}
+
           {plans.map((plan) => {
             const { amount, period } = planPrice(plan);
             const features = plan.features ?? [];
@@ -324,16 +350,17 @@ function ClosingSection() {
       <div className="landing-shell">
         <div className="landing-closing-grid">
           <div className="landing-testimonial-card">
-            <div className="landing-stars">*****</div>
             <p className="landing-testimonial-quote">
-              “ChmabaPay gave us a cleaner start to each day. We know which payment links worked before
-              the first support message arrives.”
+              An expired code is not a lost sale. If a customer pays after the window closes, we
+              keep reconciling and settle the payment anyway — so what you report matches what
+              reached the bank.
             </p>
             <div className="landing-testimonial-author">
-              <div className="landing-testimonial-avatar">ML</div>
               <div>
-                <div className="landing-testimonial-name">Mina Lee</div>
-                <div className="landing-testimonial-role">Owner, Little Fern Coffee</div>
+                <div className="landing-testimonial-name">Late payments still settle</div>
+                <div className="landing-testimonial-role">
+                  Verified on a live ABA payment
+                </div>
               </div>
             </div>
           </div>

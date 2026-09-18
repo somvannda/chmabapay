@@ -54,8 +54,6 @@ export default function DashboardSettingsPage() {
   const [activeTab, setActiveTab] = useState<TabKey>("profile");
 
   const [profileName, setProfileName] = useState("");
-  const [profileDisplayName, setProfileDisplayName] = useState("");
-  const [profileLocale, setProfileLocale] = useState("");
   const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
@@ -66,7 +64,7 @@ export default function DashboardSettingsPage() {
 
   useEffect(() => {
     if (profile) {
-      setProfileName(profile.full_name ?? "");
+      setProfileName(profile.name ?? "");
     }
   }, [profile]);
 
@@ -114,11 +112,9 @@ export default function DashboardSettingsPage() {
     setProfileError(null);
     setProfileSuccess(null);
     try {
-      const body: { full_name: string; display_name?: string; locale?: string } = {
-        full_name: profileName,
-      };
-      if (profileDisplayName) body.display_name = profileDisplayName;
-      if (profileLocale) body.locale = profileLocale;
+      // The profile endpoint's field is `name`. Anything else is dropped by the
+      // request schema, which used to make this save a silent no-op.
+      const body = { name: profileName };
       const res = await fetch("/v1/me", {
         method: "PATCH",
         credentials: "include",
@@ -200,30 +196,6 @@ export default function DashboardSettingsPage() {
                   className="dash-input"
                   value={profile.email ?? ""}
                   disabled
-                />
-              </div>
-
-              <div className="dash-field">
-                <label htmlFor="profile-display">Display name (optional)</label>
-                <input
-                  id="profile-display"
-                  type="text"
-                  className="dash-input"
-                  value={profileDisplayName}
-                  onChange={(e) => setProfileDisplayName(e.target.value)}
-                  placeholder="How you appear on receipts"
-                />
-              </div>
-
-              <div className="dash-field">
-                <label htmlFor="profile-locale">Locale (optional)</label>
-                <input
-                  id="profile-locale"
-                  type="text"
-                  className="dash-input"
-                  value={profileLocale}
-                  onChange={(e) => setProfileLocale(e.target.value)}
-                  placeholder="e.g. en-US, km-KH"
                 />
               </div>
 

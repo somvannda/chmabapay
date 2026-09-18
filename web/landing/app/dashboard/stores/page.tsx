@@ -33,6 +33,7 @@ export default function DashboardStoresPage() {
   const [stores, setStores] = useState<Store[]>([]);
   const [flash, setFlash] = useState<string | null>(null);
   const [disablingId, setDisablingId] = useState<string | null>(null);
+  const [enablingId, setEnablingId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -89,6 +90,57 @@ export default function DashboardStoresPage() {
       setTimeout(() => setFlash(null), 4000);
     } finally {
       setDisablingId(null);
+    }
+  }
+
+  /**
+   * Reverse a disable.
+   *
+   * This exists because the button below had no counterpart. Disabling a store
+   * stops its links, keys and webhooks from working, and none of the other write
+   * paths will touch it — a settings save and attaching a link both refuse a
+   * disabled store with `store_disabled`. So one press used to be permanent.
+   *
+   * The status it comes back as is decided by the backend: `active` if it still has
+   * a payment link, `draft` if it does not. The merchant is told which, because
+   * "enabled" next to a store that still cannot take payments would be a lie.
+   */
+  async function handleEnable(store: Store) {
+    if (
+      !confirm(
+        `Enable store "${store.name}"?\n\nIts payment link starts accepting payments again.`,
+      )
+    ) {
+      return;
+    }
+    setEnablingId(store.id);
+    try {
+      const res = await fetch(`/v1/stores/${store.id}/enable`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        const status = data?.status || "active";
+        setStores((prev) =>
+          prev.map((s) => (s.id === store.id ? { ...s, status } : s)),
+        );
+        setFlash(
+          status === "draft"
+            ? `Store "${store.name}" is enabled again, but it has no payment link, so it still cannot take payments. Add one to finish.`
+            : `Store "${store.name}" is enabled and accepting payments again.`,
+        );
+        setTimeout(() => setFlash(null), status === "draft" ? 8000 : 4000);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setFlash(err?.detail || "Could not enable store.");
+        setTimeout(() => setFlash(null), 6000);
+      }
+    } catch {
+      setFlash("Network error while enabling store.");
+      setTimeout(() => setFlash(null), 4000);
+    } finally {
+      setEnablingId(null);
     }
   }
 
@@ -180,17 +232,28 @@ export default function DashboardStoresPage() {
                       >
                         View
                       </Link>
-                      <button
-                        type="button"
-                        className="dash-btn dash-btn-danger dash-btn-sm"
-                        onClick={() => handleDisable(s)}
-                        disabled={
-                          disablingId === s.id ||
-                          (s.status || "").toLowerCase() !== "active"
-                        }
-                      >
-                        {disablingId === s.id ? "…" : "Disable"}
-                      </button>
+                      {(s.status || "").toLowerCase() === "disabled" ? (
+                        <button
+                          type="button"
+                          className="dash-btn dash-btn-secondary dash-btn-sm"
+                          onClick={() => handleEnable(s)}
+                          disabled={enablingId === s.id}
+                        >
+                          {enablingId === s.id ? "…" : "Enable"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="dash-btn dash-btn-danger dash-btn-sm"
+                          onClick={() => handleDisable(s)}
+                          disabled={
+                            disablingId === s.id ||
+                            (s.status || "").toLowerCase() !== "active"
+                          }
+                        >
+                          {disablingId === s.id ? "…" : "Disable"}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

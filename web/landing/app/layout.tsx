@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { brandColors } from "@shared/theme";
+import { MobileNav } from "@/components/MobileNav";
 import "./globals.css";
 
 const inter = Inter({
@@ -19,6 +20,11 @@ const jetbrains = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  // Relative social images have to be resolved to an absolute URL while the page is
+  // being prerendered, and that happens on a build machine with no request to read
+  // an origin from. Without this Next falls back to `http://localhost:3000` and ships
+  // `og:image: http://localhost:3000/og-image.png` to every crawler.
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://pay.chmaba.com"),
   title: "ChmabaPay — Your Payments, In A Better Flow",
   description:
     "ChmabaPay brings checkouts, payment visibility, and cleaner operations into one calm workspace.",
@@ -32,17 +38,26 @@ export const metadata: Metadata = {
     "ChmabaPay",
     "checkout platform",
   ],
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon.png", type: "image/png", sizes: "512x512" },
+    ],
+    apple: [{ url: "/favicon.png", sizes: "512x512" }],
+  },
   openGraph: {
     title: "ChmabaPay — Your Payments, In A Better Flow",
     description:
       "ChmabaPay brings checkouts, payment visibility, and cleaner operations into one calm workspace.",
     type: "website",
     siteName: "ChmabaPay",
+    images: [{ url: "/og-image.png", width: 1024, height: 1024, alt: "ChmabaPay" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "ChmabaPay — Your Payments, In A Better Flow",
     description: "A calmer payment workspace for KHQR, Bakong, and ABA PayWay.",
+    images: ["/og-image.png"],
   },
 };
 
@@ -82,19 +97,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </a>
 
             <div className="landing-header-links">
-              <a className="landing-header-link" href="#product">
+              <a className="landing-header-link" href="/#product">
                 Product
               </a>
-              <a className="landing-header-link" href="#how-it-works">
+              <a className="landing-header-link" href="/#how-it-works">
                 How it works
               </a>
-              <a className="landing-header-link" href="#plans">
+              <a className="landing-header-link" href="/#plans">
                 Plans
               </a>
               <a className="landing-header-link" href="/api/docs">
                 API
               </a>
-              <a className="landing-header-link" href="#customers">
+              <a className="landing-header-link" href="/#customers">
                 Customers
               </a>
             </div>
@@ -107,6 +122,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <a href={signInHref} className="nav-cta-primary">
                 Start free
               </a>
+              <MobileNav />
             </div>
           </nav>
         </header>
@@ -117,17 +133,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="landing-shell">
             <div className="landing-footer-row">
               <div className="landing-footer-brand">
-                <a className="landing-brandmark landing-footer-brandmark" href="/" aria-label="ChmabaPay home">
+                <a className="landing-brandmark landing-brandmark-link" href="/" aria-label="ChmabaPay home">
                   <span className="landing-brandmark-mark" aria-hidden="true">
                     <span className="landing-brandmark-ring landing-brandmark-ring-primary" />
                     <span className="landing-brandmark-ring landing-brandmark-ring-secondary" />
                   </span>
-                  <span className="landing-brandmark-name">chmaba</span>
+                  <span className="landing-brandmark-word">
+                    <span className="landing-brandmark-name">chmaba</span>
+                    <span className="landing-brandmark-pay">Pay</span>
+                  </span>
                 </a>
               </div>
               <span className="landing-footer-copy">© 2026 ChmabaPay Technologies. Built with love for better days.</span>
               <div className="landing-footer-links">
-                <a className="landing-footer-link" href="#plans">
+                <a className="landing-footer-link" href="/#plans">
                   Pricing
                 </a>
                 <a className="landing-footer-link" href="/api/docs">

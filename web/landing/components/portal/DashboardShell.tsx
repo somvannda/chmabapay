@@ -176,7 +176,7 @@ function initialsOf(value: string): string {
  * ------------------------------------------------------------------ */
 
 export type DashboardShellProps = {
-  profile: { email?: string; full_name?: string | null } | null;
+  profile: { email?: string; name?: string | null } | null;
   planName: string;
   planCode: string;
   used: number;
@@ -219,8 +219,8 @@ export function DashboardShell({
   const crumbs = useMemo(() => breadcrumbFromPath(pathname), [pathname]);
 
   const email = profile?.email || "";
-  const displayName = profile?.full_name || email || "Your account";
-  const initials = initialsOf(profile?.full_name || email || "CP");
+  const displayName = profile?.name || email || "Your account";
+  const initials = initialsOf(profile?.name || email || "CP");
 
   const safeLimit = limit > 0 ? limit : 0;
   const pct =

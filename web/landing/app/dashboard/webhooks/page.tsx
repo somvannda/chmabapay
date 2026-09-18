@@ -105,6 +105,370 @@ function RevealSecretModal({
   );
 }
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+type WebhookTestResult = {
+  http_status: number | null;
+  response_body_preview: string | null;
+  signature_valid_vs_local: boolean;
+  headers_sent: Record<string, string>;
+};
+
+type WebhookDelivery = {
+  delivery_id: number;
+  event_id: string;
+  event_type: string;
+  http_status: number | null;
+  attempt_count: number;
+  response_body_preview: string | null;
+  created_at: string;
+  completed_at: string | null;
+};
+
+/**
+ * Sends one event and shows exactly what came back.
+ *
+ * The point is the round trip: a merchant whose endpoint is silently rejecting
+ * events otherwise has no way to tell whether the problem is the URL, the method,
+ * a firewall or their own handler. This is the one button that answers that, and it
+ * reports the raw status and body rather than a pass/fail verdict.
+ */
+function TestWebhookModal({
+  endpoint,
+  onClose,
+}: {
+  endpoint: WebhookEndpoint;
+  onClose: () => void;
+}) {
+  const [sending, setSending] = useState(true);
+  const [result, setResult] = useState<WebhookTestResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const send = useCallback(async () => {
+    setSending(true);
+    setError(null);
+    try {
+      const res = await fetch(`/v1/webhooks/${endpoint.id}/test`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(await readApiError(res));
+      setResult((await res.json()) as WebhookTestResult);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  }, [endpoint.id]);
+
+  useEffect(() => {
+    void send();
+  }, [send]);
+
+  const status = result?.http_status ?? null;
+  const reached = result !== null && status !== null;
+  const accepted = reached && status >= 200 && status < 300;
+
+  return (
+    <div className="dash-modal-backdrop" onClick={onClose}>
+      <div className="dash-modal dash-modal-wide" onClick={(e) => e.stopPropagation()}>
+        <div className="dash-modal-head">
+          <h3 className="dash-modal-title">Test delivery</h3>
+          <button
+            type="button"
+            className="dash-modal-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div className="dash-modal-body">
+          <div className="dash-note">
+            We POST a sample <code>payment.completed</code> event to{" "}
+            <code>{hostOf(endpoint.url)}</code>, signed with this endpoint&rsquo;s
+            secret and sent the same way a real event is. No payment is created and
+            nothing is charged.
+          </div>
+
+          {sending && <div className="dash-info">Sending…</div>}
+          {error && <div className="dash-warn">{error}</div>}
+
+          {result && !sending && (
+            <>
+              {accepted && (
+                <div className="dash-info">
+                  Your endpoint answered HTTP <strong>{status}</strong>. A real event
+                  delivered this way is marked delivered and never retried.
+                </div>
+              )}
+              {!reached && (
+                <div className="dash-warn">
+                  We could not reach {hostOf(endpoint.url)} at all — no HTTP response
+                  came back. The usual causes are an address that is not public, a port
+                  that is closed, or a destination that refuses POST.
+                </div>
+              )}
+              {reached && !accepted && (
+                <div className="dash-warn">
+                  Your endpoint answered HTTP <strong>{status}</strong>. Only a 2xx
+                  counts as delivered — a redirect, a 4xx and a 5xx all count as
+                  failures, and a real event would be retried with a widening delay
+                  before we gave up on it.
+                </div>
+              )}
+
+              <table className="dash-table">
+                <tbody>
+                  <tr>
+                    <td>
+                      <div className="dash-stat-label">HTTP status</div>
+                    </td>
+                    <td>{status ?? "No response"}</td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div className="dash-stat-label">Signature</div>
+                    </td>
+                    <td>
+                      {result.signature_valid_vs_local
+                        ? "Verified against this endpoint's secret before sending"
+                        : "Did not verify — a fault on our side, please contact support"}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div>
+                <div className="dash-stat-label">Headers we sent</div>
+                <pre className="dash-code-block">
+                  {Object.entries(result.headers_sent)
+                    .map(([key, value]) => `${key}: ${value}`)
+                    .join("\n")}
+                </pre>
+              </div>
+
+              <div>
+                <div className="dash-stat-label">Your response body</div>
+                {result.response_body_preview ? (
+                  <pre className="dash-code-block">
+                    {result.response_body_preview}
+                  </pre>
+                ) : (
+                  <div className="dash-note">
+                    No body came back. That is normal for a handler that only returns a
+                    status code.
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          <div className="dash-toolbar">
+            <div />
+            <div className="dash-toolbar-filters">
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary"
+                onClick={onClose}
+                disabled={sending}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="dash-btn dash-btn-primary"
+                onClick={() => void send()}
+                disabled={sending}
+              >
+                {sending ? "Sending…" : "Send again"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A delivery whose `completed_at` is still null is one we have not finished with —
+ * it failed and is waiting for the next attempt. Only a 2xx is success, which is the
+ * same rule the sender applies, so the pill cannot disagree with the retry behaviour.
+ */
+function deliveryState(delivery: WebhookDelivery): {
+  className: string;
+  label: string;
+} {
+  if (delivery.completed_at === null) {
+    return { className: "dash-pill dash-pill-retrying", label: "retrying" };
+  }
+  if (
+    delivery.http_status !== null &&
+    delivery.http_status >= 200 &&
+    delivery.http_status < 300
+  ) {
+    return { className: "dash-pill dash-pill-paid", label: "delivered" };
+  }
+  return { className: "dash-pill dash-pill-failed", label: "failed" };
+}
+
+function DeliveriesModal({
+  endpoint,
+  onClose,
+}: {
+  endpoint: WebhookEndpoint;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState<WebhookDelivery[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/v1/webhooks/${endpoint.id}/deliveries?limit=50&page=1`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error(await readApiError(res));
+      const data = await res.json().catch(() => []);
+      setRows(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [endpoint.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <div className="dash-modal-backdrop" onClick={onClose}>
+      <div className="dash-modal dash-modal-wide" onClick={(e) => e.stopPropagation()}>
+        <div className="dash-modal-head">
+          <h3 className="dash-modal-title">Recent deliveries</h3>
+          <button
+            type="button"
+            className="dash-modal-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <div className="dash-modal-body">
+          <div className="dash-note">
+            The last 50 events we tried to send to{" "}
+            <code>{hostOf(endpoint.url)}</code>, newest first. A test send is not
+            listed here — it goes straight out rather than through the queue that this
+            log reads.
+          </div>
+
+          {error && <div className="dash-warn">{error}</div>}
+
+          {loading ? (
+            <div className="dash-info">Loading deliveries…</div>
+          ) : rows.length === 0 ? (
+            <div className="dash-empty">
+              Nothing has been sent to this endpoint yet.
+              <div className="dash-empty-desc">
+                Events appear here once they happen. If you expected one, check that
+                this endpoint is enabled and that the event type is in its list.
+              </div>
+            </div>
+          ) : (
+            <table className="dash-table">
+              <thead>
+                <tr>
+                  <th>Event</th>
+                  <th>Status</th>
+                  <th>HTTP</th>
+                  <th>Tries</th>
+                  <th>Sent</th>
+                  <th>Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((delivery) => {
+                  const state = deliveryState(delivery);
+                  return (
+                    <tr key={delivery.delivery_id}>
+                      <td>
+                        {delivery.event_type}
+                        <div className="dash-code-mono">{delivery.event_id}</div>
+                      </td>
+                      <td>
+                        <span className={state.className}>{state.label}</span>
+                      </td>
+                      <td>{delivery.http_status ?? "—"}</td>
+                      <td>{delivery.attempt_count}</td>
+                      <td>{formatDateTime(delivery.created_at)}</td>
+                      <td>
+                        {delivery.response_body_preview ? (
+                          <span className="dash-code-mono">
+                            {delivery.response_body_preview}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+
+          <div className="dash-toolbar">
+            <div />
+            <div className="dash-toolbar-filters">
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary"
+                onClick={onClose}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary"
+                onClick={() => void load()}
+                disabled={loading}
+              >
+                {loading ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EditEndpointModal({
   endpoint,
   onClose,
@@ -287,6 +651,9 @@ export default function DashboardWebhooksPage() {
   const [editing, setEditing] = useState<WebhookEndpoint | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [revealSecret, setRevealSecret] = useState<string | null>(null);
+  const [testing, setTesting] = useState<WebhookEndpoint | null>(null);
+  const [viewingDeliveries, setViewingDeliveries] =
+    useState<WebhookEndpoint | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchEndpoints = useCallback(async () => {
@@ -485,6 +852,20 @@ export default function DashboardWebhooksPage() {
                         <button
                           type="button"
                           className="dash-btn dash-btn-secondary dash-btn-sm"
+                          onClick={() => setTesting(ep)}
+                        >
+                          Send test
+                        </button>
+                        <button
+                          type="button"
+                          className="dash-btn dash-btn-secondary dash-btn-sm"
+                          onClick={() => setViewingDeliveries(ep)}
+                        >
+                          Deliveries
+                        </button>
+                        <button
+                          type="button"
+                          className="dash-btn dash-btn-secondary dash-btn-sm"
                           onClick={() => handleRotateSecret(ep.id)}
                         >
                           Rotate secret
@@ -528,6 +909,17 @@ export default function DashboardWebhooksPage() {
         <RevealSecretModal
           secret={revealSecret}
           onClose={() => setRevealSecret(null)}
+        />
+      )}
+
+      {testing !== null && (
+        <TestWebhookModal endpoint={testing} onClose={() => setTesting(null)} />
+      )}
+
+      {viewingDeliveries !== null && (
+        <DeliveriesModal
+          endpoint={viewingDeliveries}
+          onClose={() => setViewingDeliveries(null)}
         />
       )}
     </>
