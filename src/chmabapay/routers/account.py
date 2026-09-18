@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -24,8 +24,6 @@ def _account_profile(account: models.Account) -> dict[str, Any]:
         "email": account.email,
         "name": account.name,
         "status": account.status,
-        "account_type": account.account_type,
-        "account_type_explicitly_set": account.account_type_explicitly_set,
         "whitelabel_enabled": account.whitelabel_enabled,
         "is_platform_admin": account.is_platform_admin,
         "created_at": account.created_at,
@@ -51,7 +49,6 @@ class AccountPatch(BaseModel):
 
     name: str | None = Field(default=None, max_length=120)
     email: str | None = Field(default=None, max_length=255)
-    account_type: Literal["individual", "business"] | None = None
 
 
 class TermsAcceptance(BaseModel):
@@ -92,12 +89,6 @@ async def _apply_account_patch(
             raise HTTPException(status_code=400, detail="email_already_taken")
         account.email = body.email
         changed_fields.append("email")
-    if body.account_type is not None and body.account_type != account.account_type:
-        account.account_type = body.account_type
-        changed_fields.append("account_type")
-    if body.account_type is not None and not account.account_type_explicitly_set:
-        account.account_type_explicitly_set = True
-        changed_fields.append("account_type_explicitly_set")
     if changed_fields:
         account.updated_at = datetime.now(UTC)
         await session.commit()

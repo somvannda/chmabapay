@@ -10,7 +10,6 @@ type AdminAccountRow = {
   email: string;
   name: string;
   status: string;
-  account_type: string;
   is_platform_admin: boolean;
   plan_code: string | null;
   plan_name: string | null;
@@ -175,7 +174,6 @@ export default function AdminAccountsPage() {
               <tr>
                 <th>Email</th>
                 <th>Name</th>
-                <th>Type</th>
                 <th>Plan</th>
                 <th>Subscription</th>
                 <th>Status</th>
@@ -207,7 +205,6 @@ export default function AdminAccountsPage() {
                       )}
                     </td>
                     <td>{row.name || "—"}</td>
-                    <td>{row.account_type}</td>
                     <td>{row.plan_name || "—"}</td>
                     <td>
                       <span className={sub.className}>{sub.label}</span>

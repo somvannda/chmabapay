@@ -931,20 +931,25 @@ no-custody clause, the restricted-business list, credentials and termination) an
 a hole — including that the webhook signing secret is **stored in plaintext and
 accepted as a risk for now**, because it must be recoverable to sign with.
 
-#### Found while doing this, not fixed
+#### Resolved after this was written
 
-- **`accounts.account_type` is vestigial, and the decision is unresolved.** It holds
+- **`accounts.account_type` was vestigial and has been dropped.** It held
   `individual`/`business`, the onboarding step that set it was deleted (*"single
-  account type"*), and **nothing in `src/` reads it to make a decision** — the only
-  comparison is a change detection for the diff. `billing.py` still auto-switches it
-  on a plan upgrade, to no effect. It is echoed in `/v1/me`, in the admin account
-  row and in the change-plan response, and it is written by `PATCH /v1/me`. The one
-  place that branches on it is `web/user/`, the older portal — which **no compose
-  service in either stack builds or runs**, since `/dashboard` in `web/landing`
-  replaced it. So: give it meaning or drop the column. Dropping it is a migration
-  plus the `/v1/me` PATCH and change-plan contracts; keeping it means accepting a
-  field that looks like it gates something and does not, which is a trap for the
-  next person.
+  account type"*), and **nothing in `src/` read it to make a decision** — the only
+  comparison was a change detection for the diff. The one place that branched on it
+  was `web/user/`, the older portal, which **no compose service in either stack
+  builds or runs**, since `/dashboard` in `web/landing` replaced it. Migration `0008`
+  drops it along with `account_type_explicitly_set`, and it is gone from the `/v1/me`
+  PATCH body, the `/v1/me` and admin account responses, the session payload and the
+  change-plan response.
+
+  `ChangePlanOut.account_type_switched` went with it, and is worth noting: it was
+  **hardcoded `False`**, so the BRD's Starter-to-Growth "auto-switch to business" was
+  never live either. Nothing replaces the enum, because nothing ever depended on it —
+  `whitelabel_enabled` already gated white-label, the plan already gated limits, and
+  sub-merchants were never built (no `SubMerchant` model, no `routers/platform.py`).
+  `BUSINESS_REQUIREMENTS.md` and the `.trae/specs/` files still describe the concept;
+  they are left as records of intent rather than rewritten.
 
 ---
 

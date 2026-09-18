@@ -130,8 +130,6 @@ def _make_session_jwt(account: models.Account, amr: str = "password") -> str:
     payload = {
         "sub": str(account.id),
         "email": account.email,
-        "account_type": account.account_type,
-        "account_type_explicitly_set": account.account_type_explicitly_set,
         "is_platform_admin": account.is_platform_admin,
         "amr": amr,
         "iat": iat,
@@ -171,8 +169,6 @@ async def _upsert_account(
             email=email,
             name=name or email,
             google_sub=google_sub,
-            account_type="individual",
-            account_type_explicitly_set=True,
             whitelabel_enabled=False,
             is_platform_admin=False,
         )
@@ -186,9 +182,6 @@ async def _upsert_account(
             changed = True
         if name and account.name != name:
             account.name = name
-            changed = True
-        if not account.account_type_explicitly_set:
-            account.account_type_explicitly_set = True
             changed = True
         if changed:
             account.updated_at = datetime.now(UTC)
@@ -230,8 +223,9 @@ async def _maybe_promote_admin_and_seed_hq(
     account: models.Account,
 ) -> None:
     """If a freshly created account's email is in CHMABAPAY_ADMIN_EMAILS, promote it
-    to business + platform admin and seed the HQ store so self-pay billing works.
-    Idempotent: safe to call on every Google login for every account."""
+    to platform admin and seed the HQ store so self-pay billing works. The white-label
+    entitlement goes with it because the HQ store is the platform's own. Idempotent:
+    safe to call on every Google login for every account."""
     settings = get_settings()
     admin_emails = _admin_emails()
     if not admin_emails:

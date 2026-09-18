@@ -20,7 +20,6 @@ Platform tenants — the party that signs in and pays us. Auth via Google OAuth,
 | name | |
 | google_sub | unique |
 | status | active / suspended / closed |
-| account_type | individual / business |
 | whitelabel_enabled | white-label checkout entitlement; only the platform operator grants it (`PATCH /v1/admin/accounts/{id}`) |
 | is_platform_admin | platform owner; unlocks the `/v1/admin/*` surface |
 | created_at, updated_at | |

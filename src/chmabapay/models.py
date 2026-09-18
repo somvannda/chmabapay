@@ -100,10 +100,8 @@ class Account(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
-    account_type: Mapped[str] = mapped_column(String(16), default="individual")
     whitelabel_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False)
-    account_type_explicitly_set: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Optional password sign-in. Null means the account can only sign in with Google
     # (or the dev-login shortcut). The platform admin console uses this.
     password_hash: Mapped[str | None] = mapped_column(String(255))

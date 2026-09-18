@@ -57,8 +57,6 @@ def _account_profile(account: models.Account) -> dict[str, Any]:
         "email": account.email,
         "name": account.name,
         "status": account.status,
-        "account_type": account.account_type,
-        "account_type_explicitly_set": account.account_type_explicitly_set,
         "whitelabel_enabled": account.whitelabel_enabled,
         "is_platform_admin": account.is_platform_admin,
         "has_password": account.password_hash is not None,
@@ -91,7 +89,6 @@ class AdminAccountRowOut(BaseModel):
     email: str
     name: str
     status: str
-    account_type: str
     is_platform_admin: bool
     plan_code: str | None
     plan_name: str | None
@@ -206,7 +203,6 @@ async def list_accounts(
                 email=account.email,
                 name=account.name,
                 status=account.status,
-                account_type=account.account_type,
                 is_platform_admin=account.is_platform_admin,
                 plan_code=plan_code,
                 plan_name=plan_name,

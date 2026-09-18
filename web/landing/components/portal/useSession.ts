@@ -7,8 +7,6 @@ export type Profile = {
   email?: string;
   // The API returns the profile name as `name` (see /v1/me).
   name?: string | null;
-  account_type?: string;
-  account_type_explicitly_set?: boolean;
   is_platform_admin?: boolean;
   whitelabel_enabled?: boolean;
   status?: string;

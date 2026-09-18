@@ -11,8 +11,6 @@ type AccountProfile = {
   email: string;
   name: string;
   status: string;
-  account_type: string;
-  account_type_explicitly_set: boolean;
   whitelabel_enabled: boolean;
   is_platform_admin: boolean;
   created_at: string;
@@ -381,17 +379,6 @@ export default function AdminAccountDetailPage({
                             ? "Activate"
                             : "Suspend"}
                       </button>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td>
-                      <div className="dash-stat-label">Account type</div>
-                    </td>
-                    <td>
-                      {account.account_type}
-                      {account.account_type_explicitly_set
-                        ? " (explicitly set)"
-                        : " (default)"}
                     </td>
                   </tr>
                   <tr>

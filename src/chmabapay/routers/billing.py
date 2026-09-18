@@ -66,8 +66,6 @@ class ChangePlanIn(BaseModel):
 
 class ChangePlanOut(BaseModel):
     subscription: dict[str, Any]
-    account_type: str
-    account_type_switched: bool
 
 
 def _subscription_out(sub: models.PlanSubscription, plan: models.Plan) -> dict[str, Any]:
@@ -179,8 +177,6 @@ async def change_plan(
     session.add(new_sub)
     await session.flush()
 
-    auto_switched = False
-
     audit.record(
         session,
         actor=account,
@@ -190,17 +186,13 @@ async def change_plan(
         details={
             "from_plan": old_code,
             "to_plan": new_plan.code,
-            "auto_switched_account_type": auto_switched,
         },
     )
     await session.commit()
     await session.refresh(new_sub)
-    await session.refresh(account)
 
     return ChangePlanOut(
         subscription=_subscription_out(new_sub, new_plan),
-        account_type=account.account_type,
-        account_type_switched=auto_switched,
     )
 
 
