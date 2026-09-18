@@ -937,8 +937,8 @@ accepted as a risk for now**, because it must be recoverable to sign with.
   `individual`/`business`, the onboarding step that set it was deleted (*"single
   account type"*), and **nothing in `src/` read it to make a decision** — the only
   comparison was a change detection for the diff. The one place that branched on it
-  was `web/user/`, the older portal, which **no compose service in either stack
-  builds or runs**, since `/dashboard` in `web/landing` replaced it. Migration `0008`
+  was `web/user/`, the older portal, which **no compose service in either stack built
+  or ran**, since `/dashboard` in `web/landing` replaced it. Migration `0008`
   drops it along with `account_type_explicitly_set`, and it is gone from the `/v1/me`
   PATCH body, the `/v1/me` and admin account responses, the session payload and the
   change-plan response.

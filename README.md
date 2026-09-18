@@ -90,7 +90,7 @@ Customer bank app  --scan KHQR-->  Bakong switch  --credit-->  Merchant's own ba
 Python backend: **FastAPI** + SQLAlchemy 2.0 (async) + PostgreSQL + Redis.
 Async background workers (job queue) for polling/status handling and webhook delivery.
 Frontend: **Next.js 14 App Router** in a pnpm workspace under `web/` — `landing` (marketing +
-user dashboard, :3001), `user` (:3000), and `admin` (platform console, :3002), sharing components
+merchant dashboard, :3001) and `admin` (platform console, :3002), sharing design tokens
 via the `@shared/*` path alias.
 
 > Status: **built and running locally.** Backend plus the web apps are implemented; see

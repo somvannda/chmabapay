@@ -29,8 +29,9 @@ production edge was verified against and what it was not.
 | `proxy`   | `nginx:1.27-alpine`   | 8080→80 | The only public door. |
 
 Three deployables by default: one API, one website that carries both marketing and the
-merchant dashboard, one console. `web/user` is a superseded duplicate of the landing
-workspace's dashboard and is deliberately **not** built. `worker` is a fourth process
+merchant dashboard, one console. `web/user`, a superseded duplicate of the landing
+workspace's dashboard, has been **deleted** — nothing built it, no proxy routed to it, and
+it was the last consumer of the retired account-type concept. `worker` is a fourth process
 you can opt into; the default stack keeps the workers inside the API.
 
 **Both published ports are deliberately off their defaults.** This machine already runs

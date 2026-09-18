@@ -1,7 +1,13 @@
 # @chmabapay/shared
 
-Shared design tokens + TypeScript components used by both User Portal (`@chmabapay/user`)
-and Admin Portal (`@chmabapay/admin`).
+Shared design tokens, plus the Khmer-market UX laws and a small component set.
+
+`theme.ts` is the live part: the landing app (`@chmabapay/landing`) imports it through the
+`@shared/*` path alias. Nothing imports `ux-laws.ts` or `components/` any more — the landing
+app uses only `theme.ts`, the admin console carries its own copy of the design system, and
+the user portal that did use them has been deleted. They are kept as the working
+implementation of `web/DESIGN_TOKENS_AND_UX_LAWS.md`; delete them if that Khmer-first
+direction is abandoned.
 
 ## Contents
 - `theme.ts` — VERBATIM copy of DESIGN_TOKENS_AND_UX_LAWS.md §10.1. Single source of truth for

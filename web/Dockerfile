@@ -41,7 +41,6 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY web/landing/package.json web/landing/
 COPY web/admin/package.json web/admin/
-COPY web/user/package.json web/user/
 COPY web/shared/package.json web/shared/
 
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
@@ -70,9 +69,9 @@ RUN addgroup -S chmaba && adduser -S -G chmaba -u 10001 chmaba \
     && chown -R chmaba:chmaba /app
 USER chmaba
 
-# The port comes from each app's own `start` script (landing 3001, admin 3002,
-# user 3000), so it is declared per service in docker-compose.yml rather than
-# hardcoded here where it would be wrong for one of them.
+# The port comes from each app's own `start` script (landing 3001, admin 3002), so
+# it is declared per service in docker-compose.yml rather than hardcoded here where
+# it would be wrong for one of them.
 
 # `sh -c` so `${APP}` is expanded at run time; the exec form would not expand it.
 CMD ["sh", "-c", "pnpm --filter @chmabapay/${APP} start"]

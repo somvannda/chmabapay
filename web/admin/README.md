@@ -9,7 +9,7 @@ pnpm install
 pnpm dev:admin      # http://localhost:3002
 ```
 
-Ports: landing `3001`, user portal `3000`, admin `3002`.
+Ports: landing `3001`, admin `3002`.
 
 ## Access
 

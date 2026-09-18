@@ -5,10 +5,8 @@
     "web/*"
   ],
   "scripts": {
-    "dev:user": "pnpm --filter @chmabapay/user dev",
     "dev:admin": "pnpm --filter @chmabapay/admin dev",
     "dev:landing": "pnpm --filter @chmabapay/landing dev",
-    "build:user": "pnpm --filter @chmabapay/user build",
     "build:admin": "pnpm --filter @chmabapay/admin build",
     "build:landing": "pnpm --filter @chmabapay/landing build",
     "lint:landing": "pnpm --filter @chmabapay/landing lint",
