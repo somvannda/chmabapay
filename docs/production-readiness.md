@@ -799,15 +799,19 @@ counter moves; an undeliverable alert reports failure rather than pretending; an
 and the alert path is real — it pages over the Telegram transport P0-5 built, and
 the chaos test proves the condition fires when a running worker is killed.
 
-⚠️ **One part of this is configuration, not code, and it is not done here** —
-stated rather than implied:
+✅ **Both configuration parts are closed, and neither was closed by writing code.**
 
-- **Nothing scrapes it.** There is no Prometheus target, no recording rule and no
-  dashboard in this repo, so "visible on a dashboard" is the remaining step and it
-  is a deployment step. This is the one part of P1-3 still open.
-
-One part of it was open, and is not any more:
-
+- **Something scrapes it** (2026-09-18). A Prometheus **agent** runs on the VPS behind
+  the `monitoring` profile: it scrapes `api:8000/metrics` across the compose network and
+  forwards to Grafana Cloud, so `/metrics` stays unpublished and no edge rule,
+  certificate or firewall change was needed. Verified on the host rather than inferred:
+  `chmabapay-api` reports `health=up` with an empty `lastError` on a 60s interval,
+  `prometheus_remote_storage_samples_total` is advancing while
+  `samples_failed_total` sits at **0**, and the agent costs **~22 MB RSS at 0.3% CPU**
+  against a 256 MB cap. Deliberately agent mode and not full Prometheus: this host has
+  one core and 1.9 GB shared with a live POS stack, and it was already swapping. Setup,
+  the two silent failure modes it hit, and how to diagnose it are in
+  `docs/deploy.md` §13.
 - **No alert had reached a person.** `OPS_TELEGRAM_CHAT_ID` was unset when this was
   written, so every alert was a log line; the delivery path itself was proven (P0-5
   sends real messages and reports honestly when it cannot), but "a human is paged"
@@ -816,6 +820,11 @@ One part of it was open, and is not any more:
   `alert_discrete` to a human is observed. What remains untested is narrower — no
   *condition* has ever fired, since no worker has stalled and no double charge has
   occurred. See `docs/deploy.md` §11.
+
+One thing is still worth stating plainly: a dashboard is not a substitute for the
+alerting, and the reverse. Paging is what tells you something is wrong now; the
+dashboard is what tells you whether the number you are looking at is normal. Only the
+first of those existed before this, and only the first is a safety net.
 
 *Error tracking.* Listed as absent when this item was written; it now exists, in
 `errors.py`. This is not Sentry and does not pretend to be: no grouping UI, no
