@@ -799,23 +799,23 @@ counter moves; an undeliverable alert reports failure rather than pretending; an
 and the alert path is real — it pages over the Telegram transport P0-5 built, and
 the chaos test proves the condition fires when a running worker is killed.
 
-⚠️ **Two parts of this are configuration, not code, and neither is done here** —
+⚠️ **One part of this is configuration, not code, and it is not done here** —
 stated rather than implied:
 
 - **Nothing scrapes it.** There is no Prometheus target, no recording rule and no
   dashboard in this repo, so "visible on a dashboard" is the remaining step and it
-  is a deployment step.
-- **No alert has reached a person.** `OPS_TELEGRAM_CHAT_ID` is unset in this
-  environment, so every alert here is a log line. The delivery path itself is
-  proven (P0-5 sends real messages and reports honestly when it cannot), but the
-  claim "a human is paged" is untested until an operator's chat id is in the
-  environment.
+  is a deployment step. This is the one part of P1-3 still open.
 
-  > **Since resolved** (2026-09-17). `OPS_TELEGRAM_CHAT_ID` is set in production and
-  > the recipient confirmed the messages arrived on their device, so this is no
-  > longer "untested" — the path from `alert_discrete` to a human is observed. What
-  > remains untested is narrower: no *condition* has ever fired, since no worker has
-  > stalled and no double charge has occurred. See `docs/deploy.md` §11.
+One part of it was open, and is not any more:
+
+- **No alert had reached a person.** `OPS_TELEGRAM_CHAT_ID` was unset when this was
+  written, so every alert was a log line; the delivery path itself was proven (P0-5
+  sends real messages and reports honestly when it cannot), but "a human is paged"
+  was untested. **Since resolved** (2026-09-17): the chat id is set in production and
+  the recipient confirmed the messages arrived on their device, so the path from
+  `alert_discrete` to a human is observed. What remains untested is narrower — no
+  *condition* has ever fired, since no worker has stalled and no double charge has
+  occurred. See `docs/deploy.md` §11.
 
 *Error tracking.* Listed as absent when this item was written; it now exists, in
 `errors.py`. This is not Sentry and does not pretend to be: no grouping UI, no
