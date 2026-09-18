@@ -866,13 +866,29 @@ process.
 
 ### P1-4 Compliance baseline
 
-- [ ] Merchant agreement (explicit no-custody, restricted-business list), KYB
-      capture at onboarding, Terms/Privacy pages, retention policy for stored
-      credentials, and a written answer on on-behalf-of usage.
+Split by part, because three of the five are done and two are not — and a single
+checkbox could only ever say "no" to the whole thing, which hides the three.
 
-**Left open on purpose.** The exit criteria below include two things this pass
-does not achieve, and neither is a defect: one is a scope decision, the other
-needs a lawyer. Ticking this item would be the dishonest move.
+- [x] Merchant agreement drafted, with an explicit no-custody clause and a
+      restricted-business list (`docs/legal/merchant-agreement.md`).
+- [x] Terms and Privacy pages served — they were dead footer links until now — with
+      `/contact` alongside them.
+- [x] Retention policy for stored credentials, defined and *enforced*: a 90-day
+      purge of `payments.gateway_status_raw`, which holds the ABA session token
+      verbatim (`docs/legal/data-retention.md`, W5).
+- [x] A written answer on on-behalf-of usage (`docs/legal/on-behalf-of.md`).
+- [ ] Legal review of the agreement and the retention policy. **Needs a lawyer.**
+      Both documents are drafted, explicitly marked unreviewed in-place, and list
+      their open questions; no agent can close this one.
+- [ ] KYB capture at onboarding. **Not done, by an earlier decision.** See the
+      contradiction below — this reverses two recorded decisions rather than
+      representing an omission.
+
+**The two open parts, on purpose.** Neither is a defect: one is a scope decision,
+the other needs a lawyer. While this was a single checkbox it could only be left
+unticked, because ticking it would have claimed both — which is why the parts are
+listed separately above, so the three that landed are visible next to the two
+that did not.
 
 **Why.** Migration 6 dropped KYC entirely, there is no merchant verification, and
 the site carries no legal pages. `docs/roadmap.md` flags the on-behalf-of question

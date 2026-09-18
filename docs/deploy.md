@@ -781,6 +781,41 @@ against `163.245.204.122`, not localhost:
 - memory: ChmabaPay uses ~390 MB across five containers, with ~850 MB still
   available on the 1.9 GB host.
 
+**Redeployed to `0008`** (2026-09-18), from commit `65010c1` (the state above had
+already moved on by one commit — the doc was stale, which is worth noting because
+a deploy record is only useful if it is read before the next deploy). This one
+carried the first **destructive** migrations: `0007` drops
+`stores.owner_name/owner_phone/owner_email` and `0008` drops
+`accounts.account_type/account_type_explicitly_set`. Both are column drops, so a
+snapshot was taken first and checked before anything else ran:
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env exec -T db \
+  pg_dump -U chmaba -d chmabapay -Fc > /root/chmabapay-pre-0008.dump
+# PGDMP magic present, and 14 TABLE DATA entries listed by pg_restore -l
+```
+
+Then `git pull --ff-only` and `up -d --build`. Verified afterwards, on the host:
+
+- `alembic current` → **`0008 (head)`**; 14 public tables, so the drops removed
+  columns and not tables;
+- a query for the five dropped columns returns **nothing**;
+- `migrate` exited **0** and `db`, `api`, `landing`, `admin` are healthy; `proxy`
+  was not recreated, the nginx config being unchanged;
+- the **POS stack is untouched**: `deploy-front-1` up 8 days, `deploy-api-1` up 8
+  days, `deploy-db-1` up 9 days and healthy;
+- `https://pay.chmaba.com/health` → `{"status":"ok","app":"ChmabaPay"}`; landing and
+  `admin-pay` both **200**; `/metrics` and `/auth/_dev/login` still **404** from the
+  public internet;
+- the new error tracking is live and *armed*: `chmabapay.errors` resolves inside the
+  container, `error_report_interval_seconds` reads `300.0`, an authenticated scrape
+  exposes `chmabapay_errors_total`, and `OPS_TELEGRAM_CHAT_ID` is set — so an
+  unhandled exception now reaches that chat rather than only the log.
+
+> One footnote for next time: `METRICS_TOKEN` is set in production, so a scrape
+> without the bearer token answers **401**, and `curl -f` treats an expected `404`
+> as a failure. Both cost a minute here and neither is a defect.
+
 **Verified through Cloudflare, on the public hostnames** (2026-09-17), after the
 Origin Rule was deployed:
 
