@@ -3,6 +3,18 @@
 @tailwind utilities;
 
 :root {
+  /* This design is light-only: there is no dark theme in this file and no
+     `prefers-color-scheme` block anywhere. Saying so explicitly is what stops a
+     browser from deciding for us — Chrome's auto-dark theme and Android's "Dark
+     theme for sites" will otherwise repaint a page that has not declared a scheme,
+     producing a light/dark mixture that matches no design: a recoloured button, a
+     popup whose background and text no longer agree. It also tells the browser to
+     render native controls and scrollbars in their light form.
+
+     The matching `<meta name="color-scheme">` is emitted by the viewport export in
+     app/layout.tsx, so the browser knows before the stylesheet arrives. */
+  color-scheme: light;
+
   --font-inter: "Inter", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --surface: #f7f7fa;

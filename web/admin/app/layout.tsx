@@ -26,6 +26,11 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#f7f7fa",
+  // Paired with `color-scheme: light` in globals.css. This emits the meta tag, which
+  // the browser sees before the stylesheet loads, so the page is never briefly treated
+  // as un-declared and auto-darkened — which is what recoloured the primary button and
+  // mangled the header menu on a phone. The console has no dark theme by design.
+  colorScheme: "light",
   width: "device-width",
   initialScale: 1,
 };

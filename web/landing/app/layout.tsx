@@ -63,6 +63,10 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: brandColors.surfaceLight,
+  // Emits `<meta name="color-scheme" content="light">`, paired with the same
+  // declaration in globals.css. Both surfaces are light-only; without this a browser
+  // is free to auto-darken them.
+  colorScheme: "light",
   width: "device-width",
   initialScale: 1,
 };
