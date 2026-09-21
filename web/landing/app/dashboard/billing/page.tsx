@@ -18,7 +18,6 @@ type PlanOut = {
   max_stores: number | null;
   max_keys_per_account: number;
   max_webhooks_per_account: number;
-  csv_export_enabled: boolean;
   priority_support: boolean;
   is_public: boolean;
   tagline?: string | null;
@@ -40,6 +39,10 @@ type SubscriptionResponse = {
 
 type Invoice = {
   id: string | number;
+  // The API's field is `period_month` (`YYYY-MM`). This read `period`, which the
+  // endpoint never returns, so the Period column showed an em dash for every row
+  // — invisible while nothing issued invoices, and wrong the moment something did.
+  period_month?: string | null;
   period?: string | null;
   status?: string | null;
   base_fee_formatted?: string | null;
@@ -50,6 +53,10 @@ type Invoice = {
 
 type ChangePlanResponse = {
   subscription?: SubscriptionInfo | null;
+  // A paid plan is bought rather than clicked: the route answers with the invoice
+  // it raised, and the plan only changes once that invoice is settled.
+  payment_required?: boolean;
+  invoice?: Invoice | null;
   detail?: string;
   error?: string;
 };
@@ -104,6 +111,10 @@ function invoicePill(status: string | undefined | null): { className: string; la
       return { className: "dash-pill dash-pill-pending", label: "Draft" };
     case "issued":
       return { className: "dash-pill dash-pill-scanned", label: "Issued" };
+    case "open":
+      // What the billing worker writes when it raises an invoice. "Due" rather than
+      // the raw status, which would render as a lowercase "open" in a pill.
+      return { className: "dash-pill dash-pill-pending", label: "Due" };
     case "overdue":
       return { className: "dash-pill dash-pill-failed", label: "Overdue" };
     default:
@@ -153,7 +164,9 @@ function featuresFor(plan: PlanOut): Feature[] {
     on: true,
   });
 
-  rows.push({ label: "CSV reports export", on: plan.csv_export_enabled });
+  // CSV export is deliberately absent: it is available on every plan (see the
+  // launch-gap-closure spec, D6), so listing it as a ✓ in a per-plan comparison
+  // would present a capability as a tier difference.
   rows.push({ label: "Priority support", on: plan.priority_support });
 
   return rows;
@@ -175,31 +188,44 @@ export default function BillingPage() {
   const [usedThisMonth, setUsedThisMonth] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [changingPlanCode, setChangingPlanCode] = useState<string | null>(null);
+  // Each panel tracks its own read failure. Rendering one as empty is a claim — "no
+  // plans", "no invoices" — and it was being made on behalf of a fetch that had
+  // simply failed.
+  const [plansError, setPlansError] = useState<string | null>(null);
+  const [subError, setSubError] = useState<string | null>(null);
+  const [invoicesError, setInvoicesError] = useState<string | null>(null);
 
   const loadPlans = useCallback(async () => {
+    setPlansLoading(true);
+    setPlansError(null);
     try {
       const res = await fetch("/v1/billing/plans", { credentials: "include" });
-      if (res.ok) {
-        const data = (await res.json()) as PlanOut[];
-        setPlans(Array.isArray(data) ? data : []);
-      }
-    } catch {
+      if (!res.ok) throw new Error(await readApiError(res));
+      const data = (await res.json()) as PlanOut[];
+      setPlans(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setPlansError(e instanceof Error ? e.message : String(e));
     } finally {
       setPlansLoading(false);
     }
   }, []);
 
   const loadSubscription = useCallback(async () => {
+    setSubLoading(true);
+    setSubError(null);
     try {
       const res = await fetch("/v1/billing/subscription", {
         credentials: "include",
       });
-      if (res.ok && res.status !== 501) {
+      // 501 is the documented "no billing here" answer, not a failure.
+      if (!res.ok && res.status !== 501) throw new Error(await readApiError(res));
+      if (res.ok) {
         const data = (await res.json()) as SubscriptionResponse;
         setSubscription(data.subscription ?? null);
         setCurrentPlan(data.plan ?? null);
       }
-    } catch {
+    } catch (e) {
+      setSubError(e instanceof Error ? e.message : String(e));
     } finally {
       setSubLoading(false);
     }
@@ -219,24 +245,28 @@ export default function BillingPage() {
         if (typeof count === "number") setUsedThisMonth(count);
       }
     } catch {
+      // Deliberately silent: this only fills in a usage figure that already renders
+      // as "—" while unknown, so there is nothing for the page to misstate.
     }
   }, []);
 
   const loadInvoices = useCallback(async () => {
+    setInvoicesLoading(true);
+    setInvoicesError(null);
     try {
       const res = await fetch("/v1/billing/invoices", { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        const items: Invoice[] = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.items)
-            ? data.items
-            : Array.isArray(data?.data)
-              ? data.data
-              : [];
-        setInvoices(items);
-      }
-    } catch {
+      if (!res.ok) throw new Error(await readApiError(res));
+      const data = await res.json().catch(() => ({}));
+      const items: Invoice[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.items)
+          ? data.items
+          : Array.isArray(data?.data)
+            ? data.data
+            : [];
+      setInvoices(items);
+    } catch (e) {
+      setInvoicesError(e instanceof Error ? e.message : String(e));
     } finally {
       setInvoicesLoading(false);
     }
@@ -266,6 +296,22 @@ export default function BillingPage() {
       await loadUsage();
       // Keep the sidebar plan card in sync (it is owned by the dashboard layout).
       window.dispatchEvent(new Event("chmabapay:plan-changed"));
+
+      if (data.payment_required) {
+        // The plan is parked until the invoice is settled, so "you are now on Pro"
+        // would be a claim the API contradicts on the very next load. Say what
+        // actually happened, and surface the invoice so it can be paid.
+        await loadInvoices();
+        const planName = data.subscription?.plan_name ?? planCode;
+        const amount = data.invoice?.total_due_formatted;
+        notify(
+          amount
+            ? `Invoice for ${amount} raised — pay it to move to ${planName}.`
+            : `Invoice raised — pay it to move to ${planName}.`,
+        );
+        return;
+      }
+
       notify(`You are now on the ${data.subscription?.plan_name ?? planCode} plan`);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -344,6 +390,20 @@ export default function BillingPage() {
 
         {subLoading ? (
           <div className="dash-info">Loading subscription…</div>
+        ) : subError ? (
+          <div className="dash-warn">
+            Your subscription could not be loaded, so what is shown below may be
+            out of date.
+            <div className="dash-empty-cta-row">
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary dash-btn-sm"
+                onClick={() => void loadSubscription()}
+              >
+                Retry
+              </button>
+            </div>
+          </div>
         ) : (
           <div className="bill-current">
             <div className="bill-current-plan">
@@ -384,6 +444,20 @@ export default function BillingPage() {
           <div className="dash-panel-title">Choose your plan</div>
           {plansLoading ? (
             <div className="dash-info">Loading plans…</div>
+          ) : plansError ? (
+            <div className="dash-warn">
+              The plan list could not be loaded, so this is not a statement that no
+              plans exist.
+              <div className="dash-empty-cta-row">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary dash-btn-sm"
+                  onClick={() => void loadPlans()}
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
           ) : orderedPlans.length === 0 ? (
             <div className="dash-empty">
               No plans available.
@@ -467,6 +541,21 @@ export default function BillingPage() {
         <div className="dash-panel-title">Invoices</div>
         {invoicesLoading ? (
           <div className="dash-info">Loading invoices…</div>
+        ) : invoicesError ? (
+          <div className="dash-warn">
+            Your invoices could not be loaded, so this is not a statement that you
+            have none. Any unpaid invoice is still payable from the link we emailed
+            you.
+            <div className="dash-empty-cta-row">
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary dash-btn-sm"
+                onClick={() => void loadInvoices()}
+              >
+                Retry
+              </button>
+            </div>
+          </div>
         ) : invoices.length === 0 ? (
           <div className="dash-empty">
             No invoices yet.
@@ -493,7 +582,7 @@ export default function BillingPage() {
                 const unpaid = inv.status !== "paid" && inv.status !== "draft";
                 return (
                   <tr key={String(inv.id)}>
-                    <td>{inv.period || "—"}</td>
+                    <td>{inv.period_month || inv.period || "—"}</td>
                     <td>
                       <span className={pill.className}>{pill.label}</span>
                     </td>

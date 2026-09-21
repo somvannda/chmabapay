@@ -579,11 +579,10 @@ def _smoke_cases() -> list[dict[str, Any]]:
         _case(
             "SMOKE-007",
             "smoke",
-            "GET /v1/reports/payments.csv is plan-gated, never 500",
+            "GET /v1/reports/payments.csv exports for any plan",
             path="/v1/reports/payments.csv",
-            expect={"status_in": [200, 403]},
-            informational=True,
-            note="403 is correct on plans without csv_export_enabled.",
+            expect={"status": 200},
+            note="Every plan gets CSV; the plan gate was removed (launch-gap-closure D6).",
         ),
         _case(
             "SMOKE-008",

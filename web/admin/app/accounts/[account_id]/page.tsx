@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { readApiError } from "@/lib/apiError";
+import { apiFetch } from "@/lib/apiFetch";
 import { useToast } from "@/components/Toast";
 
 type AccountProfile = {
@@ -30,6 +31,29 @@ type AccountStore = {
   status: string;
 };
 
+type AccountKey = {
+  id: number;
+  name: string;
+  key_prefix: string;
+  mode: string;
+  status: string;
+  last_used_at: string | null;
+  created_at: string;
+  revoked_at: string | null;
+};
+
+type PlanLimits = {
+  plan_code: string;
+  max_stores: number | null;
+  max_keys_per_account: number;
+  payments_included: number;
+} | null;
+
+type PlanUsage = {
+  keys_active: number;
+  payments_this_month: number;
+};
+
 type AdminInvoice = {
   id: number;
   account_id: number;
@@ -48,11 +72,42 @@ type AccountDetail = {
   account: AccountProfile;
   plan: AccountPlan;
   counts: { stores: number; payments: number };
+  limits: PlanLimits;
+  usage: PlanUsage;
+  keys: AccountKey[];
   stores: AccountStore[];
   invoices: AdminInvoice[];
 };
 
+type PlanOption = {
+  id: number;
+  code: string;
+  name: string;
+  monthly_fee_cents: number;
+  is_active: boolean;
+};
+
+type InvoiceAction = "mark-paid" | "waive" | "credit";
+
 const nf = new Intl.NumberFormat("en-US");
+
+const INVOICE_ACTIONS: { value: InvoiceAction; label: string; help: string }[] = [
+  {
+    value: "mark-paid",
+    label: "Mark paid",
+    help: "Settles it as income and puts the plan in force. Use it when the money arrived outside the platform.",
+  },
+  {
+    value: "waive",
+    label: "Waive",
+    help: "Closes it with no income and puts the plan in force. Use it for goodwill.",
+  },
+  {
+    value: "credit",
+    label: "Credit",
+    help: "Closes it as credited and puts the plan in force. The amount below is what was forgiven.",
+  },
+];
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -68,6 +123,11 @@ function formatDate(iso: string | null | undefined): string {
 function formatCents(cents: number | null | undefined): string {
   if (cents === null || cents === undefined) return "—";
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+function formatLimit(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "unlimited";
+  return nf.format(value);
 }
 
 function subscriptionPill(status: string | null | undefined): {
@@ -97,6 +157,10 @@ function accountStatusPill(status: string | null | undefined): {
   return { className: "dash-pill dash-pill-paid", label: s || "active" };
 }
 
+/**
+ * Invoice statuses are `open` / `paid` / `waived` / `credited`, which is what
+ * `services/billing.py` writes and what the resolve route refuses on.
+ */
 function invoicePill(status: string | null | undefined): {
   className: string;
   label: string;
@@ -104,17 +168,12 @@ function invoicePill(status: string | null | undefined): {
   switch ((status || "").toLowerCase()) {
     case "paid":
       return { className: "dash-pill dash-pill-paid", label: "paid" };
-    case "issued":
-      return { className: "dash-pill dash-pill-scanned", label: "issued" };
-    case "overdue":
-      return { className: "dash-pill dash-pill-failed", label: "overdue" };
-    case "draft":
-      return { className: "dash-pill dash-pill-pending", label: "draft" };
+    case "waived":
+      return { className: "dash-pill dash-pill-scanned", label: "waived" };
+    case "credited":
+      return { className: "dash-pill dash-pill-reversed", label: "credited" };
     default:
-      return {
-        className: "dash-pill dash-pill-pending",
-        label: status || "—",
-      };
+      return { className: "dash-pill dash-pill-pending", label: status || "open" };
   }
 }
 
@@ -125,6 +184,15 @@ function storePill(status: string | null | undefined): {
   return (status || "").toLowerCase() === "active"
     ? { className: "dash-pill dash-pill-paid", label: "active" }
     : { className: "dash-pill dash-pill-expired", label: status || "unknown" };
+}
+
+function keyPill(status: string | null | undefined): {
+  className: string;
+  label: string;
+} {
+  return (status || "").toLowerCase() === "active"
+    ? { className: "dash-pill dash-pill-paid", label: "active" }
+    : { className: "dash-pill dash-pill-failed", label: status || "revoked" };
 }
 
 function TextOrDash({ value }: { value: string | null | undefined }) {
@@ -142,13 +210,28 @@ export default function AdminAccountDetailPage({
   const [detail, setDetail] = useState<AccountDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const { notify } = useToast();
+
+  const [entitlementSaving, setEntitlementSaving] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
+
+  const [plans, setPlans] = useState<PlanOption[] | null>(null);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [planCode, setPlanCode] = useState("");
+  const [planReason, setPlanReason] = useState("");
+
+  const [invoice, setInvoice] = useState<AdminInvoice | null>(null);
+  const [invoiceAction, setInvoiceAction] = useState<InvoiceAction>("mark-paid");
+  const [invoiceReason, setInvoiceReason] = useState("");
+  const [invoiceAmount, setInvoiceAmount] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
     setNotFound(false);
     try {
-      const res = await fetch(`/v1/admin/accounts/${accountId}`, {
+      const res = await apiFetch(`/v1/admin/accounts/${accountId}`, {
         credentials: "include",
       });
       if (res.status === 404) {
@@ -171,9 +254,6 @@ export default function AdminAccountDetailPage({
 
   const account = detail?.account ?? null;
   const sub = subscriptionPill(detail?.plan.subscription_status);
-  const { notify } = useToast();
-  const [entitlementSaving, setEntitlementSaving] = useState(false);
-  const [statusSaving, setStatusSaving] = useState(false);
 
   // White-label checkout branding is an entitlement, not a plan field: the operator
   // grants it here and the store API refuses branding writes without it.
@@ -182,7 +262,7 @@ export default function AdminAccountDetailPage({
     const next = !account.whitelabel_enabled;
     setEntitlementSaving(true);
     try {
-      const res = await fetch(`/v1/admin/accounts/${accountId}`, {
+      const res = await apiFetch(`/v1/admin/accounts/${accountId}`, {
         method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -218,9 +298,22 @@ export default function AdminAccountDetailPage({
       notify("A reason is required to suspend an account.", "error");
       return;
     }
+    // Suspension is not scoped to one surface: sessions end and every key stops at
+    // once, and codes already in a customer's hands keep working. The operator is
+    // about to tell a merchant "you are offline", so the blast radius is spelled out
+    // before it happens rather than discovered by the merchant.
+    if (next === "suspended") {
+      const confirmed = window.confirm(
+        `Suspend ${account.email}?\n\n` +
+          "This signs them out of every session, refuses every API key, stops new " +
+          "payment codes and pauses webhooks. QR codes already issued stay payable. " +
+          "Use \"Disable\" on a single store when only that store is the problem.",
+      );
+      if (!confirmed) return;
+    }
     setStatusSaving(true);
     try {
-      const res = await fetch(`/v1/admin/accounts/${accountId}`, {
+      const res = await apiFetch(`/v1/admin/accounts/${accountId}`, {
         method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -240,7 +333,161 @@ export default function AdminAccountDetailPage({
     }
   }, [account, accountId, notify]);
 
+  // The merchant route *sells* a plan; this puts one in force with no invoice, which
+  // is how a comp or an off-platform settlement is recorded. The plan list is fetched
+  // on open so the console never offers a code the API would reject.
+  const openPlanModal = useCallback(async () => {
+    setPlanCode(detail?.plan.code ?? "");
+    setPlanReason("");
+    setPlanOpen(true);
+    if (plans !== null) return;
+    try {
+      const res = await apiFetch("/v1/admin/plans", { credentials: "include" });
+      if (!res.ok) throw new Error(await readApiError(res));
+      const data = (await res.json()) as PlanOption[];
+      setPlans(data.filter((p) => p.is_active));
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), "error");
+    }
+  }, [detail?.plan.code, plans, notify]);
+
+  const assignPlan = useCallback(async () => {
+    const reason = planReason.trim();
+    if (!planCode) {
+      notify("Pick a plan first.", "error");
+      return;
+    }
+    if (reason.length < 3) {
+      notify("A reason is required to assign a plan by hand.", "error");
+      return;
+    }
+    setBusy("plan");
+    try {
+      const res = await apiFetch(`/v1/admin/accounts/${accountId}/plan`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan_code: planCode, reason }),
+      });
+      if (!res.ok) throw new Error(await readApiError(res));
+      setPlanOpen(false);
+      notify("Plan assigned. No invoice was raised for it.");
+      await load();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setBusy(null);
+    }
+  }, [accountId, planCode, planReason, notify, load]);
+
+  const openInvoiceModal = useCallback((row: AdminInvoice) => {
+    setInvoice(row);
+    setInvoiceAction("mark-paid");
+    setInvoiceReason("");
+    setInvoiceAmount("");
+  }, []);
+
+  const resolveInvoice = useCallback(async () => {
+    if (!invoice) return;
+    const reason = invoiceReason.trim();
+    if (reason.length < 3) {
+      notify("A reason is required to resolve an invoice.", "error");
+      return;
+    }
+    const body: Record<string, unknown> = {
+      action: invoiceAction,
+      reason,
+    };
+    if (invoiceAction === "credit" && invoiceAmount.trim()) {
+      const cents = Math.round(Number(invoiceAmount) * 100);
+      if (!Number.isFinite(cents) || cents < 0) {
+        notify("The credited amount must be a positive number.", "error");
+        return;
+      }
+      body.amount_cents = cents;
+    }
+    setBusy("invoice");
+    try {
+      const res = await apiFetch(`/v1/admin/invoices/${invoice.id}/resolve`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await readApiError(res));
+      setInvoice(null);
+      notify("Invoice resolved. Recorded in the audit trail.");
+      await load();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setBusy(null);
+    }
+  }, [invoice, invoiceAction, invoiceReason, invoiceAmount, notify, load]);
+
+  // Killing one credential is the point: before this route existed the only way to
+  // stop a leaked key was suspending the merchant, which took their store offline.
+  const revokeKey = useCallback(
+    async (key: AccountKey) => {
+      const confirmed = window.confirm(
+        `Revoke the API key "${key.name}" (${key.key_prefix}…)?\n\n` +
+          "Requests using it stop immediately. This cannot be undone — the merchant " +
+          "has to create a new key.",
+      );
+      if (!confirmed) return;
+      setBusy(`key-${key.id}`);
+      try {
+        const res = await apiFetch(`/v1/admin/keys/${key.id}/revoke`, {
+          method: "POST",
+          credentials: "include",
+        });
+        if (!res.ok) throw new Error(await readApiError(res));
+        const data = (await res.json()) as { revoked: boolean };
+        notify(
+          data.revoked ? "Key revoked." : "That key was already revoked.",
+        );
+        await load();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [notify, load],
+  );
+
+  const disableStore = useCallback(
+    async (store: AccountStore) => {
+      const confirmed = window.confirm(
+        `Disable the store "${store.name}"?\n\n` +
+          "It stops accepting new payments immediately. Codes already issued stay " +
+          "payable, and the account's other stores are unaffected.",
+      );
+      if (!confirmed) return;
+      setBusy(`store-${store.id}`);
+      try {
+        const res = await apiFetch(`/v1/admin/stores/${store.id}/disable`, {
+          method: "POST",
+          credentials: "include",
+        });
+        if (!res.ok) throw new Error(await readApiError(res));
+        const data = (await res.json()) as { disabled: boolean };
+        notify(
+          data.disabled ? "Store disabled." : "That store was already disabled.",
+        );
+        await load();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [notify, load],
+  );
+
   const standing = accountStatusPill(account?.status);
+  const limits = detail?.limits ?? null;
+  const usage = detail?.usage ?? null;
 
   return (
     <>
@@ -303,7 +550,14 @@ export default function AdminAccountDetailPage({
                           {" "}
                           {detail.plan.code}
                         </span>
-                      )}
+                      )}{" "}
+                      <button
+                        type="button"
+                        className="dash-btn dash-btn-secondary dash-btn-sm"
+                        onClick={() => void openPlanModal()}
+                      >
+                        Change plan
+                      </button>
                     </td>
                   </tr>
                   <tr>
@@ -318,11 +572,47 @@ export default function AdminAccountDetailPage({
                     <td>
                       <div className="dash-stat-label">Stores</div>
                     </td>
-                    <td>{nf.format(detail.counts.stores)}</td>
+                    <td>
+                      {nf.format(detail.counts.stores)}
+                      {limits && (
+                        <span className="dash-sub">
+                          {" "}
+                          of {formatLimit(limits.max_stores)}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                   <tr>
                     <td>
-                      <div className="dash-stat-label">Payments</div>
+                      <div className="dash-stat-label">Active keys</div>
+                    </td>
+                    <td>
+                      {usage ? nf.format(usage.keys_active) : "—"}
+                      {limits && (
+                        <span className="dash-sub">
+                          {" "}
+                          of {formatLimit(limits.max_keys_per_account)}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div className="dash-stat-label">Payments this month</div>
+                    </td>
+                    <td>
+                      {usage ? nf.format(usage.payments_this_month) : "—"}
+                      {limits && (
+                        <span className="dash-sub">
+                          {" "}
+                          of {formatLimit(limits.payments_included)} included
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <div className="dash-stat-label">Payments (all time)</div>
                     </td>
                     <td>
                       <Link
@@ -379,6 +669,13 @@ export default function AdminAccountDetailPage({
                             ? "Activate"
                             : "Suspend"}
                       </button>
+                      {account.status !== "suspended" && (
+                        <div className="dash-hint">
+                          Suspending signs the account out everywhere, refuses every
+                          key, stops new payment codes and pauses webhooks. To stop one
+                          store instead, use Disable in the Stores panel below.
+                        </div>
+                      )}
                     </td>
                   </tr>
                   <tr>
@@ -433,6 +730,69 @@ export default function AdminAccountDetailPage({
           </div>
 
           <div className="dash-panel">
+            <div className="dash-panel-title">API keys</div>
+            {detail.keys.length === 0 ? (
+              <div className="dash-empty">
+                No API keys for this account.
+                <div className="dash-empty-desc">
+                  Payments cannot be created without one.
+                </div>
+              </div>
+            ) : (
+              <table className="dash-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Prefix</th>
+                    <th>Mode</th>
+                    <th>Status</th>
+                    <th>Last used</th>
+                    <th>Created</th>
+                    <th>Revoked</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.keys.map((key) => {
+                    const pill = keyPill(key.status);
+                    const active = key.status.toLowerCase() === "active";
+                    return (
+                      <tr key={key.id}>
+                        <td>{key.name}</td>
+                        <td>
+                          <span className="dash-code-mono">{key.key_prefix}…</span>
+                        </td>
+                        <td>{key.mode}</td>
+                        <td>
+                          <span className={pill.className}>{pill.label}</span>
+                        </td>
+                        <td>{formatDate(key.last_used_at)}</td>
+                        <td>{formatDate(key.created_at)}</td>
+                        <td>{formatDate(key.revoked_at)}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-danger dash-btn-sm"
+                            onClick={() => void revokeKey(key)}
+                            disabled={busy !== null || !active}
+                            title={
+                              active
+                                ? undefined
+                                : "This key is already revoked."
+                            }
+                          >
+                            {busy === `key-${key.id}` ? "Revoking…" : "Revoke"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="dash-panel">
             <div className="dash-panel-title">Stores</div>
             {detail.stores.length === 0 ? (
               <div className="dash-empty">
@@ -450,11 +810,13 @@ export default function AdminAccountDetailPage({
                     <th>Public ID</th>
                     <th>External ID</th>
                     <th>Status</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
                   {detail.stores.map((store) => {
                     const pill = storePill(store.status);
+                    const active = store.status.toLowerCase() === "active";
                     return (
                       <tr key={store.id}>
                         <td>{store.name}</td>
@@ -466,6 +828,23 @@ export default function AdminAccountDetailPage({
                         </td>
                         <td>
                           <span className={pill.className}>{pill.label}</span>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-danger dash-btn-sm"
+                            onClick={() => void disableStore(store)}
+                            disabled={busy !== null || !active}
+                            title={
+                              active
+                                ? undefined
+                                : "Only an active store can be disabled."
+                            }
+                          >
+                            {busy === `store-${store.id}`
+                              ? "Disabling…"
+                              : "Disable"}
+                          </button>
                         </td>
                       </tr>
                     );
@@ -495,11 +874,17 @@ export default function AdminAccountDetailPage({
                     <th>Overage</th>
                     <th>Total due</th>
                     <th>Paid at</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
                   {detail.invoices.map((inv) => {
                     const pill = invoicePill(inv.status);
+                    // Resolving an already-resolved invoice is a 409, so the console
+                    // does not offer it: an action that can only fail is not an action.
+                    const open = !["paid", "waived", "credited"].includes(
+                      inv.status.toLowerCase(),
+                    );
                     return (
                       <tr key={inv.id}>
                         <td>{inv.period_month}</td>
@@ -511,6 +896,18 @@ export default function AdminAccountDetailPage({
                         <td>{formatCents(inv.overage_fee_cents)}</td>
                         <td>{formatCents(inv.total_due_cents)}</td>
                         <td>{formatDate(inv.paid_at)}</td>
+                        <td>
+                          {open && (
+                            <button
+                              type="button"
+                              className="dash-btn dash-btn-secondary dash-btn-sm"
+                              onClick={() => openInvoiceModal(inv)}
+                              disabled={busy !== null}
+                            >
+                              Resolve
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
@@ -519,6 +916,186 @@ export default function AdminAccountDetailPage({
             )}
           </div>
         </>
+      )}
+
+      {planOpen && (
+        <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="dash-modal">
+            <div className="dash-modal-head">
+              <h2 className="dash-modal-title">Assign a plan by hand</h2>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => setPlanOpen(false)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="dash-modal-body">
+              <div className="dash-hint">
+                This puts the plan in force immediately, with no invoice and no
+                proration — the account&rsquo;s current subscription is canceled. The
+                reason below is stored in the audit trail against your account, along
+                with the monthly fee that was given up.
+              </div>
+              <div className="dash-field">
+                <label htmlFor="plan-code">Plan</label>
+                <select
+                  id="plan-code"
+                  className="dash-select"
+                  value={planCode}
+                  onChange={(e) => setPlanCode(e.target.value)}
+                >
+                  <option value="">Select a plan…</option>
+                  {(plans ?? []).map((p) => (
+                    <option key={p.code} value={p.code}>
+                      {p.name} ({p.code}) — {formatCents(p.monthly_fee_cents)}/mo
+                    </option>
+                  ))}
+                </select>
+                {detail?.plan.code === planCode && (
+                  <div className="dash-hint">
+                    The account is already on this plan; the API will refuse it as
+                    unchanged.
+                  </div>
+                )}
+              </div>
+              <div className="dash-field">
+                <label htmlFor="plan-reason">Reason</label>
+                <textarea
+                  id="plan-reason"
+                  className="dash-textarea"
+                  value={planReason}
+                  onChange={(e) => setPlanReason(e.target.value)}
+                  placeholder="e.g. Comped for the pilot until the POS integration ships."
+                  rows={4}
+                  maxLength={500}
+                />
+              </div>
+              <div className="dash-modal-foot">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={() => setPlanOpen(false)}
+                  disabled={busy !== null}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-danger"
+                  onClick={() => void assignPlan()}
+                  disabled={
+                    busy !== null ||
+                    !planCode ||
+                    planReason.trim().length < 3
+                  }
+                >
+                  {busy === "plan" ? "Assigning…" : "Assign plan"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {invoice && (
+        <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="dash-modal">
+            <div className="dash-modal-head">
+              <h2 className="dash-modal-title">
+                Resolve invoice {invoice.period_month}
+              </h2>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => setInvoice(null)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="dash-modal-body">
+              <div className="dash-hint">
+                {formatCents(invoice.total_due_cents)} due. Whichever you pick puts
+                the pending subscription in force, so the merchant is not left on
+                their old plan waiting for an invoice nobody will pay.
+              </div>
+              <div className="dash-field">
+                <label htmlFor="invoice-action">Action</label>
+                <select
+                  id="invoice-action"
+                  className="dash-select"
+                  value={invoiceAction}
+                  onChange={(e) =>
+                    setInvoiceAction(e.target.value as InvoiceAction)
+                  }
+                >
+                  {INVOICE_ACTIONS.map((a) => (
+                    <option key={a.value} value={a.value}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="dash-hint">
+                  {INVOICE_ACTIONS.find((a) => a.value === invoiceAction)?.help}
+                </div>
+              </div>
+              {invoiceAction === "credit" && (
+                <div className="dash-field">
+                  <label htmlFor="invoice-amount">
+                    Amount credited (USD)
+                  </label>
+                  <input
+                    id="invoice-amount"
+                    className="dash-input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={invoiceAmount}
+                    onChange={(e) => setInvoiceAmount(e.target.value)}
+                    placeholder={(invoice.total_due_cents / 100).toFixed(2)}
+                  />
+                  <div className="dash-hint">
+                    Leave blank to credit the full invoice. The invoice keeps saying
+                    what was billed; the audit row records what was forgiven.
+                  </div>
+                </div>
+              )}
+              <div className="dash-field">
+                <label htmlFor="invoice-reason">Reason</label>
+                <textarea
+                  id="invoice-reason"
+                  className="dash-textarea"
+                  value={invoiceReason}
+                  onChange={(e) => setInvoiceReason(e.target.value)}
+                  placeholder="e.g. Bank transfer received; ABA ref 12345678."
+                  rows={4}
+                  maxLength={500}
+                />
+              </div>
+              <div className="dash-modal-foot">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={() => setInvoice(null)}
+                  disabled={busy !== null}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-danger"
+                  onClick={() => void resolveInvoice()}
+                  disabled={busy !== null || invoiceReason.trim().length < 3}
+                >
+                  {busy === "invoice" ? "Resolving…" : "Resolve"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

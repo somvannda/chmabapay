@@ -63,6 +63,9 @@ async def live_setup():
                 merchant_account_id=slug,
                 merchant_name="Live Store",
             ),
+            # This is the one place a link genuinely is verified: the test only runs
+            # when a real slug is configured and it talks to ABA immediately after.
+            verification=models.LINK_VERIFIED,
         )
         await session.commit()
 
@@ -122,6 +125,7 @@ async def test_hosted_checkout_mints_a_real_aba_session(client, live_setup):
             "request_time": session["request_time"],
             "token": session["token"],
         },
+        headers=headers,
     )
     assert status.status_code == 200, status.text
     body = status.json()

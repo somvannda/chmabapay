@@ -16,10 +16,16 @@ from .. import models, schemas
 from ..auth import AuthContext, get_current_auth_context
 from ..config import get_settings
 from ..db import get_session
+from ..openapi import AUTH_ERRORS, AUTH_SECURITY
 from ..services import stores as svc
 from ..services import telegram
 
-router = APIRouter(prefix="/v1/stores", tags=["stores"])
+router = APIRouter(
+    prefix="/v1/stores",
+    tags=["stores"],
+    dependencies=AUTH_SECURITY,
+    responses=AUTH_ERRORS,
+)
 
 
 async def _require_store_manage(

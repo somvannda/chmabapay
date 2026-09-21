@@ -10,12 +10,15 @@ rows describe the rest of the mutation.
 
 from __future__ import annotations
 
+import re
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import audit, models
 from ..schemas import LinkCreate, LinkIn, StoreCreate, StorePatch
+from . import payway_parser
 from .payments import gen_public_id
 
 
@@ -27,6 +30,73 @@ def _link_details(payload: LinkIn | LinkCreate) -> dict:
         "merchant_account_id": payload.merchant_account_id,
         "merchant_name": payload.merchant_name,
     }
+
+
+# A store's destination must be an ABA PayWay share link or the slug of one. This is
+# the cheap half of the check — a value that is not a PayWay link at all (a Bakong
+# account id, an arbitrary URL) is refused here without spending an outbound call.
+PAYWAY_LINK_HOST = "payway.com.kh"
+_BARE_SLUG = re.compile(r"[A-Za-z0-9._-]{4,64}")
+
+
+def _link_shape_error(raw_link: str) -> str | None:
+    s = (raw_link or "").strip()
+    if not s:
+        return "a link is required"
+    if "/" in s:
+        if PAYWAY_LINK_HOST not in s.lower():
+            return (
+                "expected an ABA PayWay share link such as "
+                "https://link.payway.com.kh/ABAPAYxxxxxxx"
+            )
+        return None
+    if not _BARE_SLUG.fullmatch(s):
+        return "expected an ABA PayWay share link, or its slug (4-64 characters)"
+    return None
+
+
+async def resolve_link(payload: LinkIn | LinkCreate) -> str:
+    """Settle a link's verification against PayWay, or refuse it. Returns the state.
+
+    A store used to be marked ``verified`` and ``active`` on write with no check at
+    all, so a mistyped slug produced a store that looked ready and failed on the
+    merchant's first customer as a 502. Two things are checked now:
+
+      - the shape, which needs no network and catches a value that is not a PayWay
+        link in the first place;
+      - PayWay's own answer for the slug, which is the only thing that can catch a
+        typo, because a mistyped slug is still a well-formed string.
+
+    Only a positive answer marks the link verified. When PayWay cannot be reached the
+    link is stored as *unverified*: an ABA outage must not block a signup, and an
+    unverified store still takes payments.
+    """
+    raw = (payload.raw_link or "").strip()
+    shape_error = _link_shape_error(raw)
+    if shape_error:
+        # Prefixed so the wizard can put this under the link field rather than in a
+        # page-level banner — it is one field's problem, not the form's.
+        raise HTTPException(status_code=400, detail=f"payway_link_invalid: {shape_error}")
+
+    check = await payway_parser.verify_link(raw)
+    if check.outcome == "not_found":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "payway_link_not_found: ABA PayWay has no link at "
+                f"{check.slug or raw}. Copy the share link again from the ABA app — "
+                "a mistyped link takes payments nowhere."
+            ),
+        )
+
+    if check.verified:
+        # The caller's own name wins when they gave one: it is what the payer sees in
+        # their banking app, and the merchant knows their outlet better than the SSR
+        # payload does. ABA's name fills the gap when they left it blank.
+        if not (payload.merchant_name or "").strip() and check.merchant_name:
+            payload.merchant_name = check.merchant_name
+        return models.LINK_VERIFIED
+    return models.LINK_UNVERIFIED
 
 # Checkout branding. These render on /pay/{public_id} only for accounts that are
 # entitled to white-label, so setting them is refused without the entitlement.
@@ -71,15 +141,23 @@ async def create_store(session: AsyncSession, account: models.Account, payload: 
     )
 
     if payload.link is not None:
-        await attach_link_to_store(session, store, payload.link)
-        store.status = models.STORE_ACTIVE
+        verification = await resolve_link(payload.link)
+        await attach_link_to_store(
+            session, store, payload.link, verification=verification
+        )
+        # Only a link PayWay confirmed promotes the store to active. An unverified
+        # one is stored — so the merchant is not blocked, and can retry — but the
+        # store keeps saying `draft`, because "active" is a claim about a
+        # destination we have not been able to check.
+        if verification == models.LINK_VERIFIED:
+            store.status = models.STORE_ACTIVE
         audit.record(
             session,
             actor=account,
             action="store.link_set",
             target_type="Store",
             target_id=store.id,
-            details=_link_details(payload.link),
+            details={**_link_details(payload.link), "verification": verification},
         )
 
     await session.commit()
@@ -105,15 +183,17 @@ async def attach_link(
     if store.status == models.STORE_DISABLED:
         raise HTTPException(status_code=400, detail="store_disabled")
 
-    await attach_link_to_store(session, store, payload)
-    store.status = models.STORE_ACTIVE
+    verification = await resolve_link(payload)
+    await attach_link_to_store(session, store, payload, verification=verification)
+    if verification == models.LINK_VERIFIED:
+        store.status = models.STORE_ACTIVE
     audit.record(
         session,
         actor=account,
         action="store.link_set",
         target_type="Store",
         target_id=store.id,
-        details=_link_details(payload),
+        details={**_link_details(payload), "verification": verification},
     )
     await session.commit()
     await session.refresh(store)
@@ -121,8 +201,19 @@ async def attach_link(
 
 
 async def attach_link_to_store(
-    session: AsyncSession, store: models.Store, payload: LinkIn | LinkCreate
+    session: AsyncSession,
+    store: models.Store,
+    payload: LinkIn | LinkCreate,
+    *,
+    verification: str,
 ) -> None:
+    """Write the destination. `verification` is required, not defaulted.
+
+    The state of a link is the one thing this module cannot work out for itself, so
+    every caller has to say where it came from: `resolve_link` for merchant-facing
+    writes, an explicit `LINK_VERIFIED` for the operator console's own link, which
+    is checked for shape there rather than probed.
+    """
     res = await session.execute(
         select(models.PaymentLink).where(models.PaymentLink.store_id == store.id)
     )
@@ -133,7 +224,7 @@ async def attach_link_to_store(
         merchant_account_id=payload.merchant_account_id,
         merchant_name=payload.merchant_name,
         currency="USD",
-        verification=models.LINK_VERIFIED,
+        verification=verification,
         status="active",
     )
     if link is None:
@@ -250,8 +341,11 @@ async def update_store(
             details={"fields": sorted(payload.model_fields_set)},
         )
     if payload.link is not None:
-        await attach_link_to_store(session, store, payload.link)
-        if store.status == models.STORE_DRAFT:
+        verification = await resolve_link(payload.link)
+        await attach_link_to_store(
+            session, store, payload.link, verification=verification
+        )
+        if verification == models.LINK_VERIFIED and store.status == models.STORE_DRAFT:
             store.status = models.STORE_ACTIVE
         audit.record(
             session,
@@ -259,7 +353,7 @@ async def update_store(
             action="store.link_set",
             target_type="Store",
             target_id=store.id,
-            details=_link_details(payload.link),
+            details={**_link_details(payload.link), "verification": verification},
         )
     await session.commit()
     await session.refresh(store)

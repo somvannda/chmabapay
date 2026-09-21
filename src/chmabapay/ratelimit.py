@@ -30,6 +30,14 @@ from .security import hash_key
 WINDOW_SECONDS = 60
 _MAX_TRACKED_IDENTITIES = 50_000
 
+# Password sign-in lockout. Five failures is low enough to blunt guessing and high
+# enough that a merchant mistyping their own password twice is unaffected. The
+# window doubles from there and is capped at an hour, so a scripted attack gets
+# exponentially more expensive while a locked-out human waits a bounded time.
+_LOGIN_FAILURE_THRESHOLD = 5
+_LOGIN_LOCK_BASE_SECONDS = 60
+_LOGIN_LOCK_MAX_SECONDS = 3600
+
 
 @dataclass(frozen=True)
 class Rule:
@@ -69,8 +77,10 @@ def rule_for(request: Request) -> Rule | None:
             "payment_create", settings.rate_limit_payment_create_per_minute, "key"
         )
 
-    # Unauthenticated by design — it is how a caller validates an ABA link before
-    # signing up — yet every route here reaches out to ABA. No key to key on.
+    # Key-authenticated: these generate QR codes and reach out to ABA. Counted per
+    # address rather than per key on purpose — the limiter runs *before* the route
+    # rejects a bad key, so a made-up token per request would otherwise mint a
+    # fresh bucket every time. There is a test for exactly that.
     if path.startswith("/v1/khqr"):
         return Rule("khqr", settings.rate_limit_khqr_per_minute, "ip")
 
@@ -143,6 +153,72 @@ class RateLimiter:
     def reset(self) -> None:
         """Forget every counter. Each test starts from a clean slate with this."""
         self._windows.clear()
+
+
+@dataclass
+class _LoginFailures:
+    count: int
+    locked_until: float
+
+
+class LoginLockout:
+    """Per-email failure counter for the password sign-in path.
+
+    The per-address limiter in front of `/auth/*` bounds how fast an attacker can
+    guess *from one address*. It cannot bound guessing spread across many
+    addresses, and it does not slow down a targeted attack on one known email at
+    all beyond the shared 20/min. This adds the per-identity half: once an email
+    has failed `threshold` times, that email is refused for an exponentially
+    growing window, and a success clears the record.
+
+    Locked *before* the password is checked, so the window cannot be probed by
+    timing, and the refusal is the same generic 401 the wrong-password case
+    returns — otherwise the endpoint becomes an oracle for which emails exist.
+
+    In-process, like `RateLimiter`, and honest about the same limitation: it
+    bounds one replica. It fails open on eviction, which is the right way round
+    for something that must not lock a real merchant out of their own account
+    because the cache was under pressure.
+    """
+
+    def __init__(
+        self,
+        threshold: int = _LOGIN_FAILURE_THRESHOLD,
+        maxsize: int = _MAX_TRACKED_IDENTITIES,
+    ) -> None:
+        self.threshold = threshold
+        self._failures: TTLCache[str, _LoginFailures] = TTLCache(
+            maxsize=maxsize, ttl=_LOGIN_LOCK_MAX_SECONDS
+        )
+
+    def locked_for(self, email: str) -> int:
+        """Seconds the email must wait, or 0 when it may try again."""
+        entry = self._failures.get(email)
+        if entry is None:
+            return 0
+        return max(0, int(entry.locked_until - time.monotonic()))
+
+    def record_failure(self, email: str) -> int:
+        """Count one failure. Returns the lockout in seconds, 0 while under threshold."""
+        entry = self._failures.get(email) or _LoginFailures(count=0, locked_until=0.0)
+        entry.count += 1
+        if entry.count >= self.threshold:
+            backoff = _LOGIN_LOCK_BASE_SECONDS * 2 ** (entry.count - self.threshold)
+            entry.locked_until = time.monotonic() + min(
+                backoff, _LOGIN_LOCK_MAX_SECONDS
+            )
+        # Reassigning resets the entry's TTL, so a long attack cannot age out the
+        # record while it is still failing.
+        self._failures[email] = entry
+        return self.locked_for(email)
+
+    def clear(self, email: str) -> None:
+        """Forget an email's failures. Called on a successful sign-in."""
+        self._failures.pop(email, None)
+
+    def reset(self) -> None:
+        """Forget every counter. Each test starts from a clean slate with this."""
+        self._failures.clear()
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

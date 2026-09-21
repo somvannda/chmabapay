@@ -49,6 +49,14 @@ export default function ContactPage() {
           </div>
 
           <p className="contact-note">
+            Support is email only — there is no phone line and no live chat, and there is no
+            public status page yet. We answer as quickly as we can, but we deliberately do not
+            promise a response time and the terms offer no service level agreement
+            (see section 7, Availability); what we can promise is that a payment id is enough
+            to trace what the rail told us and what we recorded.
+          </p>
+
+          <p className="contact-note">
             ChmabaPay never holds funds and cannot move money back out of a bank account, so we
             cannot process a refund on your behalf — refunds settle between the payer and your
             bank. What we can do is reverse the record so your reporting is correct.

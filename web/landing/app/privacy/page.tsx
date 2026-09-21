@@ -8,9 +8,12 @@ import type { Metadata } from "next";
  * `src/chmabapay/services/retention.py`, not from a template. If a column is
  * added, removed, or starts being purged, this page is part of that change.
  *
- * The draft banner works the same way as on /terms: it is the flag that this text
- * has not been reviewed, and removing it is the deliberate act that says review
- * happened.
+ * The draft banner worked the same way as on /terms: it was the flag that this text
+ * had not been reviewed, and removing it was meant to be the deliberate act that
+ * says review happened. It was removed on 2026-09-18 by a product decision to open
+ * the service to real merchant traffic — **not** because the text was reviewed, which
+ * is still outstanding (`P1-4` in `docs/production-readiness.md`). The absence of the
+ * banner is not approval.
  */
 export const metadata: Metadata = {
   title: "Privacy Policy — ChmabaPay",
@@ -23,16 +26,6 @@ export default function PrivacyPage() {
     <main className="legal-page">
       <div className="landing-shell">
         <div className="legal-shell">
-          <div className="legal-draft" role="note">
-            <span className="legal-draft-mark">Draft</span>
-            <span className="legal-draft-text">
-              This is a first draft written from the system&apos;s actual data
-              model. It has not been reviewed by a qualified lawyer and must be
-              reviewed and replaced before ChmabaPay accepts real merchant
-              traffic.
-            </span>
-          </div>
-
           <span className="legal-eyebrow">Legal</span>
           <h1 className="legal-title">Privacy Policy</h1>
           <p className="legal-lede">

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import models, schemas
 from ..db import get_session
 from ..khqr import render_qr_svg
+from ..openapi import ErrorOut
 from ..schemas import money_to_str
 
 router = APIRouter(tags=["checkout"])
@@ -185,7 +186,14 @@ async def checkout_page(public_id: str, session: AsyncSession = Depends(get_sess
     )
 
 
-@router.get("/pay/{public_id}/qr.svg", response_class=Response)
+@router.get(
+    "/pay/{public_id}/qr.svg",
+    response_class=Response,
+    responses={
+        404: {"model": ErrorOut, "description": "No such payment (`payment_not_found`), or none was minted for it."},
+        410: {"model": ErrorOut, "description": "The code is dead (`payment_expired` / `payment_superseded` / `payment_reversed`) and is no longer served."},
+    },
+)
 async def checkout_qr(public_id: str, session: AsyncSession = Depends(get_session)) -> Response:
     """The payment's own QR, as a short stable URL.
 
@@ -227,7 +235,11 @@ async def checkout_qr(public_id: str, session: AsyncSession = Depends(get_sessio
     )
 
 
-@router.get("/pay/{public_id}/status", response_model=schemas.CheckoutPaymentStatusOut)
+@router.get(
+    "/pay/{public_id}/status",
+    response_model=schemas.CheckoutPaymentStatusOut,
+    responses={404: {"model": ErrorOut, "description": "No such payment (`payment_not_found`)."}},
+)
 async def checkout_status(public_id: str, session: AsyncSession = Depends(get_session)):
     row = (
         await session.execute(

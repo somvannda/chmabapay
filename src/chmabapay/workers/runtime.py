@@ -29,7 +29,11 @@ from .w1_payment_detection import PaymentDetectionWorker
 from .w2_webhook_sender import QUEUE as Q_WEBHOOK
 from .w2_webhook_sender import WebhookSenderWorker
 from .w3_billing import QUEUE as Q_BILLING
-from .w3_billing import BillingInvoiceWorker
+from .w3_billing import (
+    BillingInvoiceWorker,
+    billing_heartbeat_dedup_key,
+    billing_heartbeat_job_payload,
+)
 from .w4_expiry_sweeper import QUEUE as Q_EXPIRY
 from .w4_expiry_sweeper import (
     ExpirySweeperWorker,
@@ -122,6 +126,7 @@ def start_workers(transport: QueueTransport, stop: asyncio.Event) -> list[asynci
 #   - W2 Webhook fanout fallback scan (1s) if enqueue-on-write missed
 #   - W4 Expiry sweep minute-granularity job (60s) dedup per minute
 #   - W1 Payment detection safety-net scan for orphans pending > 30s
+#   - W3 Billing sweep hourly job, dedup per hour (invoice issuance is idempotent)
 #
 # NFR-2 compliance: this scheduler uses loop.call_at rescheduling, ZERO while
 # loops anywhere except QueueTransport.run_workers in workers/base.py (count=1).
@@ -156,6 +161,19 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
         except Exception as exc:  # noqa: BLE001
             log.debug("W5 heartbeat enqueue skip: %s", exc)
 
+    async def w3_tick() -> None:
+        from ..services.billing import utcnow
+
+        dedup_key = billing_heartbeat_dedup_key(utcnow())
+        try:
+            await transport.enqueue(
+                Q_BILLING,
+                dedup_key=dedup_key,
+                payload=billing_heartbeat_job_payload(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("W3 heartbeat enqueue skip: %s", exc)
+
     async def w2_fallback_fanout(batch: int = 20) -> None:
         try:
             await transport.enqueue(
@@ -181,6 +199,7 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
     w2_interval = max(0.5, float(settings.webhook_poll_interval_seconds or 1.0))
     w1_interval = max(5.0, float(settings.worker_w1_fallback_poll_seconds or 30.0))
     w5_interval = max(60.0, float(settings.retention_sweep_interval_seconds or 86400.0))
+    w3_interval = max(60.0, float(settings.billing_sweep_interval_seconds or 3600.0))
 
     # Fire once immediately for warm-up.
     #
@@ -192,6 +211,11 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
     await w4_tick()
     await w5_tick()
     await w2_fallback_fanout()
+    # W3 too, and for the same reason W5 is here: a monthly job on a service that
+    # restarts more often than monthly would otherwise never run. Issuing is
+    # idempotent per (account, period), so a boot that finds nothing due costs one
+    # indexed query.
+    await w3_tick()
 
     # Recursive callback chains — stop flag checked each reschedule.
     def _schedule_w4() -> None:
@@ -242,11 +266,24 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
 
         loop.create_task(_do())
 
+    def _schedule_w3() -> None:
+        if stop.is_set():
+            return
+
+        async def _do() -> None:
+            if stop.is_set():
+                return
+            await w3_tick()
+            loop.call_later(w3_interval, _schedule_w3)
+
+        loop.create_task(_do())
+
     # Prime the first reschedules.
     loop.call_later(w4_interval, _schedule_w4)
     loop.call_later(w2_interval, _schedule_w2)
     loop.call_later(w1_interval, _schedule_w1)
     loop.call_later(w5_interval, _schedule_w5)
+    loop.call_later(w3_interval, _schedule_w3)
 
     # Block on stop.wait() until shutdown. This is a simple .wait(), no while loop.
     await stop.wait()

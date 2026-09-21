@@ -292,7 +292,6 @@ class Plan(Base):
     max_stores: Mapped[int | None] = mapped_column(Integer)
     max_keys_per_account: Mapped[int] = mapped_column(Integer, default=5)
     max_webhooks_per_account: Mapped[int] = mapped_column(Integer, default=5)
-    csv_export_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     priority_support: Mapped[bool] = mapped_column(Boolean, default=False)
     is_public: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -327,7 +326,17 @@ class PlanSubscription(Base):
 
 class PlanInvoice(Base):
     __tablename__ = "plan_invoices"
-    __table_args__ = (Index("ix_plan_invoices_period_month", "period_month"),)
+    # One invoice per account per period, and the constraint is load-bearing rather
+    # than tidy: the billing worker issues on a schedule and may run twice (a retry,
+    # a restart mid-sweep), and the period is the natural key, so this is what makes
+    # the second run a no-op instead of a second bill for the same month. Same
+    # reasoning as `plan_ledger_entries` above — see P0-6 and services/billing.py.
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "period_month", name="uq_plan_invoice_period"
+        ),
+        Index("ix_plan_invoices_period_month", "period_month"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), nullable=False)

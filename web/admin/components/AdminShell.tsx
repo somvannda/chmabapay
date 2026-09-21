@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ToastProvider } from "./Toast";
+import { apiFetch } from "@/lib/apiFetch";
 
 /* ------------------------------------------------------------------ *
  * Nav model
@@ -162,7 +163,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/v1/me", { credentials: "include" });
+        const res = await apiFetch("/v1/me", { credentials: "include" });
         if (res.status === 401) {
           const next = encodeURIComponent(
             window.location.pathname + window.location.search,

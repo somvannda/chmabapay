@@ -2,8 +2,10 @@
 
 Run:  uv run python -m chmabapay.cli bootstrap
       uv run python -m chmabapay.cli set-password <email>
+      uv run python -m chmabapay.cli grant-admin <email> [--password <pw>] [--name <name>]
 Env:  WEBHOOK_SINK_URL=http://localhost:9000/hook   (optional, bootstrap)
-      CHMABAPAY_PASSWORD=...                       (optional, non-interactive set-password)
+      CHMABAPAY_PASSWORD=...                       (optional, non-interactive set-password
+                                                    and grant-admin)
 """
 
 from __future__ import annotations
@@ -12,14 +14,48 @@ import asyncio
 import getpass
 import os
 import sys
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 
 from . import models
 from .db import run_migrations, seed_plans_if_needed, session_factory
+from .routers.auth import _ensure_free_subscription
 from .schemas import LinkIn, StoreCreate
 from .security import hash_key, hash_password, new_api_key, new_secret
 from .services import stores as store_svc
+
+
+def _parse_grant_admin_args(argv: list[str]) -> tuple[list[str], dict[str, str]]:
+    """Split `grant-admin` arguments into positionals and `--flag value` options.
+
+    Hand-rolled because the alternative is pulling argparse into a CLI that has
+    three commands. Both `--name value` and `--name=value` are accepted. A flag
+    with nothing after it is refused rather than treated as absent, because
+    `--password` followed by nothing would otherwise create an admin with no
+    password and report success.
+    """
+    positional: list[str] = []
+    options: dict[str, str] = {}
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg.startswith("--"):
+            key, _, inline = arg[2:].partition("=")
+            if inline:
+                options[key] = inline
+                index += 1
+                continue
+            if index + 1 >= len(argv):
+                raise SystemExit(f"--{key} needs a value")
+            options[key] = argv[index + 1]
+            index += 2
+            continue
+        positional.append(arg)
+        index += 1
+    return positional, options
+
+
 
 
 async def _bootstrap() -> None:
@@ -146,6 +182,76 @@ async def _set_password() -> None:
         print(f"password set for {account.email} (account id={account.id})")
 
 
+async def _grant_admin() -> None:
+    """Create or promote a platform admin, optionally with a password.
+
+    Without this, the only way to become an admin was a Google sign-in from an
+    address listed in `CHMABAPAY_ADMIN_EMAILS` — and the console refuses SSO
+    sessions, so that sign-in could not open the console. `set-password` could
+    not close the gap either: it exits when the account does not exist yet, and
+    it never grants `is_platform_admin`. Day-0 therefore meant: sign in with
+    Google, then SSH in, then run the CLI. This collapses it to one command, and
+    it works on a fresh database with no OAuth round trip at all.
+    """
+    positional, options = _parse_grant_admin_args(sys.argv[2:])
+    if not positional:
+        raise SystemExit(
+            "usage: python -m chmabapay.cli grant-admin <email> "
+            "[--password <pw>] [--name <name>]"
+        )
+    email = positional[0].strip().lower()
+    if "@" not in email:
+        raise SystemExit(f"{email!r} is not an email address")
+
+    name = options.get("name") or email.split("@")[0]
+    password = options.get("password") or os.getenv("CHMABAPAY_PASSWORD") or ""
+
+    await run_migrations()
+    await seed_plans_if_needed()
+
+    async with session_factory() as session:
+        account = (
+            await session.execute(
+                select(models.Account).where(func.lower(models.Account.email) == email)
+            )
+        ).scalar_one_or_none()
+        created = account is None
+        if account is None:
+            account = models.Account(
+                email=email,
+                name=name,
+                is_platform_admin=True,
+                whitelabel_enabled=True,
+            )
+            session.add(account)
+            await session.flush()
+            # A new account with no subscription has no billing row, which would
+            # leave the console's own account unable to hold an invoice — and the
+            # HQ store that self-pay billing charges against lives on it.
+            await _ensure_free_subscription(session, account)
+        else:
+            account.is_platform_admin = True
+            account.whitelabel_enabled = True
+            account.updated_at = datetime.now(UTC)
+            session.add(account)
+
+        if password:
+            account.password_hash = hash_password(password)
+
+        await session.commit()
+        await session.refresh(account)
+
+    verb = "created" if created else "promoted"
+    print(f"admin {verb}: {account.email} (account id={account.id})")
+    print(f"  is_platform_admin={account.is_platform_admin}")
+    print(f"  password={'set' if password else 'unchanged'}")
+    if not password:
+        print(
+            "\nNo password was supplied, so the console cannot be opened yet.\n"
+            "Re-run with --password <pw> (or set CHMABAPAY_PASSWORD) to set one."
+        )
+
+
 def main() -> None:
     command = sys.argv[1] if len(sys.argv) > 1 else "bootstrap"
     if command == "bootstrap":
@@ -154,8 +260,11 @@ def main() -> None:
     if command == "set-password":
         asyncio.run(_set_password())
         return
+    if command == "grant-admin":
+        asyncio.run(_grant_admin())
+        return
     raise SystemExit(
-        f"unknown command {command!r} — expected 'bootstrap' or 'set-password'"
+        f"unknown command {command!r} — expected 'bootstrap', 'set-password' or 'grant-admin'"
     )
 
 

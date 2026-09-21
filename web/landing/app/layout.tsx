@@ -56,7 +56,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "ChmabaPay — Your Payments, In A Better Flow",
-    description: "A calmer payment workspace for KHQR, Bakong, and ABA PayWay.",
+    description: "A calmer payment workspace for KHQR payments over ABA PayWay.",
     images: ["/og-image.png"],
   },
 };
@@ -80,7 +80,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "(function(){try{var p=window.location.pathname;if(p&&(p.indexOf('/dashboard')===0||p.indexOf('/onboarding')===0)){document.body.classList.add('dash-hide-landing-chrome','dash-path-dashboard');}}catch(e){}})();",
+              "(function(){try{if(window.location.pathname.indexOf('/dashboard')===0){document.body.classList.add('dash-hide-landing-chrome','dash-path-dashboard');}}catch(e){}})();",
           }}
         />
         <header className="landing-header">
@@ -109,8 +109,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <a className="landing-header-link" href="/api/docs">
                 API
               </a>
-              <a className="landing-header-link" href="/#customers">
-                Customers
+              <a className="landing-header-link" href="/#late-payments">
+                Late payments
               </a>
             </div>
 

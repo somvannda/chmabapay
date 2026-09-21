@@ -30,9 +30,9 @@ const endpointGroups = [
       "Manage account API keys. Live keys are prefixed `ck_live_`, and one key authenticates every store on the account.",
     items: [
       { method: "GET", path: "/v1/keys", description: "List the account's API keys. The raw key is never returned again after creation." },
-      { method: "POST", path: "/v1/keys", description: "Create a live key. Pass name to label it. The response includes raw_key once. Capped by your plan (Free 1, Starter 3, Pro 10)." },
-      { method: "POST", path: "/v1/keys/{key_id}/revoke", description: "Revoke a key. Any request using it fails from this call on." },
-      { method: "POST", path: "/v1/keys/{key_id}/rotate", description: "Create a replacement and suspend the old key immediately — the old key stops working at once, so deploy the new one first." },
+      { method: "POST", path: "/v1/keys", description: "Create a key. name is required (1–64 chars) — it is how the key is told apart in the list. The response includes raw_key once. Capped by your plan: 1 / 3 / 10 keys on Free, Starter and Pro by default. Refused with 403 until the merchant agreement is accepted." },
+      { method: "POST", path: "/v1/keys/{key_id}/revoke", description: "Revoke a key by its numeric id. Any request using it fails from this call on." },
+      { method: "POST", path: "/v1/keys/{key_id}/rotate", description: "Create a replacement and suspend the old key in the same call — the old key stops working at once, so deploy the new one first. The response is the new key, including raw_key once." },
     ],
   },
   {
@@ -40,11 +40,11 @@ const endpointGroups = [
     summary:
       "Create and manage merchant stores. A store is the merchant, and each store maps to one ABA PayWay payment link — the only supported destination.",
     items: [
-      { method: "POST", path: "/v1/stores", description: "Create a store. Pass name (max 120 chars), optional external_id, city, support_email, telegram_chat_id, redirect URLs, and link={raw_link, merchant_account_id, merchant_name}. The branding fields (brand_color, logo_image_url, whitelabel_css) require the white-label entitlement." },
-      { method: "GET", path: "/v1/stores", description: "List every store on the account. Not paginated." },
+      { method: "POST", path: "/v1/stores", description: "Create a store. name (max 120 chars) is the only required field. Optional: external_id, city (defaults to \"Phnom Penh\", max 15 chars), support_email, telegram_chat_id, redirect_success_url, redirect_failure_url. Branding fields (brand_color, logo_image_url, whitelabel_css) require the white-label entitlement. Pass link={raw_link, merchant_account_id, merchant_name} to attach the destination in the same call, where only merchant_name is optional; leave it out and the store is created as a draft. 201 returns the store with id st_… ." },
+      { method: "GET", path: "/v1/stores", description: "List every store on the account, wrapped as {data: [...]}. Not paginated." },
       { method: "GET", path: "/v1/stores/{public_id}", description: "Get one store and its payment link." },
       { method: "PATCH", path: "/v1/stores/{public_id}", description: "Update a store. Pass any of name, external_id, city, support_email, telegram_chat_id, redirect URLs, or link={raw_link, merchant_account_id, merchant_name}. Branding fields require the white-label entitlement — otherwise 403 whitelabel_not_enabled." },
-      { method: "PUT", path: "/v1/stores/{public_id}/link", description: "Attach or replace the store's ABA PayWay link. Promotes a draft store to active." },
+      { method: "PUT", path: "/v1/stores/{public_id}/link", description: "Attach or replace the store's ABA PayWay link. Requires raw_link and merchant_account_id. Promotes a draft store to active." },
       { method: "POST", path: "/v1/stores/{public_id}/disable", description: "Disable a store. New payments against it fail with 400 store_disabled, and no other write will touch it — a PATCH and a link attach are both refused while it is disabled." },
       { method: "POST", path: "/v1/stores/{public_id}/enable", description: "Re-enable a disabled store. Answers status active, or draft when the store has no payment link left — attach one with PUT /v1/stores/{public_id}/link and it becomes active. A no-op on a store that is not disabled." },
       { method: "POST", path: "/v1/stores/{public_id}/telegram/test", description: "Send a test message to the store's configured Telegram chat, so you can confirm the chat id is right." },
@@ -53,19 +53,29 @@ const endpointGroups = [
   {
     title: "Payments",
     summary:
-      "Create payments and track their status. Every payment returns the KHQR string plus a hosted checkout URL.",
+      "Create payments and track their status. The create call returns the KHQR string and a hosted checkout URL; reading a payment back returns the QR string without the URL, and the list returns neither.",
     items: [
-      { method: "POST", path: "/v1/payments", description: "Create a payment. Pass amount (decimal, in the store link's currency), optional reference_id, metadata, idempotency_key, and store=<store public id> or merchant=<store external_id>. hosted_qr defaults to on, which is what makes ABA issue a payable code; hosted_qr=false builds a code offline and is refused unless the platform can confirm it. 201 returns qr_string, checkout_url and expires_at." },
-      { method: "GET", path: "/v1/payments", description: "List the account's payments, newest first. Filters: ?store=, ?merchant=<external_id>, ?status=, ?limit= (default 20). Statuses: pending, scanned, paid, expired, failed, superseded, reversed." },
-      { method: "GET", path: "/v1/payments/{public_id}", description: "One payment: status, amount, currency, QR, checkout URL, created/expires/approved/paid timestamps, and reversal state." },
-      { method: "POST", path: "/v1/payments/{public_id}/reissue", description: "Replace a dead code (expired, failed or superseded) with a fresh one and keep the lineage. 201 mints a new payment, 200 returns the live replacement already created for this one." },
+      { method: "POST", path: "/v1/payments", description: "Create a payment. Pass amount (a positive decimal with at most two places, in the store link's currency), optional reference_id, metadata and idempotency_key, plus store=<store public id> or merchant=<store external_id>. hosted_qr is left out by default, which means auto: ABA issues the code whenever the store's link is an ABA PayWay link, because a code we build ourselves for one carries no ABA transaction and can never be confirmed. hosted_qr=false builds a code offline and is refused on a live request unless the deployment can confirm one. 201 returns qr_string, checkout_url and expires_at." },
+      { method: "GET", path: "/v1/payments", description: "List the account's payments, newest first. Filters: ?store=, ?merchant=<external_id>, ?status=, ?limit= (default 20). Older payments are still listed after their QR dies, so filter ?status=paid for a settlement feed. Statuses: pending, scanned, paid, expired, failed, superseded, reversed." },
+      { method: "GET", path: "/v1/payments/{public_id}", description: "One payment: status, amount, currency, QR string, created/expires/approved/paid timestamps, the ABA reference once settled, and reversal state. checkout_url is null here — it is built by the create call, and the id inside it is this payment's own id, so /pay/{public_id} is the same page. Amounts are returned as decimal strings; summary totals elsewhere are integer *amount_cents." },
+      { method: "POST", path: "/v1/payments/{public_id}/reissue", description: "Replace a dead code with a fresh one and keep the lineage. Only an expired or failed payment can be replaced: paid answers 409 payment_already_paid, reversed answers 409 payment_reversed, and anything still live — pending, scanned, or superseded, which already has a replacement — answers 409 payment_not_expired. 201 mints a new payment, 200 returns the live replacement already created for this one." },
       { method: "POST", path: "/v1/payments/{public_id}/reverse", description: "Record that a paid payment was refunded, with an optional note and a payment.reversed event. This is bookkeeping only — we never hold your funds, so send the money back to the customer yourself and record it here so your reports and quota stop counting the sale. 409 payment_not_paid or payment_already_reversed otherwise." },
     ],
   },
   {
-    title: "Bakong Ledger Lookup",
+    title: "Payment Reconciliation",
     summary:
-      "Look a transaction up in Bakong's own ledger. These require platform Bakong Open API credentials, which are not enabled, so they answer 503 bakong_not_configured today. The ABA PayWay path does not need them — use GET /v1/payments/{public_id} and webhooks instead.",
+      "Re-check a payment you created, and have the platform act on what it finds. These are the endpoints to use for confirmation. The Bakong ledger lookups below are a different thing and are not switched on.",
+    items: [
+      { method: "GET", path: "/v1/transactions/check-status/{payment_public_id}", description: "Authoritative status for one of your payments. Query: prefer_aba_page (default true), aba_slug_hint, mark_paid (default true — when a source reports PAID, the payment row transitions too). Returns status (PAID/PENDING/FAILED/UNKNOWN), source (aba_payway_link_page or bakong_open_api), matched_amount, transitioned_to_paid, the signals behind the answer, and error when a source could not be reached. 404 payment_not_found if the id is not on your account. Works without Bakong credentials for a payment that has a hosted ABA session." },
+      { method: "POST", path: "/v1/transactions/verify-payment/{payment_public_id}", description: "The same reconciliation, returning the underlying Bakong transaction shape instead of a status object. Query: use_hash (default false — forces the Bakong path), prefer_aba_page (default true), aba_slug_hint. 404 tx_not_found_yet when nothing confirms it yet. Bakong credentials are required only for a payment with no hosted session to ask." },
+    ],
+  },
+  {
+    title: "Bakong Ledger Lookup",
+    unavailable: true,
+    summary:
+      "Look a transaction up in Bakong's own ledger. These require platform Bakong Open API credentials, which are not configured, so every route here answers 503 bakong_not_configured today. They are listed for completeness, not for use — reconcile with the two endpoints above instead.",
     items: [
       { method: "POST", path: "/v1/transactions/search", description: "Bakong search by identifier (search_type=hash|md5|short_hash|instruction_ref|external_ref, value, optional amount filter)." },
       { method: "POST", path: "/v1/transactions/poll", description: "Poll Bakong until the transaction succeeds. Interval and attempts are set with interval_seconds (default 2) and max_attempts (default 60) — there is no timeout_seconds field." },
@@ -80,13 +90,14 @@ const endpointGroups = [
   },
   {
     title: "KHQR Generation",
-    summary: "Build KHQR payloads from ABA PayWay links, and render them.",
+    summary:
+      "Build KHQR payloads from ABA PayWay links, and render them. Only the PayWay routes here can confirm a payment: a code we build ourselves has no ABA transaction behind it, so no wallet will settle it and there is nothing to poll.",
     items: [
-      { method: "POST", path: "/v1/khqr/from-link", description: "Build a KHQR payload from an ABA PayWay share link (crawls the link for the merchant and amount details)." },
-      { method: "POST", path: "/v1/khqr/probe-aba-status", description: "Check an ABA PayWay slug's status — the first-priority health check for link-based payments." },
-      { method: "POST", path: "/v1/khqr/payway/checkout", description: "Ask ABA to issue a hosted checkout session for a link, and return the code ABA will accept." },
-      { method: "POST", path: "/v1/khqr/payway/status", description: "Ask ABA for a hosted session's outcome — approved, paid, and ABA's own receipt URL. This is the check that is authoritative on ABA's side." },
-      { method: "GET", path: "/v1/khqr/render.svg", description: "Render a KHQR payload as SVG. Takes ecc and scale parameters." },
+      { method: "POST", path: "/v1/khqr/from-link", description: "Build a KHQR payload from an ABA PayWay share link, crawling the link for the merchant and amount details. Useful for display; the code it returns is not payable, because ABA has no record of it." },
+      { method: "POST", path: "/v1/khqr/probe-aba-status", description: "Best-effort status probe on a PayWay page. Query params: slug_or_url (required), bill_number, reference_id, expected_amount_usd. It re-fetches ABA's public SSR page and looks for PAID indicators, so it is advisory only — a layout change or a cached page can make it wrong in either direction. POST /v1/khqr/payway/status is the authoritative answer for a hosted session." },
+      { method: "POST", path: "/v1/khqr/payway/checkout", description: "Ask ABA to issue a hosted checkout session for a link, and return the code ABA will accept — that is what makes it payable as well as trackable." },
+      { method: "POST", path: "/v1/khqr/payway/status", description: "Ask ABA for a hosted session's outcome — approved, paid, and ABA's own receipt URL. This is the only check that is authoritative on ABA's side." },
+      { method: "GET", path: "/v1/khqr/render.svg", description: "Render a KHQR payload as SVG. Pass payload (the raw QR string, 8–1500 chars); optional scale (default 8) and ecc (default h). Public and stateless — it encodes what you give it and stores nothing." },
     ],
   },
   {
@@ -99,7 +110,7 @@ const endpointGroups = [
       { method: "PATCH", path: "/v1/webhooks/{endpoint_id}", description: "Change the url, events, status (active|disabled), or set enabled=true|false." },
       { method: "DELETE", path: "/v1/webhooks/{endpoint_id}", description: "Remove an endpoint and its delivery log. Use PATCH enabled=false to pause deliveries without losing history." },
       { method: "POST", path: "/v1/webhooks/{endpoint_id}/rotate-secret", description: "Issue a new signing secret and return it once. Deliveries signed with the previous secret will fail verification." },
-      { method: "GET", path: "/v1/webhooks/{endpoint_id}/deliveries", description: "Delivery attempt log: http_status, attempts, error preview, created/completed times." },
+      { method: "GET", path: "/v1/webhooks/{endpoint_id}/deliveries", description: "Delivery attempt log, newest first: attempt_count, http_status, response_body_preview, and created/completed times. ?limit= (default 200, max 500) and ?page=." },
       { method: "POST", path: "/v1/webhooks/{endpoint_id}/test", description: "Send a synthetic signed event now, so you can validate the whole pipeline before going live." },
     ],
   },
@@ -107,26 +118,27 @@ const endpointGroups = [
     title: "Billing & Plans",
     summary: "Plans, the current subscription, and invoices.",
     items: [
-      { method: "GET", path: "/v1/billing/plans", description: "Public plans matrix (name, monthly fee, and feature gates such as csv_export_enabled). No auth needed." },
+      { method: "GET", path: "/v1/billing/plans", description: "Public plans matrix (name, monthly fee, and per-plan limits such as max_stores and max_keys_per_account). No auth needed." },
       { method: "GET", path: "/v1/billing/subscription", description: "The account's current subscription and plan. Session only." },
-      { method: "POST", path: "/v1/billing/change-plan", description: "Change plan: plan_code=free|starter|pro. Applied immediately. No payment is collected and no proration is calculated — settle the difference outside ChmabaPay for now. Session only." },
+      { method: "POST", path: "/v1/billing/change-plan", description: "Change plan with plan_code=free|starter|pro. A move onto a free tier applies at once. A paid tier is bought rather than granted: the response comes back with payment_required=true, a pending subscription and the invoice for the period, and the plan activates when that invoice is paid — the pending subscription grants nothing until then. One invoice per account per period, so a 409 period_already_invoiced means this month is already billed. 400 plan_unchanged if it is the plan you are on, 404 plan_not_found, 400 plan_not_available if it is retired. 503 billing_not_open when the platform's own payment destination is not configured yet. Session only." },
       { method: "GET", path: "/v1/billing/invoices", description: "List the account's plan invoices, filtered by period_month=YYYY-MM. Session only." },
       { method: "GET", path: "/v1/billing/invoices/{id}/khqr", description: "Mint a live KHQR to settle a plan invoice, through our own payments API. 201 returns payment_id, qr_string and checkout_url. Session only." },
     ],
   },
   {
     title: "Account",
-    summary: "The signed-in account's own profile.",
+    summary: "The signed-in account's own profile. Everything here is session-cookie only — an API key is not accepted.",
     items: [
-      { method: "GET", path: "/v1/me", description: "Your profile: name, email, status, plan, feature gates, and terms acceptance. Session cookie only — an API key is not accepted here." },
-      { method: "PATCH", path: "/v1/me", description: "Update name or email. An email already in use is rejected with 400 email_already_taken. Session cookie only." },
-      { method: "POST", path: "/v1/me/terms", description: "Record acceptance of the merchant agreement. Send the version you displayed; a stale version is refused with 409. Session cookie only." },
+      { method: "GET", path: "/v1/me", description: "Your profile: name, email, status, plan, feature gates, terms acceptance, and the version of the agreement published right now." },
+      { method: "PATCH", path: "/v1/me", description: "Update name. email is deliberately not accepted here — the schema forbids unknown fields, so sending it is a 422, and moving an address is a verified operation instead (POST /v1/me/email)." },
+      { method: "POST", path: "/v1/me/email", description: "Move the account's email. Requires current_password for an account that has one; an account created through Google has no password to prove ownership with, so it is refused and pointed at support. 400 email_already_taken if the address is in use." },
+      { method: "POST", path: "/v1/me/terms", description: "Record acceptance of the merchant agreement. Send the version you displayed; a stale one is refused with 409 terms_version_superseded. Re-accepting the current version is a no-op." },
     ],
   },
   {
     title: "Reports & Reconciliation",
     summary:
-      "CSV and JSON payment exports. JSON is available on every plan; CSV requires the plan's csv_export_enabled flag and returns 403 without it.",
+      "CSV and JSON payment exports, available on every plan. CSV streams every matching payment; JSON adds summary totals and pagination.",
     items: [
       { method: "GET", path: "/v1/reports/payments.csv", description: "Streaming CSV export. Filters: ?from=YYYY-MM-DD, ?to=YYYY-MM-DD, ?store_id=st_…, ?merchant=<external_id>, ?statuses=comma,separated." },
       { method: "GET", path: "/v1/reports/payments.json", description: "JSON export. Same filters plus ?page= and ?per_page= (default 20, max 100). Returns {data, summary: {total_matching_rows, total_matching_paid_count, total_matching_paid_amount_cents, total_matching_paid_amount_formatted, total_matching_reversed_count, total_matching_reversed_amount_cents, filters_applied}, pagination}. The paid totals count only status=paid, so the reversed totals are what account for the difference." },
@@ -338,23 +350,38 @@ function EndpointSection() {
           <h2 className="landing-section-title">Endpoints you&rsquo;ll actually use.</h2>
         </div>
         <div className="docs-endpoint-grid">
-          {endpointGroups.map((group) => (
-            <article key={group.title} className="docs-endpoint-card">
-              <div className="docs-endpoint-head">
-                <h3 className="docs-endpoint-title">{group.title}</h3>
-                <p className="docs-endpoint-summary">{group.summary}</p>
-              </div>
-              <ul className="docs-endpoint-list">
-                {group.items.map((item) => (
-                  <li key={item.path} className="docs-endpoint-row">
-                    <span className={`docs-method docs-method-${item.method}`}>{item.method}</span>
-                    <code className="docs-path">{item.path}</code>
-                    <p className="docs-description">{item.description}</p>
-                  </li>
-                ))}
-              </ul>
-            </article>
-          ))}
+          {endpointGroups.map((group) => {
+            // Only one group can be unavailable today, and it is the one whose
+            // routes cannot answer without platform credentials. Rendering it with
+            // the same weight as the working ones would be the documentation
+            // equivalent of the 503 it returns.
+            const isUnavailable = "unavailable" in group && group.unavailable;
+            return (
+              <article
+                key={group.title}
+                className={`docs-endpoint-card${isUnavailable ? " is-unavailable" : ""}`}
+              >
+                <div className="docs-endpoint-head">
+                  <div className="docs-endpoint-title-row">
+                    <h3 className="docs-endpoint-title">{group.title}</h3>
+                    {isUnavailable ? (
+                      <span className="docs-endpoint-badge">Not available</span>
+                    ) : null}
+                  </div>
+                  <p className="docs-endpoint-summary">{group.summary}</p>
+                </div>
+                <ul className="docs-endpoint-list">
+                  {group.items.map((item) => (
+                    <li key={item.path} className="docs-endpoint-row">
+                      <span className={`docs-method docs-method-${item.method}`}>{item.method}</span>
+                      <code className="docs-path">{item.path}</code>
+                      <p className="docs-description">{item.description}</p>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            );
+          })}
         </div>
       </div>
     </section>
@@ -380,8 +407,8 @@ function SignatureSection() {
             <li>Return 2xx quickly. Anything else is retried with backoff, up to 8 attempts.</li>
             <li>
               Branch on <code>data.payment.status</code> and <code>financial</code>, not on the
-              event name alone. Events: payment.completed, payment.scanned, payment.expired,
-              payment.failed, payment.superseded, payment.reversed.
+              event name alone. Events: payment.completed, payment.expired,
+              payment.superseded, payment.reversed.
             </li>
           </ul>
         </div>
@@ -448,6 +475,25 @@ export const metadata = {
   title: "API Docs — ChmabaPay",
   description:
     "ChmabaPay API reference for KHQR, ABA PayWay, signed webhooks, and reconciliation endpoints.",
+  // Without these the page inherits the landing page's card, so every shared link
+  // to the API reference previewed as the marketing home page.
+  alternates: { canonical: "/api/docs" },
+  openGraph: {
+    type: "article",
+    title: "API Docs — ChmabaPay",
+    description:
+      "Endpoints, signed webhooks and a copy-paste quick start for KHQR payments over ABA PayWay.",
+    url: "/api/docs",
+    siteName: "ChmabaPay",
+    images: [{ url: "/og-image.png", width: 1024, height: 1024, alt: "ChmabaPay" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "API Docs — ChmabaPay",
+    description:
+      "Endpoints, signed webhooks and a copy-paste quick start for KHQR payments over ABA PayWay.",
+    images: ["/og-image.png"],
+  },
 };
 
 export default function ApiDocsPage() {

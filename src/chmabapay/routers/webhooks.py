@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -16,9 +16,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import audit, models, webhooks
 from ..auth import AuthContext, get_current_auth_context
 from ..db import get_session
-from ..security import new_secret, sign_payload, verify_signature
+from ..openapi import AUTH_ERRORS, AUTH_SECURITY
+from ..security import new_secret, verify_signature
 
-router = APIRouter(prefix="/v1/webhooks", tags=["webhooks"])
+router = APIRouter(
+    prefix="/v1/webhooks",
+    tags=["webhooks"],
+    dependencies=AUTH_SECURITY,
+    responses=AUTH_ERRORS,
+)
 
 
 class WebhookCreate(BaseModel):
@@ -41,6 +47,11 @@ class WebhookOut(BaseModel):
     url: str
     events: list[str] | None
     status: str
+    # Derived from `status`, and published because the console edits this endpoint by
+    # round-tripping it: it initialised the form from an `enabled` field that this
+    # schema never returned, so the checkbox always resolved to true and saving an
+    # unrelated edit silently re-enabled a disabled endpoint.
+    enabled: bool
     created_at: datetime
     updated_at: datetime
 
@@ -51,6 +62,7 @@ class WebhookOut(BaseModel):
             url=ep.url,
             events=ep.events,
             status=ep.status,
+            enabled=ep.status == models.WEBHOOK_ENDPOINT_ACTIVE,
             created_at=ep.created_at,
             updated_at=ep.updated_at,
         )
@@ -86,29 +98,40 @@ async def _load_endpoint(
 
 
 def _build_test_event_payload() -> dict:
-    event_id = secrets.token_hex(16)
+    """A test event built by the *real* payload builder.
+
+    A hand-written payload is worse than none: it passes against a merchant handler
+    written for a shape we never actually send, so "send test" reports success and the
+    first live payment fails. The fields this used to omit — `financial` (the one the
+    docs tell integrators to branch on), the `merchant` block, `paid_at`,
+    `expires_at`, `settled_late` — were exactly the ones an integrator writes logic
+    against.
+
+    The models are transient: `build_event_payload` only reads, so nothing needs a
+    database row to say what a real event looks like.
+    """
     now = datetime.now(UTC)
-    return {
-        "id": event_id,
-        "type": "payment.completed",
-        "created": now.isoformat(),
-        "data": {
-            "payment": {
-                "id": "pay_test_" + secrets.token_urlsafe(8),
-                "status": "paid",
-                "amount": "25.50",
-                "currency": "USD",
-                "reference_id": "TEST-INV-001",
-                "metadata": {"test": True},
-                "approved_at": now.isoformat(),
-            },
-            "store": {
-                "id": "store_test_" + secrets.token_urlsafe(4),
-                "name": "Test Store",
-                "redirect_success_url": "https://example.com/success",
-            },
-        },
-    }
+    payment = models.Payment(
+        public_id="pay_test_" + secrets.token_urlsafe(8),
+        status=models.PAYMENT_PAID,
+        amount_cents=2550,
+        currency="USD",
+        reference_id="TEST-INV-001",
+        metadata_={"test": True},
+        created_at=now,
+        expires_at=now + timedelta(minutes=3),
+        paid_at=now,
+        approved_at=now,
+    )
+    store = models.Store(
+        public_id="store_test_" + secrets.token_urlsafe(4),
+        name="Test Store",
+        redirect_success_url="https://example.com/success",
+        external_id="TEST-STORE-001",
+    )
+    return webhooks.build_event_payload(
+        secrets.token_hex(16), models.EVENT_COMPLETED, payment, store
+    )
 
 
 @router.get("", response_model=list[WebhookOut])
@@ -313,14 +336,15 @@ async def test_webhook(
     ep = await _load_endpoint(session, ctx, endpoint_id)
     payload_dict = _build_test_event_payload()
     payload_bytes = json.dumps(payload_dict, separators=(",", ":")).encode("utf-8")
-    t, sig = sign_payload(payload_bytes, ep.secret_key)
-    sig_header = f"t={t},v1={sig}"
-    headers = {
-        "Content-Type": "application/json",
-        webhooks.EVENT_HEADER: "payment.completed",
-        webhooks.SIGNATURE_HEADER: sig_header,
-    }
-    local_valid = verify_signature(payload_bytes, ep.secret_key, sig_header)
+    # Same builder the sender uses, so the headers the merchant sees here are the
+    # headers they will see on a real payment — including the User-Agent their
+    # firewall may be allow-listing.
+    headers = webhooks.delivery_headers(
+        payload_bytes, ep.secret_key, models.EVENT_COMPLETED
+    )
+    local_valid = verify_signature(
+        payload_bytes, ep.secret_key, headers[webhooks.SIGNATURE_HEADER]
+    )
     http_status: int | None = None
     body_preview: str | None = None
     try:

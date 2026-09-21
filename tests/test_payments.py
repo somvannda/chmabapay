@@ -575,7 +575,11 @@ async def test_sub_merchant_and_bank_destination_surfaces_are_gone(client):
         )
     ).status_code == 404
 
-    # a store's destination is always an ABA PayWay link, whatever the caller sends
+    # A store's destination is always an ABA PayWay link, and a value that is not one
+    # is refused rather than stored. It used to be accepted and normalised to
+    # `link_type=aba_payway` with `verification=verified`, which is how a Bakong
+    # account id or a typo became a store that looked ready and failed on the first
+    # sale. PayWay-only is now enforced at the write, not just in the column.
     created = (
         await client.post(
             "/v1/stores", json={"name": "PayWay Only"}, headers=headers
@@ -586,8 +590,19 @@ async def test_sub_merchant_and_bank_destination_surfaces_are_gone(client):
         json={"raw_link": "bakong://126071610243081", "merchant_account_id": "126071610243081"},
         headers=headers,
     )
-    assert bad.status_code == 200  # accepted, but always stored as an ABA PayWay link
-    assert bad.json()["link"]["link_type"] == "aba_payway"
+    assert bad.status_code == 400
+    assert bad.json()["detail"].startswith("payway_link_invalid:")
+
+    ok = await client.put(
+        f"/v1/stores/{created['id']}/link",
+        json={
+            "raw_link": "https://link.payway.com.kh/ABAPAYpe518710Y",
+            "merchant_account_id": "ABAPAYpe518710Y",
+        },
+        headers=headers,
+    )
+    assert ok.status_code == 200
+    assert ok.json()["link"]["link_type"] == "aba_payway"
 
     legacy = await client.post(
         f"/v1/stores/{created['id']}/link",

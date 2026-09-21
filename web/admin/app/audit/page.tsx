@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { readApiError } from "@/lib/apiError";
+import { apiFetch } from "@/lib/apiFetch";
 
 type AuditEntry = {
   id: number;
@@ -85,7 +86,7 @@ export default function AdminAuditPage() {
         if (targetType) params.set("target_type", targetType);
         params.set("page", String(page));
         params.set("per_page", "50");
-        const res = await fetch(`/v1/admin/audit-logs?${params.toString()}`, {
+        const res = await apiFetch(`/v1/admin/audit-logs?${params.toString()}`, {
           credentials: "include",
         });
         if (!res.ok) throw new Error(await readApiError(res));

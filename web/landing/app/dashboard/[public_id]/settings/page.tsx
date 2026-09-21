@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { CopyField } from "@/components/portal/CopyField";
 import { readApiError } from "@/components/portal/apiError";
 import { useSession } from "@/components/portal/useSession";
 
@@ -22,6 +23,7 @@ type StoreLink = {
 type StoreSettings = {
   id: string;
   name?: string;
+  external_id?: string | null;
   support_email?: string | null;
   brand_color?: string | null;
   redirect_success_url?: string | null;
@@ -50,9 +52,13 @@ export default function StoreSettingsPage({
 
   const [loading, setLoading] = useState(true);
   const [settings, setSettings] = useState<StoreSettings | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
+  const [externalId, setExternalId] = useState("");
   const [supportEmail, setSupportEmail] = useState("");
   const [brandColor, setBrandColor] = useState("");
   const [successRedirect, setSuccessRedirect] = useState("");
@@ -79,33 +85,43 @@ export default function StoreSettingsPage({
 
   useEffect(() => {
     let alive = true;
+    setLoadError(null);
+    setNotFound(false);
     (async () => {
       try {
         const res = await fetch(`/v1/stores/${publicId}`, {
           credentials: "include",
         });
-        if (res.ok) {
-          const data = (await res.json()) as StoreSettings;
-          if (alive) {
-            setSettings(data);
-            setName(data.name || "");
-            setSupportEmail(data.support_email || "");
-            setBrandColor(data.brand_color || "");
-            setSuccessRedirect(data.redirect_success_url || "");
-            setFailureRedirect(data.redirect_failure_url || "");
-            setLogoImageUrl(data.logo_image_url || "");
-            setWhitelabelCss(data.whitelabel_css || "");
-            const link = data.link ?? null;
-            const legacyUnsupported = link?.link_type === "bakong_id";
-            setPaywayUnsupported(legacyUnsupported);
-            setPaywayLink(legacyUnsupported ? "" : link?.raw_link || "");
-            setPaywayMerchantName(
-              legacyUnsupported ? "" : link?.merchant_name || "",
-            );
-            setTelegramChatId(data.telegram_chat_id || "");
-          }
+        if (res.status === 404) {
+          if (alive) setNotFound(true);
+          return;
         }
-      } catch {
+        // A failed read used to fall through to the empty form below, which reads as
+        // "this store has no settings" — and then a save would overwrite the real
+        // ones with blanks.
+        if (!res.ok) throw new Error(await readApiError(res));
+        const data = (await res.json()) as StoreSettings;
+        if (alive) {
+          setSettings(data);
+          setName(data.name || "");
+          setExternalId(data.external_id || "");
+          setSupportEmail(data.support_email || "");
+          setBrandColor(data.brand_color || "");
+          setSuccessRedirect(data.redirect_success_url || "");
+          setFailureRedirect(data.redirect_failure_url || "");
+          setLogoImageUrl(data.logo_image_url || "");
+          setWhitelabelCss(data.whitelabel_css || "");
+          const link = data.link ?? null;
+          const legacyUnsupported = link?.link_type === "bakong_id";
+          setPaywayUnsupported(legacyUnsupported);
+          setPaywayLink(legacyUnsupported ? "" : link?.raw_link || "");
+          setPaywayMerchantName(
+            legacyUnsupported ? "" : link?.merchant_name || "",
+          );
+          setTelegramChatId(data.telegram_chat_id || "");
+        }
+      } catch (e) {
+        if (alive) setLoadError(e instanceof Error ? e.message : String(e));
       } finally {
         if (alive) setLoading(false);
       }
@@ -113,7 +129,7 @@ export default function StoreSettingsPage({
     return () => {
       alive = false;
     };
-  }, [publicId]);
+  }, [publicId, reloadKey]);
 
   useEffect(() => {
     if (storeSuccess) {
@@ -132,6 +148,7 @@ export default function StoreSettingsPage({
       try {
         const body: Record<string, unknown> = {
           name,
+          external_id: externalId.trim() || null,
           support_email: supportEmail || null,
           redirect_success_url: successRedirect || null,
           redirect_failure_url: failureRedirect || null,
@@ -157,6 +174,7 @@ export default function StoreSettingsPage({
     },
     [
       name,
+      externalId,
       supportEmail,
       brandColor,
       successRedirect,
@@ -189,7 +207,11 @@ export default function StoreSettingsPage({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        if (!res.ok) throw new Error(await readApiError(res));
+        if (!res.ok) {
+          // A rejected link comes back with a machine prefix; `readApiError` strips
+          // it and turns known codes into prose.
+          throw new Error(await readApiError(res));
+        }
         setPlSuccess("Saved!");
       } catch (e) {
         setPlError(e instanceof Error ? e.message : String(e));
@@ -278,6 +300,31 @@ export default function StoreSettingsPage({
 
       {loading ? (
         <div className="dash-info">Loading store settings…</div>
+      ) : notFound ? (
+        <div className="dash-empty">
+          Store not found.
+          <div className="dash-empty-desc">
+            Nothing matches <code className="dash-code-mono">{publicId}</code>. It
+            may have been removed.{" "}
+            <a className="dash-link-btn" href="/dashboard/stores">
+              Back to stores
+            </a>
+          </div>
+        </div>
+      ) : loadError || !settings ? (
+        <div className="dash-warn">
+          This store&rsquo;s settings could not be loaded, so the form is not shown
+          — saving blanks over values we never read is worse than showing nothing.
+          <div className="dash-empty-cta-row">
+            <button
+              type="button"
+              className="dash-btn dash-btn-secondary dash-btn-sm"
+              onClick={() => setReloadKey((k) => k + 1)}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
       ) : (
         <>
           {actionError && (
@@ -322,6 +369,39 @@ export default function StoreSettingsPage({
                     onChange={(e) => setSupportEmail(e.target.value)}
                     placeholder="store@example.com"
                   />
+                </div>
+              </div>
+
+              <div className="dash-field">
+                <label>Store ID</label>
+                {settings?.id ? (
+                  <CopyField value={settings.id} />
+                ) : (
+                  <code className="dash-code-mono">{publicId}</code>
+                )}
+                <div className="dash-hint">
+                  Pass this as <code>store=</code> when creating a payment.
+                </div>
+              </div>
+
+              <div className="dash-field">
+                <label htmlFor="ss-external-id">
+                  Merchant ID{" "}
+                  <span className="dash-badge dash-badge-muted">optional</span>
+                </label>
+                <input
+                  id="ss-external-id"
+                  type="text"
+                  className="dash-input"
+                  value={externalId}
+                  onChange={(e) => setExternalId(e.target.value)}
+                  placeholder="e.g. shop-42"
+                  maxLength={255}
+                />
+                <div className="dash-hint">
+                  Your own identifier for this store. Pass it as{" "}
+                  <code>merchant=</code> instead of the store ID. Changing or
+                  clearing it breaks any integration still sending the old value.
                 </div>
               </div>
 

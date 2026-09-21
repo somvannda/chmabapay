@@ -21,7 +21,7 @@ from ..db import get_session
 from ..services import payments as svc
 from ..tools.testplan import build_test_plan
 
-router = APIRouter(prefix="/_dev", tags=["dev"])
+router = APIRouter(prefix="/_dev", tags=["dev"], include_in_schema=False)
 
 _TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 

@@ -18,7 +18,7 @@ from sqlalchemy import select
 from .. import models
 from ..config import get_settings
 from ..db import session_factory
-from ..webhooks import EVENT_HEADER, SIGNATURE_HEADER, http_post
+from ..webhooks import delivery_headers, http_post
 from .base import Worker
 from .job import Job
 
@@ -136,15 +136,7 @@ class WebhookSenderWorker(Worker):
             return
         event, endpoint = row
         payload = json.dumps(event.payload, separators=(",", ":")).encode("utf-8")
-        from ..security import sign_payload
-
-        t, sig = sign_payload(payload, endpoint.secret_key)
-        headers = {
-            "Content-Type": "application/json",
-            EVENT_HEADER: event.type,
-            SIGNATURE_HEADER: f"t={t},v1={sig}",
-            "User-Agent": "ChmabaPay-Webhook/1.0",
-        }
+        headers = delivery_headers(payload, endpoint.secret_key, event.type)
         delivery.attempts += 1
         settings = get_settings()
         try:

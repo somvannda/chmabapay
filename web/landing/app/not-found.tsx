@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 /**
@@ -7,7 +8,17 @@ import Link from "next/link";
  * system font — which reads as a broken site rather than a wrong address. This
  * renders inside the root layout, so the address bar, header, footer and type
  * scale all stay the product's own.
+ *
+ * The title is set here rather than inherited from the layout, because a 404 that
+ * arrives with the home page's title is a 404 a search engine can index as the
+ * home page. `robots: noindex` says the same thing to a crawler directly.
  */
+export const metadata: Metadata = {
+  title: "Page not found — ChmabaPay",
+  description: "That address does not exist on ChmabaPay.",
+  robots: { index: false, follow: false },
+};
+
 export default function NotFound() {
   return (
     <main className="nf-section">

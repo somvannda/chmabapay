@@ -40,6 +40,39 @@ log = logging.getLogger(__name__)
 DEFAULT_MAX_AGE_SECONDS = 60.0
 
 
+async def queue_heartbeat_ages(
+    *,
+    queues: list[str],
+    url: str | None = None,
+    client: Any | None = None,
+) -> dict[str, float | None]:
+    """Seconds since each queue was last drained, `None` where there is no stamp.
+
+    The admin console wants the number, not just the verdict: an age that is rising
+    towards the threshold is the difference between "the API is about to stop
+    detecting payments" and "the API stopped detecting payments an hour ago". The
+    probe below is the same read with a threshold applied.
+    """
+    if client is None and not url:
+        raise ValueError("queue_heartbeat_ages needs either a url or a client")
+    own_client = client is None
+    redis = client or redis_asyncio.from_url(url, decode_responses=True)
+    try:
+        now = time.time()
+        stamps = await redis.mget([shared_heartbeat_key(queue) for queue in queues])
+        ages: dict[str, float | None] = {}
+        for queue, raw in zip(queues, stamps, strict=True):
+            try:
+                ages[queue] = now - float(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                # An unreadable stamp is not evidence of a working drain.
+                ages[queue] = None
+        return ages
+    finally:
+        if own_client:
+            await redis.aclose()
+
+
 async def stale_queues(
     *,
     queues: list[str],
@@ -48,26 +81,12 @@ async def stale_queues(
     client: Any | None = None,
 ) -> list[str]:
     """Queues whose last drain is missing or older than `max_age_seconds`."""
-    if client is None and not url:
-        raise ValueError("stale_queues needs either a url or a client")
-    own_client = client is None
-    redis = client or redis_asyncio.from_url(url, decode_responses=True)
-    try:
-        now = time.time()
-        stale: list[str] = []
-        for queue in queues:
-            raw = await redis.get(shared_heartbeat_key(queue))
-            try:
-                age = now - float(raw) if raw is not None else None
-            except (TypeError, ValueError):
-                # An unreadable stamp is not evidence of a working drain.
-                age = None
-            if age is None or age > max_age_seconds:
-                stale.append(queue)
-        return stale
-    finally:
-        if own_client:
-            await redis.aclose()
+    ages = await queue_heartbeat_ages(queues=queues, url=url, client=client)
+    return [
+        queue
+        for queue, age in ages.items()
+        if age is None or age > max_age_seconds
+    ]
 
 
 async def check() -> list[str]:

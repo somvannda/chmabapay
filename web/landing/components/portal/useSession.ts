@@ -9,10 +9,29 @@ export type Profile = {
   name?: string | null;
   is_platform_admin?: boolean;
   whitelabel_enabled?: boolean;
+  // Whether the account has a password at all — never the password. Google-created
+  // accounts do not, and the security settings say so instead of offering a form
+  // that would be refused.
+  has_password?: boolean;
   status?: string;
   created_at?: string;
+  // Merchant-agreement acceptance. `terms_required_version` is what the server
+  // publishes right now, so "accepted" is `terms_accepted_version ===
+  // terms_required_version` — the version is never hardcoded in the UI, or a
+  // text change would leave every client asking for the old one.
+  terms_accepted_at?: string | null;
+  terms_accepted_version?: string | null;
+  terms_required_version?: string | null;
   [k: string]: unknown;
 };
+
+/** Has this account accepted the terms the server is currently publishing? */
+export function termsAccepted(profile: Profile | null): boolean {
+  if (!profile) return false;
+  const required = profile.terms_required_version;
+  if (!required) return true; // server did not say; do not invent a gate
+  return profile.terms_accepted_version === required;
+}
 
 export function useSession() {
   const [loading, setLoading] = useState<boolean>(true);

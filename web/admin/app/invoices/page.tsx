@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { readApiError } from "@/lib/apiError";
+import { apiFetch } from "@/lib/apiFetch";
 
 type AdminInvoice = {
   id: number;
@@ -30,10 +31,10 @@ const nf = new Intl.NumberFormat("en-US");
 
 const STATUS_OPTIONS = [
   { value: "", label: "All statuses" },
-  { value: "draft", label: "Draft" },
-  { value: "issued", label: "Issued" },
+  { value: "open", label: "Open" },
   { value: "paid", label: "Paid" },
-  { value: "overdue", label: "Overdue" },
+  { value: "waived", label: "Waived" },
+  { value: "credited", label: "Credited" },
 ];
 
 function formatDate(iso: string | null | undefined): string {
@@ -52,6 +53,7 @@ function formatCents(cents: number | null | undefined): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+/** `services/billing.py` writes `open` / `paid` / `waived` / `credited`. */
 function invoicePill(status: string | null | undefined): {
   className: string;
   label: string;
@@ -59,16 +61,14 @@ function invoicePill(status: string | null | undefined): {
   switch ((status || "").toLowerCase()) {
     case "paid":
       return { className: "dash-pill dash-pill-paid", label: "paid" };
-    case "issued":
-      return { className: "dash-pill dash-pill-scanned", label: "issued" };
-    case "overdue":
-      return { className: "dash-pill dash-pill-failed", label: "overdue" };
-    case "draft":
-      return { className: "dash-pill dash-pill-pending", label: "draft" };
+    case "waived":
+      return { className: "dash-pill dash-pill-scanned", label: "waived" };
+    case "credited":
+      return { className: "dash-pill dash-pill-reversed", label: "credited" };
     default:
       return {
         className: "dash-pill dash-pill-pending",
-        label: status || "—",
+        label: status || "open",
       };
   }
 }
@@ -95,7 +95,7 @@ export default function AdminInvoicesPage() {
         if (status) params.set("status", status);
         params.set("page", String(page));
         params.set("per_page", "25");
-        const res = await fetch(`/v1/admin/invoices?${params.toString()}`, {
+        const res = await apiFetch(`/v1/admin/invoices?${params.toString()}`, {
           credentials: "include",
         });
         if (!res.ok) throw new Error(await readApiError(res));

@@ -15,37 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import models
 from ..auth import AuthContext, get_current_auth_context
 from ..db import get_session
+from ..openapi import AUTH_ERRORS, AUTH_SECURITY
 from ..schemas import money_to_str
 
-router = APIRouter(prefix="/v1/reports", tags=["reports"])
-
-
-async def _get_active_plan(
-    session: AsyncSession, account_id: int
-) -> models.Plan | None:
-    res = await session.execute(
-        select(models.Plan)
-        .join(
-            models.PlanSubscription,
-            models.PlanSubscription.plan_id == models.Plan.id,
-        )
-        .where(
-            models.PlanSubscription.account_id == account_id,
-            models.PlanSubscription.status.in_(["trial", "active"]),
-        )
-    )
-    return res.scalar_one_or_none()
-
-
-async def _ensure_csv_allowed(
-    session: AsyncSession, account: models.Account
-) -> None:
-    plan = await _get_active_plan(session, account.id)
-    if plan is None or not plan.csv_export_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="CSV exports are not available on the Free plan. Upgrade to Starter to unlock.",
-        )
+router = APIRouter(
+    prefix="/v1/reports",
+    tags=["reports"],
+    dependencies=AUTH_SECURITY,
+    responses=AUTH_ERRORS,
+)
 
 
 def _parse_iso_date_start(date_str: str) -> datetime:
@@ -160,8 +138,15 @@ async def export_payments_csv(
     ctx: AuthContext = Depends(get_current_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
-    await _ensure_csv_allowed(session, ctx.account)
+    """Every plan's payments, as CSV.
 
+    The plan gate that used to stand here is gone deliberately: it could not fire
+    (`csv_export_enabled` was true on every plan, Free included) while the docs, the
+    403 message and the console's feature matrix all claimed CSV was a paid feature,
+    and the store-catalog export on the same page bypassed it entirely by being built
+    in the browser. A gate nobody can trip is worse than no gate — it teaches the
+    operator that the toggle in the console does something.
+    """
     from_dt = _parse_iso_date_start(from_date) if from_date else None
     to_dt = _parse_iso_date_end(to_date) if to_date else None
     statuses_list = [s.strip() for s in statuses.split(",") if s.strip()] if statuses else []

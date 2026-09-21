@@ -4494,6 +4494,80 @@ body.dash-path-dashboard > .landing-footer {
 }
 .dash-code-mono { font-size: var(--fs-12); }
 
+/* Payment dispute tools: the rail's raw answer, and the row that acts on it. */
+.dash-pre {
+  margin: 0;
+  padding: var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  line-height: var(--lh-snug);
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+.dash-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.dash-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+/* "Needs attention" — the one block on the overview that is about what is stuck
+   rather than what the platform has, so it reads as a list of things to do, not
+   as another row of statistics. */
+.dash-attention {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dash-attention-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.dash-attention-item.is-clear {
+  border-left-color: var(--line);
+  color: var(--muted);
+}
+.dash-attention-item.is-warn { border-left-color: #d97706; }
+.dash-attention-item.is-critical { border-left-color: #dc2626; }
+.dash-attention-count {
+  font-size: var(--fs-24);
+  font-weight: 700;
+  color: var(--ink);
+}
+.dash-attention-item.is-clear .dash-attention-count { color: var(--muted); }
+.dash-attention-label { font-size: var(--fs-13); font-weight: 600; }
+.dash-attention-detail {
+  font-size: var(--fs-12);
+  line-height: var(--lh-snug);
+  color: var(--muted);
+}
+.dash-ops-line {
+  margin-top: var(--sp-3);
+  font-size: var(--fs-12);
+  color: var(--muted);
+}
+
 /* Brand-token cleanups for shared control + status colours */
 .dash-btn-secondary { color: var(--ink); }
 .dash-tab { color: var(--ink-2); }

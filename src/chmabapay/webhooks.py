@@ -21,6 +21,25 @@ from .security import sign_payload
 
 EVENT_HEADER = "X-ChmabaPay-Event"
 SIGNATURE_HEADER = "X-ChmabaPay-Signature"
+# Some merchant firewalls allow-list on this, and the docs quote it, so it is a
+# constant here rather than a string written out at each send site.
+WEBHOOK_USER_AGENT = "ChmabaPay-Webhook/1.0"
+
+
+def delivery_headers(payload: bytes, secret: str, event_type: str) -> dict[str, str]:
+    """The headers a delivery carries, built in one place.
+
+    The merchant verifies against these, and the console's "send test" button has to
+    produce the *same request the sender produces* — otherwise a passing test proves
+    only that the merchant accepts something the real sender never sends.
+    """
+    t, sig = sign_payload(payload, secret)
+    return {
+        "Content-Type": "application/json",
+        EVENT_HEADER: event_type,
+        SIGNATURE_HEADER: f"t={t},v1={sig}",
+        "User-Agent": WEBHOOK_USER_AGENT,
+    }
 
 
 def _now() -> datetime:
@@ -209,12 +228,7 @@ async def _deliver(session: AsyncSession, delivery: models.EventDelivery) -> Non
     event, endpoint = row
 
     payload = json.dumps(event.payload, separators=(",", ":")).encode("utf-8")
-    t, sig = sign_payload(payload, endpoint.secret_key)
-    headers = {
-        "Content-Type": "application/json",
-        EVENT_HEADER: event.type,
-        SIGNATURE_HEADER: f"t={t},v1={sig}",
-    }
+    headers = delivery_headers(payload, endpoint.secret_key, event.type)
     delivery.attempts += 1
     try:
         response = await http_post(endpoint.url, payload, headers)

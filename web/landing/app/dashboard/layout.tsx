@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { DashboardShell } from "@/components/portal/DashboardShell";
-import { useSession } from "@/components/portal/useSession";
+import { termsAccepted, useSession } from "@/components/portal/useSession";
 
 type SubscriptionInfo = {
   subscription?: {
@@ -60,7 +60,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { loading, profile, error } = useSession();
+  const { loading, profile, error, refresh } = useSession();
 
   const [planName, setPlanName] = useState("Free plan");
   const [planCode, setPlanCode] = useState("free");
@@ -69,6 +69,8 @@ export default function DashboardLayout({
   const [resetsLabel, setResetsLabel] = useState("");
   const [planLoaded, setPlanLoaded] = useState(false);
   const [signoutLoading, setSignoutLoading] = useState(false);
+  const [acceptingTerms, setAcceptingTerms] = useState(false);
+  const [termsError, setTermsError] = useState<string | null>(null);
 
   useEffect(() => {
     document.body.classList.add("dash-hide-landing-chrome");
@@ -146,18 +148,44 @@ export default function DashboardLayout({
       }
     } catch {
     }
+    // There is no `/auth/logout`: the only sign-out route is the POST above, and the
+    // old fallback here asked for a URL that never existed. If the call failed we
+    // still leave the dashboard — the session cookie may already be gone, and
+    // stranding the user on a shell they cannot sign out of is the worse outcome.
+    window.location.href = "/";
+  }
+
+  async function handleAcceptTerms() {
+    if (acceptingTerms) return;
+    const version = profile?.terms_required_version;
+    if (!version) return;
+    setAcceptingTerms(true);
+    setTermsError(null);
     try {
-      const res = await fetch("/auth/logout", {
-        method: "GET",
+      const res = await fetch("/v1/me/terms", {
+        method: "POST",
         credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        // The version this page actually displayed, echoed back. The server
+        // refuses a stale one with 409 rather than recording agreement to text
+        // the merchant never saw — which is why the version is read from the
+        // profile and not written into this file.
+        body: JSON.stringify({ version }),
       });
-      if (res.ok || res.status === 302 || res.status === 303) {
-        window.location.href = "/";
+      if (!res.ok) {
+        setTermsError(
+          res.status === 409
+            ? "The terms were updated while this page was open. Reload to see the current version."
+            : "That didn't save. Please try again.",
+        );
         return;
       }
+      refresh();
     } catch {
+      setTermsError("That didn't save. Please try again.");
+    } finally {
+      setAcceptingTerms(false);
     }
-    window.location.href = "/";
   }
 
   if (loading) {
@@ -189,6 +217,42 @@ export default function DashboardLayout({
           </p>
           <a className="dash-btn dash-btn-primary" href={signInHref}>
             Sign in with Google
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  // The merchant agreement is a precondition of using the workspace, not a
+  // checkbox buried in settings: nothing here renders until the published version
+  // has been accepted. The server enforces the same rule at the API-key
+  // chokepoint, so this screen cannot be bypassed by calling the API directly.
+  if (!termsAccepted(profile)) {
+    return (
+      <div className="cp-gate">
+        <div className="cp-gate-card">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className="cp-gate-mark" src="/logo.svg" alt="" width={40} height={40} />
+          <div className="cp-gate-title">One thing before you start</div>
+          <p className="cp-gate-text">
+            ChmabaPay generates payment codes and tells you whether they were paid. It
+            never holds or moves your money — payments go straight to your own ABA
+            PayWay account.
+          </p>
+          <p className="cp-gate-text">
+            Accept the merchant agreement to open your workspace.
+          </p>
+          {termsError ? <p className="cp-gate-text">{termsError}</p> : null}
+          <button
+            type="button"
+            className="dash-btn dash-btn-primary"
+            onClick={handleAcceptTerms}
+            disabled={acceptingTerms}
+          >
+            {acceptingTerms ? "Saving…" : "Accept and continue"}
+          </button>
+          <a className="dash-btn" href="/terms" target="_blank" rel="noreferrer">
+            Read the merchant agreement
           </a>
         </div>
       </div>

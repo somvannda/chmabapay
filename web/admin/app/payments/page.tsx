@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { readApiError } from "@/lib/apiError";
+import { apiFetch } from "@/lib/apiFetch";
 
 type AdminPaymentRow = {
   id: string;
@@ -123,21 +124,26 @@ export default function AdminPaymentsPage() {
   const [appliedQ, setAppliedQ] = useState("");
   const [status, setStatus] = useState("");
   const [accountId, setAccountId] = useState("");
+  const [attention, setAttention] = useState("");
   const [page, setPage] = useState(1);
 
   // Seeded from the URL so /accounts/{id} can link straight to one merchant's
-  // payments, and so a filtered view can be pasted into a thread.
+  // payments, and so a filtered view can be pasted into a thread. `attention` comes
+  // from the overview's "needs attention" cards — the two conditions a plain status
+  // filter cannot express.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const initialQ = params.get("q") || "";
     const initialStatus = params.get("status") || "";
     const initialAccount = params.get("account_id") || "";
+    const initialAttention = params.get("attention") || "";
     if (initialQ) {
       setQ(initialQ);
       setAppliedQ(initialQ);
     }
     if (initialStatus) setStatus(initialStatus);
     if (initialAccount) setAccountId(initialAccount);
+    if (initialAttention) setAttention(initialAttention);
     setReady(true);
   }, []);
 
@@ -152,9 +158,10 @@ export default function AdminPaymentsPage() {
         if (appliedQ) params.set("q", appliedQ);
         if (status) params.set("status", status);
         if (accountId) params.set("account_id", accountId);
+        if (attention) params.set("attention", attention);
         params.set("page", String(page));
         params.set("per_page", "25");
-        const res = await fetch(`/v1/admin/payments?${params.toString()}`, {
+        const res = await apiFetch(`/v1/admin/payments?${params.toString()}`, {
           credentials: "include",
         });
         if (!res.ok) throw new Error(await readApiError(res));
@@ -171,7 +178,7 @@ export default function AdminPaymentsPage() {
     return () => {
       alive = false;
     };
-  }, [ready, appliedQ, status, accountId, page]);
+  }, [ready, appliedQ, status, accountId, attention, page]);
 
   const onSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -187,10 +194,11 @@ export default function AdminPaymentsPage() {
     setAppliedQ("");
     setStatus("");
     setAccountId("");
+    setAttention("");
     setPage(1);
   }, []);
 
-  const filtered = Boolean(appliedQ || status || accountId);
+  const filtered = Boolean(appliedQ || status || accountId || attention);
   const showPagination = pagination !== null && pagination.total_pages > 1;
 
   return (
@@ -203,6 +211,24 @@ export default function AdminPaymentsPage() {
           </div>
         </div>
       </div>
+
+      {attention && (
+        <div className="dash-info">
+          {attention === "pending_past_expiry"
+            ? "Showing payments whose window closed while still pending."
+            : "Showing payments we stopped watching that were never paid."}{" "}
+          <button
+            type="button"
+            className="dash-btn dash-btn-secondary dash-btn-sm"
+            onClick={() => {
+              setAttention("");
+              setPage(1);
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       <div className="dash-toolbar">
         <form className="dash-toolbar-filters" onSubmit={onSubmit}>
@@ -289,7 +315,9 @@ export default function AdminPaymentsPage() {
                 return (
                   <tr key={row.id}>
                     <td>
-                      <span className="dash-code-mono">{row.id}</span>
+                      <Link className="dash-link-btn" href={`/payments/${row.id}`}>
+                        <span className="dash-code-mono">{row.id}</span>
+                      </Link>
                     </td>
                     <td>
                       <Link

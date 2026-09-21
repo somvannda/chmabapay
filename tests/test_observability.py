@@ -361,6 +361,9 @@ def make_watcher(
     interval=30.0,
     stall=60.0,
     backlog=50,
+    delivery_outcomes=None,
+    failure_rate=0.1,
+    failure_min_sample=20,
 ) -> AlertWatcher:
     return AlertWatcher(
         transport=transport,
@@ -369,6 +372,26 @@ def make_watcher(
         interval_seconds=interval,
         stall_seconds=stall,
         backlog_threshold=backlog,
+        delivery_outcomes=delivery_outcomes,
+        failure_rate=failure_rate,
+        failure_min_sample=failure_min_sample,
+    )
+
+
+def outcomes_are(failed: int, total: int):
+    """A stand-in for the database read behind the failure-rate condition."""
+
+    async def _outcomes(_window_seconds: float) -> tuple[int, int]:
+        return failed, total
+
+    return _outcomes
+
+
+def healthy_queue() -> FakeTransport:
+    """Both queues draining, nothing backing up — the slow-failure scenario."""
+    now = time.monotonic()
+    return FakeTransport(
+        heartbeats={Q_DETECTION: now, Q_WEBHOOK: now}, metrics={Q_WEBHOOK: {"pending": 0}}
     )
 
 
@@ -474,6 +497,89 @@ async def test_the_alert_counter_moves_when_a_condition_fires():
 
     after = sample(rendered(), "chmabapay_alerts_raised_total", condition=condition)
     assert after == before + 1
+
+
+async def test_a_slowly_failing_webhook_rail_pages_even_though_the_queue_is_moving():
+    """The condition the backlog alert cannot see.
+
+    Every delivery is being attempted and the queue depth is zero — the rail is
+    working, and failing. Nothing else on the platform notices.
+    """
+    watcher = make_watcher(
+        healthy_queue(), delivery_outcomes=outcomes_are(30, 100)
+    )
+
+    conditions = await watcher.evaluate()
+
+    assert [c.key for c in conditions] == ["webhook_failure_rate"]
+    assert "30 of 100 delivery attempts failed" in conditions[0].detail
+    assert "queue is moving" in conditions[0].detail
+
+
+@pytest.mark.parametrize(
+    ("failed", "total", "expected"),
+    [
+        (0, 40, []),  # nothing failing
+        (1, 5, []),  # 20 %, but five attempts is not a rate — it is one bad night
+        (10, 100, []),  # exactly at the threshold: the condition is "more than"
+        (11, 100, ["webhook_failure_rate"]),  # just past it
+        (19, 20, ["webhook_failure_rate"]),
+        (0, 0, []),  # nothing to measure is not a failure rate
+    ],
+)
+async def test_the_failure_rate_threshold_decides_from_both_sides(failed, total, expected):
+    watcher = make_watcher(healthy_queue(), delivery_outcomes=outcomes_are(failed, total))
+
+    conditions = await watcher.evaluate()
+
+    assert [c.key for c in conditions] == expected
+
+
+async def test_a_quiet_account_with_one_bad_delivery_does_not_page():
+    """The sample floor, stated on its own because it is the whole defence."""
+    watcher = make_watcher(
+        healthy_queue(),
+        delivery_outcomes=outcomes_are(1, 1),
+        failure_min_sample=20,
+    )
+
+    assert await watcher.evaluate() == []
+
+
+async def test_a_failure_rate_that_cannot_be_measured_neither_pages_nor_clears():
+    notifier = RecordingNotifier()
+    calls = {"n": 0}
+
+    async def flaky(_window_seconds: float) -> tuple[int, int]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 30, 100
+        raise RuntimeError("database is down")
+
+    watcher = make_watcher(
+        healthy_queue(), notifier=notifier, delivery_outcomes=flaky
+    )
+
+    await watcher.check_once()
+    assert notifier.sent[0].startswith("ALERT webhooks failing")
+
+    # The database cannot answer. That is not evidence that the rail recovered.
+    await watcher.check_once()
+    assert notifier.sent == [notifier.sent[0]]
+
+    # And when it can answer again, and the rail is healthy, it clears once.
+    async def healthy(_window_seconds: float) -> tuple[int, int]:
+        return 0, 120
+
+    watcher.delivery_outcomes = healthy
+    await watcher.check_once()
+    assert notifier.sent[-1] == "RESOLVED webhooks failing"
+
+
+async def test_the_failure_rate_is_not_consulted_when_no_reader_is_supplied():
+    watcher = make_watcher(healthy_queue())
+
+    assert await watcher.evaluate() == []
 
 
 async def test_a_worker_loop_that_dies_is_caught_by_its_heartbeat():

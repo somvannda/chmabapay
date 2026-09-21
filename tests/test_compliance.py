@@ -49,7 +49,7 @@ async def _signed_in(client, email: str = "sokha@example.com"):
     is reached the way a merchant reaches it — through the session dependency,
     with the cookie doing a real round trip.
     """
-    account = await make_account(email=email, name="Sokha")
+    account = await make_account(email=email, name="Sokha", terms_accepted=False)
     async with session_factory() as session:
         row = await session.get(models.Account, account.id)
         assert row is not None
@@ -221,9 +221,50 @@ async def test_a_new_published_version_makes_the_old_acceptance_visible_as_stale
     accepted = await client.post("/v1/me/terms", json={"version": "2"})
     assert accepted.status_code == 200
     assert accepted.json()["terms_accepted_version"] == "2"
-
     actions = await _audit_rows("account.terms_accepted")
     assert sorted(r.details["version"] for r in actions) == ["1", "2"]
+
+
+async def test_a_key_cannot_be_minted_before_the_terms_are_accepted(client):
+    """The gate has to be on the server, or it is only a suggestion.
+
+    An account can sign up, then integrate with the API without ever opening the
+    dashboard. If acceptance were enforced only by the dashboard, that merchant
+    would never see the agreement — so an API key, which is the credential the
+    integration needs, is refused until they have.
+    """
+    profile = await _signed_in(client)
+    assert profile["terms_accepted_version"] is None
+
+    refused = await client.post("/v1/keys", json={"name": "first key"})
+    assert refused.status_code == 403
+    assert refused.json()["detail"] == "terms_not_accepted"
+
+    # Accepting is the only thing that changes the answer.
+    accepted = await client.post(
+        "/v1/me/terms", json={"version": get_settings().terms_version}
+    )
+    assert accepted.status_code == 200
+    assert (await client.post("/v1/keys", json={"name": "first key"})).status_code == 201
+
+
+async def test_republishing_the_agreement_asks_for_consent_again(client, monkeypatch):
+    """A merchant who agreed to version 1 must not be treated as having agreed to
+    version 2 — the reason `terms_accepted_version` is compared and not just
+    `terms_accepted_at` checked for null."""
+    await _signed_in(client)
+    monkeypatch.setattr(get_settings(), "terms_version", "1", raising=False)
+    assert (await client.post("/v1/me/terms", json={"version": "1"})).status_code == 200
+
+    monkeypatch.setattr(get_settings(), "terms_version", "2", raising=False)
+    blocked = await client.post("/v1/keys", json={"name": "after republish"})
+    assert blocked.status_code == 403
+    assert blocked.json()["detail"] == "terms_not_accepted"
+
+    assert (await client.post("/v1/me/terms", json={"version": "2"})).status_code == 200
+    assert (
+        await client.post("/v1/keys", json={"name": "after republish"})
+    ).status_code == 201
 
 
 async def test_terms_cannot_be_accepted_without_a_session(client):

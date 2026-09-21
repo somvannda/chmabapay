@@ -14,10 +14,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import audit, models
 from ..auth import AuthContext, get_current_auth_context
+from ..config import get_settings
 from ..db import get_session
+from ..openapi import AUTH_ERRORS, AUTH_SECURITY
 from ..security import hash_key, new_api_key
 
-router = APIRouter(prefix="/v1/keys", tags=["keys"])
+router = APIRouter(
+    prefix="/v1/keys",
+    tags=["keys"],
+    dependencies=AUTH_SECURITY,
+    responses=AUTH_ERRORS,
+)
 
 
 class KeyCreate(BaseModel):
@@ -73,6 +80,28 @@ async def _get_active_plan(
     return res.scalar_one_or_none()
 
 
+def _require_terms_accepted(account: models.Account) -> None:
+    """Refuse a new integration credential until the merchant agreement is accepted.
+
+    An API key is the point at which a merchant starts using the service
+    programmatically, which makes it the honest chokepoint for consent: the
+    dashboard gates itself for the same reason, but a UI gate is a convention, and
+    without this an account could sign up, mint a key and never see the terms at
+    all.
+
+    Checked at *creation*, so an account that is already integrated is never cut
+    off mid-flight. The comparison is against the published version rather than
+    `terms_accepted_at`, so re-publishing the text asks for consent again instead
+    of accepting agreement to a document this merchant never saw.
+
+    Callers that legitimately act before consent — the platform's own operator
+    tooling — do not come through here; they hold an admin session, not a key.
+    """
+    published = get_settings().terms_version
+    if account.terms_accepted_version != published:
+        raise HTTPException(status_code=403, detail="terms_not_accepted")
+
+
 async def _enforce_key_limits(
     session: AsyncSession,
     account: models.Account,
@@ -114,6 +143,7 @@ async def create_key(
     ctx: AuthContext = Depends(get_current_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
+    _require_terms_accepted(ctx.account)
     plan = await _get_active_plan(session, ctx.account.id)
     await _enforce_key_limits(session, ctx.account, plan)
     _prefix, raw = new_api_key()

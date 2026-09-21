@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { readApiErrorInfo } from "@/components/portal/apiError";
+
 function paywaySlug(input: string): string {
   const s = input.trim();
   const last = s.split(/[?#]/)[0].split("/").filter(Boolean).pop();
@@ -20,9 +22,14 @@ export default function DashboardStoresNewPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [upgrade, setUpgrade] = useState(false);
 
+  // The slug is what PayWay actually resolves, so the pre-flight check is on the
+  // slug and not on the length of whatever was pasted. The server still has the
+  // final word: it asks PayWay whether the link exists, which no local check can.
   function isFormValid(): boolean {
-    return Boolean(name.trim()) && paywayLink.trim().length >= 6;
+    return Boolean(name.trim()) && paywaySlug(paywayLink).length >= 4;
   }
 
   function buildBody(): Record<string, unknown> {
@@ -44,6 +51,8 @@ export default function DashboardStoresNewPage() {
     if (!isFormValid() || submitting) return;
     setSubmitting(true);
     setFormError(null);
+    setLinkError(null);
+    setUpgrade(false);
     try {
       const res = await fetch("/v1/stores", {
         method: "POST",
@@ -55,8 +64,16 @@ export default function DashboardStoresNewPage() {
         router.push("/dashboard/stores");
         return;
       }
-      const err = await res.json().catch(() => ({}));
-      setFormError(err?.detail || "Failed to create store.");
+      // The API says whether this was the link, a plan limit, or something else, so
+      // the message lands where it belongs: on the link field, or behind an upgrade
+      // link, instead of in one generic banner.
+      const info = await readApiErrorInfo(res);
+      if (info.field === "link") {
+        setLinkError(info.message);
+        return;
+      }
+      setFormError(info.message);
+      setUpgrade(info.upgrade);
     } catch {
       setFormError("Network error. Please try again.");
     } finally {
@@ -85,11 +102,9 @@ export default function DashboardStoresNewPage() {
       </div>
 
       {formError &&
-        (formError.includes("Upgrade") ||
-        formError.includes("max") ||
-        formError.includes("stores") ? (
+        (upgrade ? (
           <div className="dash-warn">
-            <strong>Store limit reached.</strong> {formError}{" "}
+            <strong>Plan limit reached.</strong> {formError}{" "}
             <Link className="dash-link-btn" href="/dashboard/billing">
               Upgrade your plan
             </Link>
@@ -146,6 +161,7 @@ export default function DashboardStoresNewPage() {
           <div className="dash-hint">
             ABA PayWay is the only supported payment destination.
           </div>
+          {linkError && <div className="dash-field-error">{linkError}</div>}
         </div>
 
         <div className="dash-field">

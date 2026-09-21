@@ -17,6 +17,13 @@ Two deliberate properties:
 Each condition is reported on its edge — once when it starts firing, once when it
 clears — so a worker that stays down for an hour sends one message, not one a
 minute.
+
+Three conditions are evaluated. The first two read the queue transport. The third —
+how many webhook deliveries are failing — cannot: the sender is a sweep that scans
+`event_deliveries` for due rows and reports `ok` whatever an individual POST did, so
+the queue counters never see a delivery fail. It reads the database instead, through
+a callable the watcher is given rather than imports, because this module is
+otherwise testable without a database.
 """
 
 from __future__ import annotations
@@ -24,14 +31,47 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func, select
+
+from . import models
 from .config import get_settings
+from .db import session_factory
 from .observability import ALERTS_RAISED
 from .services import telegram
 from .workers import Q_WEBHOOK
 
 log = logging.getLogger(__name__)
+
+# (failed, total) deliveries over the window. Callable so the watcher does not have to
+# open a database session to be evaluated.
+DeliveryOutcomes = Callable[[float], Awaitable[tuple[int, int]]]
+
+
+async def webhook_delivery_outcomes(window_seconds: float) -> tuple[int, int]:
+    """Failed and total webhook deliveries touched in the last `window_seconds`.
+
+    Counts *attempts*, not deliveries: a row updated inside the window was tried
+    inside the window, which is what "10 % are failing right now" means. A delivery
+    that has been retrying for an hour appears once per attempt it made, which is
+    the honest denominator.
+    """
+    since = datetime.now(UTC) - timedelta(seconds=window_seconds)
+    async with session_factory() as session:
+        total, failed = (
+            await session.execute(
+                select(
+                    func.count(models.EventDelivery.id),
+                    func.count(models.EventDelivery.id).filter(
+                        models.EventDelivery.status == models.DELIVERY_FAILED
+                    ),
+                ).where(models.EventDelivery.updated_at >= since)
+            )
+        ).one()
+    return int(failed or 0), int(total or 0)
 
 
 @dataclass(frozen=True)
@@ -105,6 +145,10 @@ class AlertWatcher:
         interval_seconds: float,
         stall_seconds: float,
         backlog_threshold: int,
+        delivery_outcomes: DeliveryOutcomes | None = None,
+        failure_rate: float = 0.1,
+        failure_window_seconds: float = 900.0,
+        failure_min_sample: int = 20,
     ) -> None:
         self.transport = transport
         self.queues = queues
@@ -112,6 +156,10 @@ class AlertWatcher:
         self.interval_seconds = interval_seconds
         self.stall_seconds = stall_seconds
         self.backlog_threshold = backlog_threshold
+        self.delivery_outcomes = delivery_outcomes
+        self.failure_rate = failure_rate
+        self.failure_window_seconds = failure_window_seconds
+        self.failure_min_sample = failure_min_sample
         self._firing: dict[str, Condition] = {}
         if not notifier.configured:
             log.warning(
@@ -129,6 +177,10 @@ class AlertWatcher:
             interval_seconds=settings.alert_interval_seconds,
             stall_seconds=settings.alert_worker_stall_seconds,
             backlog_threshold=settings.alert_webhook_backlog,
+            delivery_outcomes=webhook_delivery_outcomes,
+            failure_rate=settings.alert_webhook_failure_rate,
+            failure_window_seconds=settings.alert_webhook_failure_window_seconds,
+            failure_min_sample=settings.alert_webhook_failure_min_sample,
         )
 
     async def evaluate(self) -> list[Condition]:
@@ -175,6 +227,36 @@ class AlertWatcher:
                     ),
                 )
             )
+
+        if self.delivery_outcomes is not None:
+            try:
+                failed, total = await self.delivery_outcomes(
+                    self.failure_window_seconds
+                )
+            except Exception as exc:  # noqa: BLE001 - a check that cannot run is not a condition
+                # A measurement we could not take is not evidence of recovery, so the
+                # last verdict stands rather than clearing. Otherwise a database blip
+                # would send "RESOLVED" about a rail that is still broken.
+                log.warning("webhook failure rate could not be measured: %s", exc)
+                previous = self._firing.get("webhook_failure_rate")
+                if previous is not None:
+                    conditions.append(previous)
+            else:
+                minutes = self.failure_window_seconds / 60
+                if total >= self.failure_min_sample and failed / total > self.failure_rate:
+                    conditions.append(
+                        Condition(
+                            key="webhook_failure_rate",
+                            summary="webhooks failing",
+                            detail=(
+                                f"{failed} of {total} delivery attempts failed in the "
+                                f"last {minutes:.0f} min "
+                                f"({failed / total:.0%}, threshold "
+                                f"{self.failure_rate:.0%}); merchants' systems are "
+                                "missing payments even though the queue is moving"
+                            ),
+                        )
+                    )
         return conditions
 
     async def check_once(self) -> list[Condition]:

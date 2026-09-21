@@ -88,6 +88,7 @@ export default function DashboardKeysPage() {
   const { notify } = useToast();
   const [loading, setLoading] = useState(true);
   const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -95,20 +96,24 @@ export default function DashboardKeysPage() {
 
   const fetchKeys = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetch("/v1/keys", { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        const items: ApiKey[] = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.items)
-            ? data.items
-            : Array.isArray(data?.data)
-              ? data.data
-              : [];
-        setKeys(items);
-      }
-    } catch {
+      // A failed read used to leave `keys` empty, which the page then rendered as
+      // "No API keys yet" — the same screen as a fresh account, and the one state in
+      // which a merchant might create a duplicate key.
+      if (!res.ok) throw new Error(await readApiError(res));
+      const data = await res.json().catch(() => ({}));
+      const items: ApiKey[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.items)
+          ? data.items
+          : Array.isArray(data?.data)
+            ? data.data
+            : [];
+      setKeys(items);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -236,6 +241,20 @@ export default function DashboardKeysPage() {
 
       {loading ? (
         <div className="dash-info">Loading keys…</div>
+      ) : loadError ? (
+        <div className="dash-warn">
+          Your API keys could not be loaded, so this list is unknown rather than
+          empty. Any key you already created is still working.
+          <div className="dash-empty-cta-row">
+            <button
+              type="button"
+              className="dash-btn dash-btn-secondary dash-btn-sm"
+              onClick={() => void fetchKeys()}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
       ) : sortedKeys.length === 0 ? (
         <div className="dash-empty">
           No API keys yet.

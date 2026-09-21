@@ -144,7 +144,7 @@ Delivery set for an event = all account-wide endpoints **plus** any endpoint of 
 | id | uuid pk (stable across retries) |
 | account_id | fk → accounts |
 | store_id | fk → stores (the sub-merchant the event belongs to) |
-| type | payment.completed / payment.scanned / payment.expired / payment.failed |
+| type | payment.completed / payment.expired / payment.superseded / payment.reversed |
 | payment_id | fk → payments |
 | payload | jsonb, the serialized event body (self-contained; includes the store object) |
 | created_at | |

@@ -463,7 +463,10 @@ async def test_a_standing_change_cannot_be_smuggled_through_as_an_entitlement(cl
     )
     assert res.status_code == 200
 
-    entries = await rows()
+    # The operator's own sign-in is audited as well (`auth.login_succeeded`), so
+    # the subject here is the *mutation* records: an entitlement change must land
+    # as `account.updated` and must not be dressed up as a standing change.
+    entries = [e for e in await rows() if not e.action.startswith("auth.")]
     assert [entry.action for entry in entries] == ["account.updated"]
 
     # An unknown standing is refused outright.

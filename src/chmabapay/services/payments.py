@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import models, observability, webhooks
 from ..config import get_settings
 from ..khqr import build_khqr_payload
+from . import billing as billing_svc
 from .payway_parser import PayWayHostedError, create_hosted_checkout
 
 logger = logging.getLogger(__name__)
@@ -391,12 +392,12 @@ async def check_plan_quota(
     if included is None:
         # No active plan yet — fall back to the Free tier default.
         included = 3000
-    count = await _count_paid_payments_this_month(session, account.id)
+    count = await count_paid_payments_this_month(session, account.id)
     if count >= included:
         raise HTTPException(status_code=402, detail="quota_exceeded")
 
 
-async def _count_paid_payments_this_month(
+async def count_paid_payments_this_month(
     session: AsyncSession, account_id: int
 ) -> int:
     month_start = _now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -618,6 +619,13 @@ async def mark_paid(
 
     store = await session.get(models.Store, payment.store_id)
     await _record_plan_ledger_entry(session, store.account_id, payment)
+    # A plan invoice settles in the same transaction as the payment that paid it, so
+    # the plan it buys cannot activate against an invoice that failed to persist —
+    # and an invoice cannot read `paid` while the merchant still has the old plan.
+    # A no-op for every merchant payment that is not an invoice.
+    await billing_svc.settle_invoice_for_payment(
+        session, payment, paid_at=payment.paid_at or _now()
+    )
     # Before the completion event, so a consumer that reacts to `payment.completed`
     # by re-rendering the sale already sees the replacement code retired.
     await _retire_successors(session, payment, store)

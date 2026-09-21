@@ -26,7 +26,7 @@ from .config import (
     get_settings,
 )
 from .db import ensure_schema, seed_plans_if_needed
-from .ratelimit import RateLimiter, RateLimitMiddleware
+from .ratelimit import LoginLockout, RateLimiter, RateLimitMiddleware
 from .routers import (
     account,
     admin,
@@ -148,6 +148,11 @@ def create_app() -> FastAPI:
     limiter = RateLimiter()
     app.state.rate_limiter = limiter
     app.add_middleware(RateLimitMiddleware, limiter=limiter)
+
+    # Per-email sign-in lockout. Not middleware: it is consulted *inside*
+    # `POST /auth/login`, because only that handler knows which identity (the
+    # email) the attempt belongs to, and it must clear the record on success.
+    app.state.login_lockout = LoginLockout()
 
     app.add_middleware(
         CORSMiddleware,

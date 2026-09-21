@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,6 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import audit, models
 from ..db import get_session
+from ..openapi import (
+    AUTH_ERRORS,
+    CONFLICT_ERROR,
+    SESSION_SECURITY,
+    merged,
+)
+from ..services import billing as billing_svc
 from ..services import payments as svc
 from .auth import get_current_session_account
 
@@ -32,7 +38,6 @@ class PlanOut(BaseModel):
     max_stores: int | None
     max_keys_per_account: int
     max_webhooks_per_account: int
-    csv_export_enabled: bool
     priority_support: bool
     is_public: bool
     # Pricing-page copy, owned by the admin console.
@@ -51,7 +56,6 @@ class PlanOut(BaseModel):
             max_stores=plan.max_stores,
             max_keys_per_account=plan.max_keys_per_account,
             max_webhooks_per_account=plan.max_webhooks_per_account,
-            csv_export_enabled=plan.csv_export_enabled,
             priority_support=plan.priority_support,
             is_public=plan.is_public,
             tagline=plan.tagline,
@@ -66,6 +70,12 @@ class ChangePlanIn(BaseModel):
 
 class ChangePlanOut(BaseModel):
     subscription: dict[str, Any]
+    # A move to a paid tier no longer takes effect on the click. It raises an
+    # invoice, and the plan changes when that invoice is settled — so the client has
+    # to be able to tell the two outcomes apart, or it will tell a merchant they are
+    # on Pro while they are still on Free.
+    payment_required: bool = False
+    invoice: dict[str, Any] | None = None
 
 
 def _subscription_out(sub: models.PlanSubscription, plan: models.Plan) -> dict[str, Any]:
@@ -106,7 +116,12 @@ class SubscriptionOut(BaseModel):
     plan: PlanOut | None
 
 
-@router.get("/subscription", response_model=SubscriptionOut)
+@router.get(
+    "/subscription",
+    response_model=SubscriptionOut,
+    dependencies=SESSION_SECURITY,
+    responses=AUTH_ERRORS,
+)
 async def get_subscription(
     account: models.Account = Depends(get_current_session_account),
     session: AsyncSession = Depends(get_session),
@@ -137,12 +152,32 @@ async def list_plans(
     return [PlanOut.from_model(p) for p in plans]
 
 
-@router.post("/change-plan", response_model=ChangePlanOut)
+@router.post(
+    "/change-plan",
+    response_model=ChangePlanOut,
+    dependencies=SESSION_SECURITY,
+    responses=merged(AUTH_ERRORS, CONFLICT_ERROR),
+)
 async def change_plan(
     body: ChangePlanIn,
     account: models.Account = Depends(get_current_session_account),
     session: AsyncSession = Depends(get_session),
 ):
+    """Move an account to a plan, collecting for it first.
+
+    This used to cancel the old subscription and insert the new one as `active` in
+    one step, collecting nothing and prorating nothing. Since Pro costs $59.99 a
+    month and the dashboard exposes this as a single button, the effect was a
+    self-serve upgrade to the top tier for free — the revenue leak the audit called
+    out. A paid tier is now *bought*: the new subscription is parked as `pending`,
+    an invoice is raised for the period, and `services.payments.mark_paid` activates
+    it when the money arrives. `_get_active_sub` only reads `trial`/`active`, so a
+    pending subscription grants nothing in the meantime.
+
+    A move to a free tier still applies immediately — there is nothing to collect,
+    and making a downgrade wait on a payment would trap a merchant on a plan they
+    are trying to leave.
+    """
     res = await session.execute(
         select(models.Plan).where(models.Plan.code == body.plan_code)
     )
@@ -154,83 +189,114 @@ async def change_plan(
 
     old_sub, old_plan = await _get_active_sub(session, account.id)
     old_code = old_plan.code if old_plan else None
-
-    if old_sub is not None:
-        old_sub.status = "canceled"
-        old_sub.canceled_at = datetime.now(UTC)
-        old_sub.updated_at = datetime.now(UTC)
-
     now = datetime.now(UTC)
-    # Trials are not offered, so a plan change is active the moment it happens.
-    new_status = "active"
-    trial_ends = None
-    next_billing = now + timedelta(days=30)
 
-    new_sub = models.PlanSubscription(
+    if old_plan is not None and old_plan.id == new_plan.id:
+        # Re-selecting the plan you are on is not a purchase. Without this, a
+        # merchant on Pro could click Pro and invoice themselves a second time.
+        raise HTTPException(status_code=400, detail="plan_unchanged")
+
+    if new_plan.monthly_fee_cents <= 0:
+        if old_sub is not None:
+            old_sub.status = "canceled"
+            old_sub.canceled_at = now
+            old_sub.updated_at = now
+        new_sub = models.PlanSubscription(
+            account_id=account.id,
+            plan_id=new_plan.id,
+            status="active",
+            started_at=now,
+            next_billing_at=now + billing_svc.CREDIT_PERIOD,
+        )
+        session.add(new_sub)
+        await session.flush()
+        audit.record(
+            session,
+            actor=account,
+            action="plan.changed",
+            target_type="Account",
+            target_id=account.id,
+            details={"from_plan": old_code, "to_plan": new_plan.code},
+        )
+        await session.commit()
+        await session.refresh(new_sub)
+        return ChangePlanOut(subscription=_subscription_out(new_sub, new_plan))
+
+    # One invoice per account per period is a database constraint, so a second plan
+    # change in the same month cannot be billed. Refusing it here turns what would
+    # otherwise be a constraint violation (a 500) into an answer the client can
+    # explain, and stops two paid subscriptions being parked against one invoice.
+    period = billing_svc.period_month_for(now)
+    existing = await billing_svc.find_period_invoice(session, account.id, period)
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="period_already_invoiced")
+
+    pending = models.PlanSubscription(
         account_id=account.id,
         plan_id=new_plan.id,
-        status=new_status,
-        started_at=now,
-        next_billing_at=next_billing,
-        trial_ends_at=trial_ends,
+        status=billing_svc.SUBSCRIPTION_PENDING,
+        started_at=None,
+        next_billing_at=now + billing_svc.CREDIT_PERIOD,
     )
-    session.add(new_sub)
+    session.add(pending)
     await session.flush()
+
+    invoice = await billing_svc.issue_invoice(
+        session, pending, new_plan, period_month=period, now=now
+    )
+    if invoice is None:
+        # Unreachable while the fee check above is `> 0`. It is here so that a zero
+        # fee and a zero price can never quietly add up to a free upgrade.
+        raise HTTPException(status_code=500, detail="invoice_not_raised")
 
     audit.record(
         session,
         actor=account,
-        action="plan.changed",
+        action="plan.change_requested",
         target_type="Account",
         target_id=account.id,
         details={
             "from_plan": old_code,
             "to_plan": new_plan.code,
+            "invoice_id": invoice.id,
+            "period_month": period,
         },
     )
     await session.commit()
-    await session.refresh(new_sub)
+    await session.refresh(pending)
+    await session.refresh(invoice)
 
     return ChangePlanOut(
-        subscription=_subscription_out(new_sub, new_plan),
+        subscription=_subscription_out(pending, new_plan),
+        payment_required=True,
+        invoice=_serialize_invoice(invoice),
     )
 
 
 async def _get_hq_store(session: AsyncSession) -> models.Store:
-    hq_store_id_raw = os.getenv("CHMABAPAY_HQ_STORE_ID")
-    if hq_store_id_raw and hq_store_id_raw.strip():
-        hq_store_id = hq_store_id_raw.strip()
-        stmt = select(models.Store)
-        try:
-            store_id_int = int(hq_store_id)
-            stmt = stmt.where(
-                (models.Store.id == store_id_int) | (models.Store.public_id == hq_store_id)
-            )
-        except ValueError:
-            stmt = stmt.where(models.Store.public_id == hq_store_id)
-        res = await session.execute(stmt)
-        store = res.scalar_one_or_none()
-        if store is not None:
-            return store
+    """The platform's own store — where a plan fee is actually collected.
 
-    res = await session.execute(
-        select(models.Account).where(models.Account.is_platform_admin.is_(True)).limit(1)
-    )
-    admin_account = res.scalar_one_or_none()
-    if admin_account is not None:
-        res = await session.execute(
-            select(models.Store).where(
-                models.Store.account_id == admin_account.id,
-                models.Store.status == models.STORE_ACTIVE,
-            )
-        )
-        stores = list(res.scalars().all())
-        if stores:
-            return stores[0]
+    Resolution lives in `services.billing.resolve_hq_store`, because the admin console
+    needs the same answer to show the operator where the money goes, and two copies of
+    this order would eventually disagree about which store is in use.
+
+    When nothing resolves, the refusal is a **503 with something a merchant can act
+    on**. It used to be a 500 whose body was the raw string
+    `platform_hq_store_not_configured: ask admin to set ...`, which the dashboard
+    passes straight into a toast — so the person who cannot fix it was shown an
+    instruction addressed to somebody else, in an error code they would never
+    recognise as "billing is not switched on".
+    """
+    resolution = await billing_svc.resolve_hq_store(session)
+    if resolution.store is not None:
+        return resolution.store
 
     raise HTTPException(
-        status_code=500,
-        detail="platform_hq_store_not_configured: ask admin to set CHMABAPAY_HQ_STORE_ID env var.",
+        status_code=503,
+        detail=(
+            "billing_not_open: plan payments are not switched on yet, so this "
+            "invoice cannot be paid. Contact support and we will settle it with you."
+        ),
     )
 
 
@@ -255,7 +321,7 @@ def _serialize_invoice(invoice: models.PlanInvoice) -> dict[str, Any]:
     }
 
 
-@router.get("/invoices")
+@router.get("/invoices", dependencies=SESSION_SECURITY, responses=AUTH_ERRORS)
 async def list_invoices(
     period_month: str | None = None,
     account: models.Account = Depends(get_current_session_account),
@@ -276,7 +342,12 @@ async def list_invoices(
     }
 
 
-@router.get("/invoices/{invoice_id:int}/khqr", status_code=201)
+@router.get(
+    "/invoices/{invoice_id:int}/khqr",
+    status_code=201,
+    dependencies=SESSION_SECURITY,
+    responses=AUTH_ERRORS,
+)
 async def get_invoice_khqr(
     invoice_id: int,
     request: Request,
@@ -306,7 +377,14 @@ async def get_invoice_khqr(
         amount_cents=invoice.total_due_cents,
         reference_id=reference_id,
         metadata=metadata,
-        idempotency_key=None,
+        # Keyed on the invoice, so asking twice for the same invoice's QR returns
+        # the same payment instead of minting a second one. Without it, a merchant
+        # who reopened the billing page got a fresh payable code every time and
+        # could pay the same invoice twice — the platform would have taken double
+        # for one month, with two payments and one invoice to reconcile. If the
+        # code has since died, `POST /v1/payments/{id}/reissue` is the intended
+        # path, not a second payment.
+        idempotency_key=reference_id,
     )
 
     invoice.chmabapay_payment_id = payment.id

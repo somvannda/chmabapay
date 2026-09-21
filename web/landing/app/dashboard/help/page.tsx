@@ -20,15 +20,15 @@ const faqs: FaqItem[] = [
   },
   {
     q: "How do I switch plans?",
-    a: "Go to Billing → Choose your plan and select Free, Starter or Pro. Upgrades take effect immediately; downgrades apply from your next billing date. Your stores, keys and webhooks stay intact either way.",
+    a: "Go to Billing → Choose your plan and select Free, Starter or Pro. Moving to a paid plan takes effect once its invoice for the period is paid — the invoice is raised when you pick the plan and you can pay it from the Billing page, so the new plan starts with its first payment rather than before it. Moving to Free applies immediately, because there is nothing to collect. Your stores, keys and webhooks stay intact either way.",
   },
   {
     q: "What does each plan include?",
-    a: "Every plan includes the same features — hosted checkout, webhook signing and CSV reports export. The plans differ only in price, stores, payments per month and API keys: Free — 3,000 payments, 1 store, 1 key. Starter ($9.99/mo) — 15,000 payments, 5 stores, 3 keys. Pro ($59.99/mo) — 1,000,000 payments, 50 stores, 10 keys, plus priority support.",
+    a: "Every plan includes hosted checkout and webhook signing. The plans differ in price, stores, payments per month and API keys: Free — 3,000 payments, 1 store, 1 key. Starter ($9.99/mo) — 15,000 payments, 5 stores, 3 keys. Pro ($59.99/mo) — 1,000,000 payments, 50 stores, 10 keys, plus priority support. The Billing page shows the full feature comparison for the plan you are on.",
   },
   {
     q: "What support is available?",
-    a: "Email support@chmaba.com for any plan. Every plan includes CSV exports for your finance team, and Pro adds priority support with a faster response time.",
+    a: "Email support@chmaba.com on any plan. Pro adds priority support with a faster response time, and payment exports for your finance team are on the Reports page.",
   },
 ];
 

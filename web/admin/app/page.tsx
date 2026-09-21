@@ -3,7 +3,27 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { HqStorePanel } from "@/components/HqStorePanel";
 import { readApiError } from "@/lib/apiError";
+import { apiFetch } from "@/lib/apiFetch";
+
+type AttentionItem = {
+  key: string;
+  label: string;
+  detail: string;
+  count: number;
+  severity: string;
+  href: string | null;
+};
+
+type OpsSignals = {
+  transport: string;
+  watched: boolean;
+  heartbeat_ages: Record<string, number | null> | null;
+  stale_queues: string[] | null;
+  queue_depth: Record<string, number> | null;
+  error: string | null;
+};
 
 type AdminOverview = {
   accounts_total: number;
@@ -12,12 +32,41 @@ type AdminOverview = {
   payments_paid_total: number;
   payments_paid_this_month: number;
   mrr_cents: number;
+  paid_today_count: number;
+  paid_today_cents: number;
+  needs_attention: AttentionItem[];
+  ops: OpsSignals;
 };
 
 const nf = new Intl.NumberFormat("en-US");
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+function formatAge(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return "never";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  return `${Math.round(seconds / 60)}m`;
+}
+
+/**
+ * Queue state, stated plainly. `watched: false` is not the same as "all clear": with
+ * the in-process transport the API *is* the worker, so there is no cross-process
+ * heartbeat to read and the console says so rather than showing a reassuring zero.
+ */
+function opsSummary(ops: OpsSignals): string {
+  if (ops.error) return ops.error;
+  if (!ops.watched) {
+    return `Workers run in this process (${ops.transport}); queue depth and heartbeat age need WORKER_TRANSPORT=redis.`;
+  }
+  const ages = Object.entries(ops.heartbeat_ages ?? {})
+    .map(([queue, age]) => `${queue} ${formatAge(age)}`)
+    .join(" · ");
+  const depth = Object.entries(ops.queue_depth ?? {})
+    .map(([queue, pending]) => `${queue} ${nf.format(pending)}`)
+    .join(" · ");
+  return `Last drain: ${ages || "—"}. Queue depth: ${depth || "—"}.`;
 }
 
 export default function AdminOverviewPage() {
@@ -29,7 +78,7 @@ export default function AdminOverviewPage() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch("/v1/admin/overview", { credentials: "include" });
+      const res = await apiFetch("/v1/admin/overview", { credentials: "include" });
       if (!res.ok) throw new Error(await readApiError(res));
       const data = (await res.json()) as AdminOverview;
       setOverview(data);
@@ -78,52 +127,95 @@ export default function AdminOverviewPage() {
           </div>
         </div>
       ) : (
-        <section aria-label="Platform metrics" className="dash-metrics">
-          <div className="dash-stat-card">
-            <div className="dash-stat-label">Accounts</div>
-            <div className="dash-stat-value">
-              {nf.format(overview.accounts_total)}
-            </div>
-            <div className="dash-stat-trend">
-              <Link className="dash-link-btn" href="/accounts">
-                View accounts
-              </Link>
-            </div>
+        <>
+          <div className="dash-panel">
+            <div className="dash-panel-title">Needs attention</div>
+            <ul className="dash-attention">
+              {(overview.needs_attention ?? []).map((item) => {
+                const clear = item.count === 0;
+                const className = clear
+                  ? "dash-attention-item is-clear"
+                  : `dash-attention-item is-${item.severity}`;
+                return (
+                  <li key={item.key} className={className}>
+                    <div className="dash-attention-count">
+                      {nf.format(item.count)}
+                    </div>
+                    <div className="dash-attention-label">{item.label}</div>
+                    <div className="dash-attention-detail">{item.detail}</div>
+                    {item.href && !clear && (
+                      <Link className="dash-link-btn" href={item.href}>
+                        Show these
+                      </Link>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="dash-ops-line">{opsSummary(overview.ops)}</div>
           </div>
 
-          <div className="dash-stat-card">
-            <div className="dash-stat-label">Stores</div>
-            <div className="dash-stat-value">
-              {nf.format(overview.stores_total)}
+          <section aria-label="Platform metrics" className="dash-metrics">
+            <div className="dash-stat-card">
+              <div className="dash-stat-label">Accounts</div>
+              <div className="dash-stat-value">
+                {nf.format(overview.accounts_total)}
+              </div>
+              <div className="dash-stat-trend">
+                <Link className="dash-link-btn" href="/accounts">
+                  View accounts
+                </Link>
+              </div>
             </div>
-            <div className="dash-stat-trend">
-              {nf.format(overview.stores_active)} active
-            </div>
-          </div>
 
-          <div className="dash-stat-card">
-            <div className="dash-stat-label">Payments paid</div>
-            <div className="dash-stat-value">
-              {nf.format(overview.payments_paid_total)}
+            <div className="dash-stat-card">
+              <div className="dash-stat-label">Stores</div>
+              <div className="dash-stat-value">
+                {nf.format(overview.stores_total)}
+              </div>
+              <div className="dash-stat-trend">
+                {nf.format(overview.stores_active)} active
+              </div>
             </div>
-            <div className="dash-stat-trend">
-              {nf.format(overview.payments_paid_this_month)} this month
-            </div>
-          </div>
 
-          <div className="dash-stat-card">
-            <div className="dash-stat-label">MRR</div>
-            <div className="dash-stat-value">
-              {formatCents(overview.mrr_cents)}
+            <div className="dash-stat-card">
+              <div className="dash-stat-label">Payments paid</div>
+              <div className="dash-stat-value">
+                {nf.format(overview.payments_paid_total)}
+              </div>
+              <div className="dash-stat-trend">
+                {nf.format(overview.payments_paid_this_month)} this month
+              </div>
             </div>
-            <div className="dash-stat-trend">
-              <Link className="dash-link-btn" href="/plans">
-                View plans
-              </Link>
+
+            <div className="dash-stat-card">
+              <div className="dash-stat-label">Paid today</div>
+              <div className="dash-stat-value">
+                {formatCents(overview.paid_today_cents)}
+              </div>
+              <div className="dash-stat-trend">
+                {nf.format(overview.paid_today_count)} payments
+              </div>
             </div>
-          </div>
-        </section>
+
+            <div className="dash-stat-card">
+              <div className="dash-stat-label">MRR</div>
+              <div className="dash-stat-value">
+                {formatCents(overview.mrr_cents)}
+              </div>
+              <div className="dash-stat-trend">
+                <Link className="dash-link-btn" href="/plans">
+                  View plans
+                </Link>
+              </div>
+            </div>
+          </section>
+        </>
       )}
+
+      {/* Outside the metrics branch on purpose: the store the platform collects into
+          is setup, not a statistic, and a failed metric load must not hide it. */}
+      <HqStorePanel />
     </>
   );
 }

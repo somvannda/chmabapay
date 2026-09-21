@@ -9,17 +9,24 @@ type WebhookEndpoint = {
   url: string;
   events: string[];
   status: "active" | "disabled";
-  enabled?: boolean;
+  // Returned by the API and derived from `status`. It used to be absent, which made
+  // the edit form's "enabled" checkbox default to true and re-enable a disabled
+  // endpoint on save.
+  enabled: boolean;
   created_at?: string | null;
   signing_secret?: string;
   [k: string]: unknown;
 };
 
+// The events the platform actually raises in production. `payment.scanned` is
+// emitted only by the development gateway and `payment.failed` has no producer at
+// all, so offering either here would let a merchant subscribe to something that
+// never arrives — and then build a handler for it.
 const KNOWN_EVENTS = [
   "payment.completed",
-  "payment.scanned",
   "payment.expired",
-  "payment.failed",
+  "payment.superseded",
+  "payment.reversed",
 ];
 
 function formatDate(iso: string | null | undefined): string {
@@ -486,7 +493,7 @@ function EditEndpointModal({
       ? endpoint.events
       : [],
   );
-  const [enabled, setEnabled] = useState<boolean>(endpoint?.enabled !== false);
+  const [enabled, setEnabled] = useState<boolean>(endpoint?.enabled ?? true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

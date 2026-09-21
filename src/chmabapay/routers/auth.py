@@ -17,10 +17,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import models
+from .. import audit, models
 from ..config import get_settings
 from ..db import get_session
+from ..ratelimit import client_ip
 from ..security import hash_password, verify_password
+from ..services.billing import HQ_STORE_NAME
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 router_v1_alias = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -218,69 +220,117 @@ def _admin_emails() -> set[str]:
     return {e.strip() for e in csv.split(",") if e.strip()}
 
 
+async def _ensure_hq_store(session: AsyncSession, account: models.Account) -> None:
+    """Seed the platform's own store, which is where plan fees are collected.
+
+    Two changes from the version this replaces, and both were required for self-pay
+    billing to be possible at all in production:
+
+    * It runs for **any** platform admin, not only an address listed in
+      `CHMABAPAY_ADMIN_EMAILS`. An operator created by `cli grant-admin` is an admin
+      whose address need not be in that list, and the old guard meant the HQ store
+      was silently never created for them.
+    * `CHMABAPAY_HQ_PAYWAY_LINK` alone is enough. The store id used to be required
+      first, and the link was only read *after* a store had been created — so with
+      the id unset (as it is in production) a configured link was never even looked
+      at. A store id is genuinely optional: without one, the host is generated.
+
+    The link is still required for the store to be usable, because a store with no
+    payment link cannot take a payment. One is created anyway when only the id is
+    configured, so the operator can attach the link by hand.
+
+    Idempotent and never destructive: an existing store — by configured id, or by
+    the name this function creates — is returned untouched, so a link edited in the
+    dashboard is not clobbered by a stale environment variable on the next sign-in.
+    """
+    if not account.is_platform_admin:
+        return
+
+    settings = get_settings()
+    configured_id = (settings.chmabapay_hq_store_id or "").strip()
+    link_url = (settings.chmabapay_hq_payway_link or "").strip()
+    if not configured_id and not link_url:
+        return
+
+    if configured_id:
+        existing = (
+            await session.execute(
+                select(models.Store).where(models.Store.public_id == configured_id)
+            )
+        ).scalar_one_or_none()
+    else:
+        existing = (
+            await session.execute(
+                select(models.Store).where(
+                    models.Store.account_id == account.id,
+                    models.Store.name == HQ_STORE_NAME,
+                )
+            )
+        ).scalar_one_or_none()
+    if existing is not None:
+        return
+
+    # Imported here rather than at module scope: `services.payments` pulls in the
+    # worker transport, and this module is imported by `main` before the app exists.
+    from ..services.payments import gen_public_id
+
+    store = models.Store(
+        account_id=account.id,
+        public_id=configured_id or gen_public_id("st_"),
+        name=HQ_STORE_NAME,
+        status=models.ACCOUNT_ACTIVE,
+        city="Phnom Penh",
+    )
+    session.add(store)
+    await session.flush()
+
+    if link_url:
+        from ..services.payway_parser import _extract_slug
+
+        session.add(
+            models.PaymentLink(
+                store_id=store.id,
+                link_type=models.LINK_ABA_PAYWAY,
+                raw_link=link_url,
+                merchant_account_id=_extract_slug(link_url),
+                merchant_name=HQ_STORE_NAME,
+                currency="USD",
+                verification=models.LINK_VERIFIED,
+                status=models.ACCOUNT_ACTIVE,
+            )
+        )
+        store.status = models.STORE_ACTIVE
+
+
 async def _maybe_promote_admin_and_seed_hq(
     session: AsyncSession,
     account: models.Account,
 ) -> None:
-    """If a freshly created account's email is in CHMABAPAY_ADMIN_EMAILS, promote it
-    to platform admin and seed the HQ store so self-pay billing works. The white-label
-    entitlement goes with it because the HQ store is the platform's own. Idempotent:
-    safe to call on every Google login for every account."""
-    settings = get_settings()
+    """Promote an address in CHMABAPAY_ADMIN_EMAILS, then make sure the HQ store
+    exists. The white-label entitlement goes with the promotion because the HQ store
+    is the platform's own. Idempotent: safe to call on every login for every account.
+    """
     admin_emails = _admin_emails()
-    if not admin_emails:
-        return
-    if (account.email or "").lower() not in admin_emails:
-        return
-    changed = False
-    if not account.is_platform_admin:
-        account.is_platform_admin = True
-        changed = True
-    if not account.whitelabel_enabled:
-        account.whitelabel_enabled = True
-        changed = True
-    if changed:
-        account.updated_at = datetime.now(UTC)
-        session.add(account)
-    # HQ store seed (once)
-    hq_id = settings.chmabapay_hq_store_id
-    if hq_id:
-        existing = (await session.execute(
-            select(models.Store).where(
-                (models.Store.account_id == account.id)
-                & (models.Store.public_id == hq_id)
-            )
-        )).scalar_one_or_none()
-        if existing is None:
-            by_public = (await session.execute(
-                select(models.Store).where(models.Store.public_id == hq_id)
-            )).scalar_one_or_none()
-            if by_public is None:
-                store = models.Store(
-                    account_id=account.id,
-                    public_id=hq_id,
-                    name="ChmabaPay HQ",
-                    status=models.ACCOUNT_ACTIVE,
-                    city="Phnom Penh",
-                )
-                session.add(store)
-                await session.flush()
-                hq_link = (settings.chmabapay_hq_payway_link or "").strip()
-                if hq_link:
-                    from ..services.payway_parser import _extract_slug
+    if admin_emails and (account.email or "").lower() in admin_emails:
+        changed = False
+        if not account.is_platform_admin:
+            account.is_platform_admin = True
+            changed = True
+        if not account.whitelabel_enabled:
+            account.whitelabel_enabled = True
+            changed = True
+        if changed:
+            account.updated_at = datetime.now(UTC)
+            session.add(account)
 
-                    link = models.PaymentLink(
-                        store_id=store.id,
-                        link_type=models.LINK_ABA_PAYWAY,
-                        raw_link=hq_link,
-                        merchant_account_id=_extract_slug(hq_link),
-                        merchant_name="ChmabaPay HQ",
-                        currency="USD",
-                        verification=models.LINK_VERIFIED,
-                        status=models.ACCOUNT_ACTIVE,
-                    )
-                    session.add(link)
-                    store.status = models.STORE_ACTIVE
+    await _ensure_hq_store(session, account)
+
+    if not account.is_platform_admin:
+        # The session dependency does not commit, so persist the promotion (if any)
+        # here rather than letting it be discarded when the request ends.
+        await session.commit()
+        return
+
     # Nudge a free-plan admin onto Pro so self-pay billing has a real tier.
     # An account keeps a row per plan change, so this must read the *current*
     # subscription — selecting all of them raised MultipleResultsFound and
@@ -305,8 +355,6 @@ async def _maybe_promote_admin_and_seed_hq(
             if better:
                 plan_row.plan_id = better.id
                 plan_row.status = "active"
-    # The session dependency does not commit, so persist here or the promotion
-    # and HQ store are discarded when the request ends.
     await session.commit()
 
 
@@ -484,6 +532,40 @@ class PasswordLoginIn(BaseModel):
     password: str = Field(min_length=1, max_length=200)
 
 
+def _audit_login(
+    session: AsyncSession,
+    account: models.Account | None,
+    action: str,
+    *,
+    email: str,
+    ip: str,
+    reason: str | None,
+    **extra: Any,
+) -> None:
+    """Stage one sign-in audit row in the caller's transaction.
+
+    An unknown email has no account to attribute the attempt to, so the row carries
+    a null actor and the attempted address in `details` — the *attempt* is the
+    thing worth keeping, and dropping it would leave credential probing invisible
+    precisely where it is most likely to be probing. `target_id` is 0 in that case,
+    since the column is not nullable and there is no account to point at.
+
+    The password is never read here. Nothing in this function touches it.
+    """
+    details: dict[str, Any] = {"method": "password", "email": email, "ip": ip}
+    if reason is not None:
+        details["reason"] = reason
+    details.update(extra)
+    audit.record(
+        session,
+        actor=account,
+        action=action,
+        target_type="Account" if account is not None else "Email",
+        target_id=account.id if account is not None else 0,
+        details=details,
+    )
+
+
 class PasswordLoginOut(BaseModel):
     email: str
     name: str
@@ -500,9 +582,41 @@ async def password_login(
     """Email + password sign-in, used by the platform admin console.
 
     Google OAuth is untouched; this only serves accounts that have a password set
-    (see `python -m chmabapay.cli set-password`)."""
+    (see `python -m chmabapay.cli set-password`).
+
+    Two guards apply here that did not before. A per-email lockout, because the
+    per-address limiter in front of `/auth/*` cannot bound guessing spread across
+    addresses nor slow a targeted attack on one known email. And an audit row for
+    every attempt, because a failed admin sign-in left no trace at all — the
+    mutations were all recorded, but nothing said who had been trying to get in.
+    """
     settings = get_settings()
     email = body.email.strip().lower()
+    lockout = getattr(request.app.state, "login_lockout", None)
+    ip = client_ip(request)
+
+    if lockout is not None:
+        # Checked before the password, so a locked window cannot be probed and the
+        # answer is the same generic 401 as a wrong password — otherwise this
+        # endpoint reports which emails are worth attacking.
+        remaining = lockout.locked_for(email)
+        if remaining > 0:
+            _audit_login(
+                session,
+                None,
+                "auth.login_blocked",
+                email=email,
+                ip=ip,
+                reason="locked_out",
+                locked_for_seconds=remaining,
+            )
+            await session.commit()
+            raise HTTPException(
+                status_code=429,
+                detail="too_many_attempts",
+                headers={"Retry-After": str(remaining)},
+            )
+
     res = await session.execute(
         select(models.Account).where(func.lower(models.Account.email) == email)
     )
@@ -522,12 +636,36 @@ async def password_login(
     if account is None or not verify_password(body.password, account.password_hash):
         # One generic failure for unknown account / no password / wrong password so
         # the endpoint cannot be used to enumerate accounts.
+        if lockout is not None:
+            lockout.record_failure(email)
+        # Committed, not merely staged: raising discards the session's transaction,
+        # and an audit row that only survives a successful request is not an audit
+        # row. This is why the failure path commits before it raises.
+        _audit_login(
+            session, account, "auth.login_failed", email=email, ip=ip,
+            reason="invalid_credentials",
+        )
+        await session.commit()
         raise HTTPException(status_code=401, detail="invalid_credentials")
     if account.status != models.ACCOUNT_ACTIVE:
+        _audit_login(
+            session, account, "auth.login_failed", email=email, ip=ip,
+            reason="account_suspended",
+        )
+        await session.commit()
         raise HTTPException(status_code=403, detail="account_suspended")
 
     await _maybe_promote_admin_and_seed_hq(session, account)
     await session.refresh(account)
+
+    if lockout is not None:
+        lockout.clear(email)
+    _audit_login(
+        session, account, "auth.login_succeeded", email=email, ip=ip, reason=None
+    )
+    # `_maybe_promote_admin_and_seed_hq` commits its own work; this commits the
+    # audit row that belongs with it.
+    await session.commit()
 
     _set_session_cookie(
         response, _make_session_jwt(account), request, settings.jwt_ttl_seconds

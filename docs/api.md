@@ -161,8 +161,10 @@ those three fields with `403 whitelabel_not_enabled`. Clearing them is always al
 
 POSTed to each enabled endpoint URL on state change. Headers:
 
-- `X-ChmabaPay-Event`: `payment.completed | payment.scanned | payment.expired |
-  payment.failed | payment.superseded | payment.reversed`
+- `X-ChmabaPay-Event`: `payment.completed | payment.expired |
+  payment.superseded | payment.reversed`
+  (a development-only `payment.scanned` is emitted by the local gateway and never in
+  production; `payment.failed` has no producer)
 - `X-ChmabaPay-Signature`: `t=<unix>,v1=<hex>` — HMAC-SHA256 of `t.<rawBody>` with the endpoint's
   secret. Verify against the **raw body**, constant-time, reject if `|now - t| > 300 s`.
 
@@ -260,7 +262,6 @@ Codes returned in `detail` (verified against `src/`):
 | `account_suspended` | 403 | The account is suspended |
 | `quota_exceeded` | 402 | Plan quota reached |
 | `whitelabel_not_enabled` | 403 | Branding fields sent without the entitlement |
-| `csv_export_*` | 403 | CSV export is gated per plan on `csv_export_enabled`. Note this one is a human sentence, not a code: *"CSV exports are not available on the Free plan. Upgrade to Starter to unlock."* |
 | `invalid_amount` / `amount_too_low` / `amount_too_high` | 422 (or 400 from the service) | Amount rejected |
 | `payment_link_disabled` / `store_disabled` | 400 | Store has no link, or is disabled |
 | `offline_qr_requires_a_confirmation_source` | 400 | `hosted_qr=false` where nothing can confirm it |

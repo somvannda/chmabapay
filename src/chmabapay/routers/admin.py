@@ -2,21 +2,49 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import audit, models
 from ..auth import KeyContext, resolve_key_context
+from ..config import get_settings
 from ..db import get_session
-from .auth import get_current_session_account
+from ..healthcheck import DEFAULT_MAX_AGE_SECONDS, queue_heartbeat_ages
+from ..schemas import LinkIn
+from ..services import billing as billing_svc
+from ..services import stores as store_svc
+from ..services.bakong import get_bakong_client
+from ..services.payments import (
+    count_paid_payments_this_month,
+    gen_public_id,
+    mark_paid,
+)
 
-router = APIRouter(prefix="/v1/admin", tags=["admin"])
+# The same slug parser the HQ seed uses: a PayWay share link's merchant account id is
+# the last path segment, and `_extract_slug` is the one place that knows the shape.
+from ..services.payway_parser import _extract_slug
+from ..services.status_reconciler import reconcile_payment
+from ..workers.job import JobStatus
+from ..workers.runtime import build_transport, worker_registry
+from .auth import get_current_session_account, session_auth_method
+
+router = APIRouter(
+    prefix="/v1/admin",
+    tags=["admin"],
+    # Not published. The console's surface is internal — it is reached from
+    # admin.chmaba.com behind a platform-admin session, and every route in it is
+    # hidden from the public `openapi.json` so the platform's own operator API is not
+    # advertised to merchants reading `/docs`. The routes still exist and still
+    # enforce `get_hybrid_admin_context`.
+    include_in_schema=False,
+)
 
 # Pricing-page feature bullets, edited per plan in the console.
 FEATURES_MAX = 12
@@ -31,16 +59,45 @@ class HybridAuthContext:
 
 
 async def get_hybrid_admin_context(
+    request: Request,
     authorization: str | None = Header(default=None),
     session_account: models.Account | None = Depends(get_current_session_account),
     session: AsyncSession = Depends(get_session),
 ) -> HybridAuthContext:
+    """Resolve an admin caller, or refuse.
+
+    Two gates, and the second one used to live only in the browser. The console
+    tells operators it is password-only (`web/admin/README.md`), and the React
+    shell does refuse an SSO session — but nothing on the server did, so an
+    admin's Google session could call every `/v1/admin/*` route directly with
+    curl. `session_auth_method` existed for exactly this and was only ever read
+    by `GET /v1/me`. It is enforced here now, and it fails *closed*: a token
+    minted before the `amr` claim existed reports "unknown" and is refused
+    rather than assumed to be a password session.
+
+    The dev gateway is the one exception, and it is conditional on the flag that
+    also mounts the dev routes — which production hardcodes to false, so the
+    exception cannot exist there. Without it, a local console would need a
+    hand-set password before it could be opened at all.
+
+    An API key is still accepted: a `ck_` value is a revocable, hashed,
+    workspace-scoped credential rather than an SSO session, so the rule this
+    guard exists to enforce does not apply to it.
+    """
     if authorization and authorization.startswith("Bearer ck_"):
         key_ctx = await resolve_key_context(session, authorization)
         ctx = HybridAuthContext(
             account=key_ctx.account, key_ctx=key_ctx, is_session=False
         )
     elif session_account is not None:
+        method = session_auth_method(request)
+        allowed = method == "password" or (
+            method == "dev" and get_settings().enable_dev_gateway
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=403, detail="password_session_required"
+            )
         ctx = HybridAuthContext(
             account=session_account, key_ctx=None, is_session=True
         )
@@ -101,6 +158,21 @@ class AdminAccountRowOut(BaseModel):
 class AdminAccountListOut(BaseModel):
     data: list[AdminAccountRowOut]
     pagination: Pagination
+
+
+async def _active_admin_count(session: AsyncSession) -> int:
+    """How many platform admins can still sign in.
+
+    Suspended admins are excluded deliberately: they do not count as a way back in.
+    """
+    return (
+        await session.execute(
+            select(func.count(models.Account.id)).where(
+                models.Account.is_platform_admin.is_(True),
+                models.Account.status == models.ACCOUNT_ACTIVE,
+            )
+        )
+    ).scalar_one() or 0
 
 
 async def _counts_by_account(
@@ -262,6 +334,37 @@ async def get_account_detail(
         .scalars()
         .all()
     )
+    keys = list(
+        (
+            await session.execute(
+                select(models.ApiKey)
+                .where(models.ApiKey.account_id == account_id)
+                .order_by(models.ApiKey.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # The plan's limits and where the account stands against them, so a decision to
+    # suspend, revoke or comp is made with the merchant's actual position visible
+    # rather than discovered afterwards.
+    plan_row = (
+        (
+            await session.execute(
+                select(models.Plan)
+                .join(
+                    models.PlanSubscription,
+                    models.PlanSubscription.plan_id == models.Plan.id,
+                )
+                .where(
+                    models.PlanSubscription.account_id == account_id,
+                    models.PlanSubscription.status.in_(["trial", "active"]),
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
 
     return {
         "account": _account_profile(account),
@@ -274,6 +377,37 @@ async def get_account_detail(
             "stores": store_counts.get(account_id, 0),
             "payments": payment_counts.get(account_id, 0),
         },
+        "limits": (
+            None
+            if plan_row is None
+            else {
+                "plan_code": plan_row.code,
+                "max_stores": plan_row.max_stores,
+                "max_keys_per_account": plan_row.max_keys_per_account,
+                "payments_included": plan_row.base_payments_included,
+            }
+        ),
+        "usage": {
+            "keys_active": sum(
+                1 for key in keys if key.status == models.ACCOUNT_ACTIVE
+            ),
+            "payments_this_month": await count_paid_payments_this_month(
+                session, account_id
+            ),
+        },
+        "keys": [
+            {
+                "id": key.id,
+                "name": key.name,
+                "key_prefix": key.key_prefix,
+                "mode": key.mode,
+                "status": key.status,
+                "last_used_at": key.last_used_at,
+                "created_at": key.created_at,
+                "revoked_at": key.revoked_at,
+            }
+            for key in keys
+        ],
         "stores": [
             {
                 "id": store.public_id,
@@ -327,6 +461,15 @@ async def update_account(
         }
         account.whitelabel_enabled = body.whitelabel_enabled
     if body.status is not None and body.status != account.status:
+        if (
+            body.status == models.ACCOUNT_SUSPENDED
+            and account.is_platform_admin
+            and await _active_admin_count(session) <= 1
+        ):
+            # Suspension is enforced at sign-in and on every authenticated request, so
+            # suspending the last active platform admin locks the console for good —
+            # there is no route back in that does not involve a database session.
+            raise HTTPException(status_code=409, detail="last_platform_admin")
         changed["status"] = {"from": account.status, "to": body.status}
         account.status = body.status
 
@@ -353,6 +496,111 @@ async def update_account(
     return _account_profile(account)
 
 
+class AdminPlanAssignIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_code: str = Field(min_length=1, max_length=40)
+    # Mandatory. This is the one route on the platform that hands out a paid tier with
+    # no money attached to it, so the answer to "why is this account on Pro" has to be
+    # in the record rather than in somebody's memory.
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@router.patch("/accounts/{account_id}/plan")
+async def assign_account_plan(
+    account_id: int,
+    body: AdminPlanAssignIn,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Put an account on a plan without an invoice, on an operator's authority.
+
+    The merchant-facing route *sells* a plan: it parks the subscription as `pending`
+    and raises an invoice that activates it when paid. That is the right default and
+    the wrong only-tool — a comped account, a migration, or an invoice settled outside
+    the platform all need a plan in force with no money attached.
+
+    Deliberately blunt, and the reason is why: whatever the account is on is cancelled
+    and the named plan is active immediately, with no invoice and no proration. The
+    audit row records the operator, both plan codes and the monthly fee that was
+    given up.
+    """
+    account = await session.get(models.Account, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="account_not_found")
+
+    plan = (
+        await session.execute(
+            select(models.Plan).where(models.Plan.code == body.plan_code)
+        )
+    ).scalar_one_or_none()
+    if plan is None:
+        raise HTTPException(status_code=404, detail="plan_not_found")
+
+    now = datetime.now(UTC)
+    current = (
+        (
+            await session.execute(
+                select(models.PlanSubscription).where(
+                    models.PlanSubscription.account_id == account_id,
+                    models.PlanSubscription.status.in_(["trial", "active"]),
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    current_plan_code: str | None = None
+    if current is not None:
+        current_plan_code = (
+            await session.execute(
+                select(models.Plan.code).where(models.Plan.id == current.plan_id)
+            )
+        ).scalar_one_or_none()
+        if current.plan_id == plan.id:
+            # Re-selecting the plan the account is already on is not a change, and
+            # recording it would put a "granted Pro" row in the trail for nothing.
+            raise HTTPException(status_code=400, detail="plan_unchanged")
+        current.status = "canceled"
+        current.canceled_at = now
+        current.updated_at = now
+
+    subscription = models.PlanSubscription(
+        account_id=account_id,
+        plan_id=plan.id,
+        status="active",
+        started_at=now,
+        # The same 30-day period the paid path uses, so a comped plan comes back
+        # through the billing sweep on schedule instead of living forever by accident.
+        next_billing_at=now + billing_svc.CREDIT_PERIOD,
+    )
+    session.add(subscription)
+    await session.flush()
+
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="account.plan_assigned",
+        target_type="Account",
+        target_id=account_id,
+        details={
+            "from_plan": current_plan_code,
+            "to_plan": plan.code,
+            "monthly_fee_cents": plan.monthly_fee_cents,
+            "reason": body.reason,
+        },
+    )
+    await session.commit()
+    await session.refresh(subscription)
+    return {
+        "account_id": account_id,
+        "plan_code": plan.code,
+        "subscription_id": subscription.id,
+        "subscription_status": subscription.status,
+        "next_billing_at": subscription.next_billing_at,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Plans
 # --------------------------------------------------------------------------- #
@@ -367,7 +615,6 @@ class AdminPlanOut(BaseModel):
     max_stores: int | None
     max_keys_per_account: int
     max_webhooks_per_account: int
-    csv_export_enabled: bool
     priority_support: bool
     is_public: bool
     is_active: bool
@@ -389,7 +636,6 @@ class AdminPlanOut(BaseModel):
             max_stores=plan.max_stores,
             max_keys_per_account=plan.max_keys_per_account,
             max_webhooks_per_account=plan.max_webhooks_per_account,
-            csv_export_enabled=plan.csv_export_enabled,
             priority_support=plan.priority_support,
             is_public=plan.is_public,
             is_active=plan.is_active,
@@ -448,7 +694,6 @@ class AdminPlanPatch(BaseModel):
     max_stores: int | None = Field(default=None, ge=0)
     max_keys_per_account: int | None = Field(default=None, ge=0)
     max_webhooks_per_account: int | None = Field(default=None, ge=0)
-    csv_export_enabled: bool | None = None
     priority_support: bool | None = None
     is_public: bool | None = None
     is_active: bool | None = None
@@ -472,7 +717,6 @@ class AdminPlanCreate(BaseModel):
     max_stores: int | None = Field(default=None, ge=0)
     max_keys_per_account: int = Field(default=5, ge=0)
     max_webhooks_per_account: int = Field(default=5, ge=0)
-    csv_export_enabled: bool = True
     priority_support: bool = False
     is_public: bool = True
     is_active: bool = True
@@ -695,6 +939,191 @@ async def list_all_invoices(
     }
 
 
+class InvoiceResolveIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["mark-paid", "waive", "credit"]
+    reason: str = Field(min_length=3, max_length=500)
+    # `credit` only: how much was given up. Defaults to the whole invoice. Never
+    # subtracted from `total_due_cents` — the invoice goes on saying what was billed,
+    # and the audit row says what was forgiven.
+    amount_cents: int | None = Field(default=None, ge=0)
+
+
+_RESOLVED_INVOICE_STATUS = {
+    "mark-paid": "paid",
+    "waive": "waived",
+    "credit": "credited",
+}
+
+
+@router.post("/invoices/{invoice_id}/resolve")
+async def resolve_invoice(
+    invoice_id: int,
+    body: InvoiceResolveIn,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Close an invoice by hand: settle it, waive it, or credit it.
+
+    All three exist for the same reason, which is why they are one route: a `pending`
+    subscription waiting on an invoice nobody will ever pay leaves the merchant stuck
+    on their old plan with no in-product way out, and correcting that used to need a
+    database session. The activation step and the audit shape are identical, and three
+    copies of them would be three places to drift.
+
+    Only `mark-paid` writes `paid_at`. A waiver and a credit are not income, and
+    stamping a settlement date on one would make a revenue report count money that
+    never arrived.
+    """
+    invoice = await session.get(models.PlanInvoice, invoice_id)
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="invoice_not_found")
+    if invoice.status in _RESOLVED_INVOICE_STATUS.values():
+        raise HTTPException(
+            status_code=409, detail=f"invoice_already_{invoice.status}"
+        )
+
+    now = datetime.now(UTC)
+    invoice.status = _RESOLVED_INVOICE_STATUS[body.action]
+    invoice.updated_at = now
+    if body.action == "mark-paid":
+        invoice.paid_at = now
+
+    if invoice.subscription_id is not None:
+        # The same activation the rail path runs, so an invoice settled by hand and one
+        # paid by QR leave the account in an identical state.
+        await billing_svc.activate_subscription(session, invoice.subscription_id)
+
+    details: dict[str, Any] = {
+        "resolution": body.action,
+        "account_id": invoice.account_id,
+        "period_month": invoice.period_month,
+        "total_due_cents": invoice.total_due_cents,
+        "reason": body.reason,
+    }
+    if body.action == "credit":
+        details["credited_cents"] = (
+            invoice.total_due_cents if body.amount_cents is None else body.amount_cents
+        )
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="invoice.resolved",
+        target_type="PlanInvoice",
+        target_id=invoice.id,
+        details=details,
+    )
+    await session.commit()
+    await session.refresh(invoice)
+    return _invoice_row(invoice)
+
+
+@router.post("/keys/{key_id}/revoke")
+async def revoke_account_key(
+    key_id: int,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Kill one API key.
+
+    Until this existed the only platform-side way to stop a leaked key was suspending
+    the merchant — which takes their store offline and stops every other key with it.
+    Revoking the one credential is what the situation calls for.
+
+    Quiet on a repeat: a second revoke changes nothing, so it writes no second audit
+    row. The trail should read "this key was revoked", not "revoked five times because
+    an operator clicked twice".
+    """
+    key = await session.get(models.ApiKey, key_id)
+    if key is None:
+        raise HTTPException(status_code=404, detail="key_not_found")
+
+    if key.status != models.ACCOUNT_ACTIVE:
+        return {
+            "id": key.id,
+            "account_id": key.account_id,
+            "status": key.status,
+            "revoked_at": key.revoked_at,
+            "revoked": False,
+        }
+
+    key.status = "revoked"
+    key.revoked_at = datetime.now(UTC)
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="key.revoked",
+        target_type="ApiKey",
+        target_id=key.id,
+        # The operator's revocation and the merchant's own carry the same action name,
+        # because it is the same event; `actor_account_id` is what says who did it.
+        details={
+            "account_id": key.account_id,
+            "name": key.name,
+            "key_prefix": key.key_prefix,
+        },
+    )
+    await session.commit()
+    await session.refresh(key)
+    return {
+        "id": key.id,
+        "account_id": key.account_id,
+        "status": key.status,
+        "revoked_at": key.revoked_at,
+        "revoked": True,
+    }
+
+
+@router.post("/stores/{store_public_id}/disable")
+async def disable_account_store(
+    store_public_id: str,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Stop one store taking payments.
+
+    A store's destination being wrong is a reason to stop *that* store, not the whole
+    account — and the merchant could already do this to themselves, which meant the
+    operator had to ask them to. Disabling is enforced in `create_payment`, so this
+    stops new codes immediately; codes already issued are not recalled, and the
+    response says so by returning the store rather than claiming a retroactive effect.
+    """
+    store = (
+        await session.execute(
+            select(models.Store).where(models.Store.public_id == store_public_id)
+        )
+    ).scalar_one_or_none()
+    if store is None:
+        raise HTTPException(status_code=404, detail="store_not_found")
+
+    if store.status == models.STORE_DISABLED:
+        return {
+            "id": store.public_id,
+            "account_id": store.account_id,
+            "status": store.status,
+            "disabled": False,
+        }
+
+    store.status = models.STORE_DISABLED
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="store.disabled",
+        target_type="Store",
+        target_id=store.id,
+        details={"account_id": store.account_id, "name": store.name},
+    )
+    await session.commit()
+    await session.refresh(store)
+    return {
+        "id": store.public_id,
+        "account_id": store.account_id,
+        "status": store.status,
+        "disabled": True,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Payments
 # --------------------------------------------------------------------------- #
@@ -731,6 +1160,7 @@ async def list_all_payments(
     status: str | None = None,
     account_id: int | None = None,
     q: str | None = None,
+    attention: Literal["pending_past_expiry", "detection_closed_unpaid"] | None = None,
     page: int = 1,
     per_page: int = 25,
     ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
@@ -747,6 +1177,9 @@ async def list_all_payments(
     which is the string a support thread actually contains. `status` covers the
     states worth hunting for (`pending`, `scanned`, `failed`, `expired`,
     `superseded`, `reversed`), and `account_id` narrows it to one merchant.
+
+    `attention` is the two conditions the overview counts and a bare `status` cannot
+    express: `pending` alone includes codes a customer is scanning right now.
     """
     page, per_page, offset = _clamp_paging(page, per_page)
 
@@ -755,6 +1188,16 @@ async def list_all_payments(
         filters.append(models.Payment.status == status)
     if account_id is not None:
         filters.append(models.Store.account_id == account_id)
+    if attention == "pending_past_expiry":
+        filters.append(models.Payment.status == models.PAYMENT_PENDING)
+        filters.append(models.Payment.expires_at < datetime.now(UTC))
+    elif attention == "detection_closed_unpaid":
+        filters.append(models.Payment.detection_closed_at.is_not(None))
+        filters.append(
+            models.Payment.status.not_in(
+                [models.PAYMENT_PAID, models.PAYMENT_REVERSED]
+            )
+        )
     if q:
         needle = f"%{q.strip()}%"
         filters.append(
@@ -812,6 +1255,407 @@ async def list_all_payments(
             total_rows=total_rows,
             total_pages=(total_rows + per_page - 1) // per_page,
         ),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Payment detail + dispute resolution
+# --------------------------------------------------------------------------- #
+# Everything above could *show* a problem. These routes are what let an operator
+# *fix* one, which is the difference between a console that reports an incident
+# and a console that ends it. Before them, a merchant on the line saying "my
+# customer paid and it still says pending" had no platform-side remedy at all:
+# the reconciler runs on its own schedule, ABA's session cannot be re-queried by
+# hand, a settlement the rail confirmed but we mis-recorded could not be
+# recorded, and a webhook the merchant's endpoint refused sat failed forever.
+
+
+class AdminPaymentDeliveryOut(BaseModel):
+    id: int
+    event_id: str
+    event_type: str
+    status: str
+    attempts: int
+    last_response_status: int | None
+    last_error: str | None
+    next_attempt_at: datetime | None
+    updated_at: datetime
+
+
+class AdminPaymentDetailOut(BaseModel):
+    id: str
+    status: str
+    amount_cents: int
+    currency: str
+    reference_id: str | None
+    bill_number: str
+    idempotency_key: str | None
+    metadata: dict | None
+    account_id: int
+    account_email: str | None
+    store_public_id: str
+    store_name: str
+    created_at: datetime
+    expires_at: datetime
+    scanned_at: datetime | None
+    paid_at: datetime | None
+    approved_at: datetime | None
+    reversed_at: datetime | None
+    reversal_reason: str | None
+    # Null means we are still watching this payment. The distinction between "we
+    # looked and found nothing" and "we never looked" is the one that settles an
+    # argument with a customer holding a receipt.
+    detection_closed_at: datetime | None
+    # The rail's own words, kept whole. `bakong_ref` is ABA's transaction id and
+    # is the string support actually asks the customer for; `gateway_status_raw`
+    # holds a hosted session's handle, which is the only thing that lets the
+    # reconciler ask ABA about this payment at all. The QR is included because a
+    # dispute sometimes ends by comparing the customer's screenshot to it.
+    bakong_ref: str | None
+    gateway_status_raw: dict | None
+    qr_md5: str | None
+    qr_string: str
+    attempt_history: list | None
+    # A reissue retires one code and mints another, so the pair is the trail of
+    # "which code was the customer actually holding".
+    reissued_from: str | None
+    superseded_by: str | None
+    deliveries: list[AdminPaymentDeliveryOut]
+
+
+class PaymentReasonIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Mandatory, and long enough to be a sentence fragment at least. This is the
+    # only record of *why* money was credited without the rail confirming it, and
+    # "ok" answers nothing a month later.
+    reason: str = Field(min_length=3, max_length=255)
+
+
+class PaymentReconcileOut(BaseModel):
+    id: str
+    # Our status after the attempt — `paid` here is a settlement we now hold.
+    status: str
+    # What the rail answered this time: PAID / PENDING / FAILED / UNKNOWN. Kept
+    # apart from `status` because "the rail said pending" and "we are pending" are
+    # different claims, and only the second is ours to make.
+    rail_status: str
+    source: str | None
+    matched_amount: float | None
+    transitioned_to_paid: bool
+    signals: list[str]
+    error: str | None
+
+
+class PaymentMarkPaidOut(BaseModel):
+    id: str
+    status: str
+    paid_at: datetime | None
+
+
+class PaymentRedeliverOut(BaseModel):
+    id: str
+    redelivered: int
+    delivery_ids: list[int]
+
+
+async def _load_admin_payment(
+    session: AsyncSession, public_id: str
+) -> tuple[models.Payment, models.Store, models.Account]:
+    row = (
+        await session.execute(
+            select(models.Payment, models.Store, models.Account)
+            .join(models.Store, models.Store.id == models.Payment.store_id)
+            .join(models.Account, models.Account.id == models.Store.account_id)
+            .where(models.Payment.public_id == public_id)
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="payment_not_found")
+    return row
+
+
+async def _payment_delivery_rows(
+    session: AsyncSession, payment_id: int
+) -> list[tuple[models.EventDelivery, models.Event]]:
+    rows = await session.execute(
+        select(models.EventDelivery, models.Event)
+        .join(models.Event, models.Event.id == models.EventDelivery.event_id)
+        .where(models.Event.payment_id == payment_id)
+        .order_by(models.EventDelivery.id.desc())
+    )
+    return list(rows.all())
+
+
+@router.get("/payments/{public_id}", response_model=AdminPaymentDetailOut)
+async def get_admin_payment(
+    public_id: str,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """One payment in full, including what the rail said and what we tried.
+
+    The list route answers "what is wrong"; this answers "why". A dispute cannot
+    be resolved from a status string: the operator needs the rail's transaction
+    id to match against the customer's receipt, the raw gateway payload to see
+    what ABA last reported, and the delivery rows to tell "the payment never
+    settled" apart from "it settled and we failed to tell the merchant".
+    """
+    payment, store, account = await _load_admin_payment(session, public_id)
+
+    parent_public_id: str | None = None
+    if payment.reissued_from_id is not None:
+        parent_public_id = (
+            await session.execute(
+                select(models.Payment.public_id).where(
+                    models.Payment.id == payment.reissued_from_id
+                )
+            )
+        ).scalar_one_or_none()
+
+    successor_public_id = (
+        await session.execute(
+            select(models.Payment.public_id)
+            .where(models.Payment.reissued_from_id == payment.id)
+            .order_by(models.Payment.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    deliveries = await _payment_delivery_rows(session, payment.id)
+
+    return AdminPaymentDetailOut(
+        id=payment.public_id,
+        status=payment.status,
+        amount_cents=payment.amount_cents,
+        currency=payment.currency,
+        reference_id=payment.reference_id,
+        bill_number=payment.bill_number,
+        idempotency_key=payment.idempotency_key,
+        metadata=payment.metadata_,
+        account_id=account.id,
+        account_email=account.email,
+        store_public_id=store.public_id,
+        store_name=store.name,
+        created_at=payment.created_at,
+        expires_at=payment.expires_at,
+        scanned_at=payment.scanned_at,
+        paid_at=payment.paid_at,
+        approved_at=payment.approved_at,
+        reversed_at=payment.reversed_at,
+        reversal_reason=payment.reversal_reason,
+        detection_closed_at=payment.detection_closed_at,
+        bakong_ref=payment.bakong_ref,
+        gateway_status_raw=payment.gateway_status_raw,
+        qr_md5=payment.qr_md5,
+        qr_string=payment.qr_string,
+        attempt_history=payment.attempt_history,
+        reissued_from=parent_public_id,
+        superseded_by=successor_public_id,
+        deliveries=[
+            AdminPaymentDeliveryOut(
+                id=delivery.id,
+                event_id=delivery.event_id,
+                event_type=event.type,
+                status=delivery.status,
+                attempts=delivery.attempts,
+                last_response_status=delivery.last_response_status,
+                last_error=delivery.last_error,
+                next_attempt_at=delivery.next_attempt_at,
+                updated_at=delivery.updated_at,
+            )
+            for delivery, event in deliveries
+        ],
+    )
+
+
+@router.post("/payments/{public_id}/reconcile", response_model=PaymentReconcileOut)
+async def reconcile_admin_payment(
+    public_id: str,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Re-ask the rail about one payment, now, on an operator's command.
+
+    The sweeper already does this on a schedule, so this covers what a schedule
+    cannot: a merchant on the line with a customer holding a receipt, or a
+    payment whose detection window has already closed and which the sweeper has
+    therefore stopped watching. It is a read of the rail plus the very same
+    `mark_paid` path a poll takes, so it can credit money only when the rail
+    says the money moved — it cannot invent a settlement, and it is not a
+    substitute for `mark-paid`.
+    """
+    payment, store, account = await _load_admin_payment(session, public_id)
+    if payment.status == models.PAYMENT_PAID:
+        # Nothing to reconcile: the settlement is already recorded. Re-asking
+        # would spend an ABA call on a question we hold the answer to.
+        return PaymentReconcileOut(
+            id=payment.public_id,
+            status=payment.status,
+            rail_status="PAID",
+            source=None,
+            matched_amount=None,
+            transitioned_to_paid=False,
+            signals=["already_paid"],
+            error=None,
+        )
+
+    result = await reconcile_payment(
+        payment, bakong_client=get_bakong_client(), session=session
+    )
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="admin.payment_reconciled",
+        target_type="Payment",
+        target_id=payment.id,
+        details={
+            "rail_status": result.status,
+            "source": result.source,
+            "transitioned_to_paid": result.transitioned_to_paid,
+            "error": result.error,
+            "account_id": account.id,
+            "store_id": store.id,
+        },
+    )
+    await session.commit()
+    return PaymentReconcileOut(
+        id=payment.public_id,
+        status=payment.status,
+        rail_status=result.status,
+        source=result.source,
+        matched_amount=result.matched_amount,
+        transitioned_to_paid=result.transitioned_to_paid,
+        signals=result.signals,
+        error=result.error,
+    )
+
+
+@router.post("/payments/{public_id}/mark-paid", response_model=PaymentMarkPaidOut)
+async def mark_admin_payment_paid(
+    public_id: str,
+    body: PaymentReasonIn,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Record a settlement the platform could not detect for itself.
+
+    The most dangerous button in the console: it credits money with no rail
+    confirmation. So it demands a reason, refuses any payment already terminal,
+    and leaves an audit row naming the operator and quoting them. It is still
+    needed — ABA's hosted status can be unreachable for a payment a customer's
+    receipt proves, and a merchant must not be told their sale is unrecoverable
+    because our poller had a bad afternoon.
+
+    It settles through `mark_paid`, the same function the reconciler uses, so the
+    ledger entry, the plan invoice, the successor retirement and the
+    `payment.completed` webhook all happen exactly as they would for a detected
+    payment. A manual settlement that skipped any of those would be worse than no
+    settlement at all.
+    """
+    payment, store, account = await _load_admin_payment(session, public_id)
+    if payment.status == models.PAYMENT_PAID:
+        raise HTTPException(status_code=409, detail="payment_already_paid")
+    if payment.status in (models.PAYMENT_FAILED, models.PAYMENT_REVERSED):
+        # Both are terminal and both mean the same thing here: the rail's record
+        # contradicts this credit. A refunded sale cannot be un-refunded by a
+        # button, and a failed one needs a fresh QR, not a status edit.
+        raise HTTPException(status_code=409, detail=f"payment_is_{payment.status}")
+
+    reason = body.reason.strip()
+    # `mark_paid` writes `gateway_status_raw` wholesale, and for a hosted payment
+    # that column holds the ABA session handle. Replacing it would erase the
+    # evidence a later reconciliation needs to agree with this decision, so the
+    # manual override is merged in instead.
+    raw = (
+        dict(payment.gateway_status_raw)
+        if isinstance(payment.gateway_status_raw, dict)
+        else {}
+    )
+    raw["manual_mark_paid"] = {
+        "by": ctx.account.email,
+        "reason": reason,
+        "at": datetime.now(UTC).isoformat(),
+    }
+
+    settled = await mark_paid(
+        session,
+        payment.public_id,
+        bakong_ref=payment.bakong_ref,
+        gateway_raw=raw,
+    )
+    if settled is None:
+        # Lost a race to a terminal state between the load above and here.
+        raise HTTPException(status_code=409, detail="payment_not_markable")
+
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="admin.payment_mark_paid",
+        target_type="Payment",
+        target_id=payment.id,
+        details={
+            "reason": reason,
+            "amount_cents": payment.amount_cents,
+            "account_id": account.id,
+            "store_id": store.id,
+        },
+    )
+    await session.commit()
+    return PaymentMarkPaidOut(
+        id=payment.public_id, status=payment.status, paid_at=payment.paid_at
+    )
+
+
+@router.post("/payments/{public_id}/redeliver", response_model=PaymentRedeliverOut)
+async def redeliver_admin_payment_events(
+    public_id: str,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Queue this payment's webhook deliveries again.
+
+    A delivery that exhausted `webhook_max_attempts` is terminal, and a merchant
+    who fixes their endpoint should not have to wait for the next sale to find
+    out whether the fix worked. Every delivery for the payment is reset to due
+    now, including ones that already succeeded, because the operator's intent is
+    "send this merchant their event again" — re-sending a success is harmless
+    next to silently skipping the one delivery they actually needed.
+
+    Delivery is picked up by the sender's own scan on its next pass, so this
+    writes state and returns; there is no queue to enqueue into.
+    """
+    payment, store, account = await _load_admin_payment(session, public_id)
+    rows = await _payment_delivery_rows(session, payment.id)
+    if not rows:
+        raise HTTPException(status_code=404, detail="no_deliveries_for_payment")
+
+    now = datetime.now(UTC)
+    delivery_ids: list[int] = []
+    for delivery, _event in rows:
+        delivery.status = models.DELIVERY_RETRYING
+        # The attempt budget is reset too: this is a fresh, deliberate send, not
+        # the tail of the one that already exhausted itself.
+        delivery.attempts = 0
+        delivery.next_attempt_at = now
+        delivery.last_error = None
+        delivery_ids.append(delivery.id)
+
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="admin.payment_redelivered",
+        target_type="Payment",
+        target_id=payment.id,
+        details={
+            "deliveries": len(delivery_ids),
+            "delivery_ids": delivery_ids,
+            "account_id": account.id,
+        },
+    )
+    await session.commit()
+    return PaymentRedeliverOut(
+        id=payment.public_id, redelivered=len(delivery_ids), delivery_ids=delivery_ids
     )
 
 
@@ -934,9 +1778,93 @@ async def list_all_deliveries(
     )
 
 
+class AdminDeliveryRetryOut(BaseModel):
+    id: int
+    status: str
+    attempts: int
+    next_attempt_at: datetime | None
+    retried: bool
+
+
+@router.post("/deliveries/{delivery_id}/retry", response_model=AdminDeliveryRetryOut)
+async def retry_delivery(
+    delivery_id: int,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Send one webhook delivery again, now.
+
+    Row-level rather than payment-level, because the operator's question is usually
+    narrower than "send this merchant everything": one endpoint was down for ten
+    minutes, or one event never arrived, and the rest of the account is fine. It is
+    also the honest tool after the failure-rate alert fires — the list shows which
+    deliveries failed, and this is the button on that row.
+
+    Resets the attempt budget as well as the clock: a delivery that exhausted
+    `webhook_max_attempts` is terminal, and the merchant who just fixed their
+    endpoint should get a real attempt rather than one that is refused as spent.
+
+    Quiet on a repeat, like every other operator action here: a delivery already due
+    now with a fresh budget has nothing to change, so it writes no second audit row.
+    """
+    delivery = await session.get(models.EventDelivery, delivery_id)
+    if delivery is None:
+        raise HTTPException(status_code=404, detail="delivery_not_found")
+
+    now = datetime.now(UTC)
+    already_due = (
+        delivery.status == models.DELIVERY_RETRYING
+        and delivery.attempts == 0
+        and delivery.next_attempt_at is not None
+        and delivery.next_attempt_at <= now
+    )
+    if already_due:
+        return AdminDeliveryRetryOut(
+            id=delivery.id,
+            status=delivery.status,
+            attempts=delivery.attempts,
+            next_attempt_at=delivery.next_attempt_at,
+            retried=False,
+        )
+
+    previous = delivery.status
+    delivery.status = models.DELIVERY_RETRYING
+    delivery.attempts = 0
+    delivery.next_attempt_at = now
+    delivery.last_error = None
+    delivery.updated_at = now
+
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="admin.delivery_retried",
+        target_type="EventDelivery",
+        target_id=delivery.id,
+        details={
+            "event_id": delivery.event_id,
+            "endpoint_id": delivery.endpoint_id,
+            "from_status": previous,
+        },
+    )
+    await session.commit()
+    await session.refresh(delivery)
+    return AdminDeliveryRetryOut(
+        id=delivery.id,
+        status=delivery.status,
+        attempts=delivery.attempts,
+        next_attempt_at=delivery.next_attempt_at,
+        retried=True,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Overview
 # --------------------------------------------------------------------------- #
+# The stat cards count what the platform *has*. "Needs attention" counts what is
+# *stuck*, which is a different question and was previously answerable only by
+# reading the payments list and the deliveries list by eye. Every number here is a
+# thing an operator can act on, and each one carries the filter that shows the rows
+# behind it — a count with no way to reach the rows is a number, not a signal.
 
 
 @router.get("/overview")
@@ -944,9 +1872,9 @@ async def admin_overview(
     ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
     session: AsyncSession = Depends(get_session),
 ):
-    month_start = datetime.now(UTC).replace(
-        day=1, hour=0, minute=0, second=0, microsecond=0
-    )
+    now = datetime.now(UTC)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     accounts_total = (
         await session.execute(select(func.count(models.Account.id)))
@@ -987,6 +1915,46 @@ async def admin_overview(
         )
     ).scalar_one()
 
+    paid_today_count = (
+        await session.execute(
+            select(func.count(models.Payment.id)).where(
+                models.Payment.status == models.PAYMENT_PAID,
+                models.Payment.paid_at >= today_start,
+            )
+        )
+    ).scalar_one() or 0
+    paid_today_cents = (
+        await session.execute(
+            select(func.coalesce(func.sum(models.Payment.amount_cents), 0)).where(
+                models.Payment.status == models.PAYMENT_PAID,
+                models.Payment.paid_at >= today_start,
+            )
+        )
+    ).scalar_one()
+
+    attention = await _needs_attention(session, now=now)
+    ops = await _worker_signals()
+    # The stale-queue verdict is a Redis read, so it joins the list here rather than in
+    # `_needs_attention`, which is a database question. It is still one list for the
+    # console: "needs attention" should not depend on which store answered.
+    if ops["stale_queues"] is not None:
+        stale = ops["stale_queues"]
+        attention.append(
+            {
+                "key": "stale_worker_queues",
+                "label": "Worker queues not draining",
+                "detail": (
+                    "No drain in the last "
+                    f"{DEFAULT_MAX_AGE_SECONDS:.0f}s"
+                    + (f" on {', '.join(stale)}" if stale else "")
+                    + ". Detection and webhooks stop while the API keeps answering."
+                ),
+                "count": len(stale),
+                "severity": "critical",
+                "href": None,
+            }
+        )
+
     return {
         "accounts_total": accounts_total,
         "stores_total": stores_total,
@@ -994,7 +1962,146 @@ async def admin_overview(
         "payments_paid_total": payments_paid,
         "payments_paid_this_month": payments_paid_this_month,
         "mrr_cents": int(mrr_cents or 0),
+        "paid_today_count": paid_today_count,
+        "paid_today_cents": int(paid_today_cents or 0),
+        "needs_attention": attention,
+        "ops": ops,
     }
+
+
+async def _needs_attention(
+    session: AsyncSession, *, now: datetime
+) -> list[dict[str, Any]]:
+    """What is stuck, with the filter that shows the rows behind each count.
+
+    `severity` is the console's business, not the query's: `critical` means money or
+    detection is affected right now, `warn` means a merchant is waiting on a human.
+    """
+    pending_past_expiry = (
+        await session.execute(
+            select(func.count(models.Payment.id)).where(
+                models.Payment.status == models.PAYMENT_PENDING,
+                models.Payment.expires_at < now,
+            )
+        )
+    ).scalar_one() or 0
+
+    # Stopped watching and never paid. Excludes refunds: a reversed payment also has
+    # its detection closed, and the money did arrive — it came back.
+    detection_closed_unpaid = (
+        await session.execute(
+            select(func.count(models.Payment.id)).where(
+                models.Payment.detection_closed_at.is_not(None),
+                models.Payment.status.not_in(
+                    [models.PAYMENT_PAID, models.PAYMENT_REVERSED]
+                ),
+            )
+        )
+    ).scalar_one() or 0
+
+    deliveries_failed_24h = (
+        await session.execute(
+            select(func.count(models.EventDelivery.id)).where(
+                models.EventDelivery.status == models.DELIVERY_FAILED,
+                models.EventDelivery.updated_at >= now - timedelta(hours=24),
+            )
+        )
+    ).scalar_one() or 0
+
+    return [
+        {
+            "key": "pending_past_expiry",
+            "label": "Pending past expiry",
+            "detail": (
+                "The code's window closed but the payment is still pending. Either "
+                "the customer paid and we did not notice, or the expiry sweep missed it."
+            ),
+            "count": pending_past_expiry,
+            "severity": "critical",
+            "href": "/payments?attention=pending_past_expiry",
+        },
+        {
+            "key": "detection_closed_unpaid",
+            "label": "Stopped watching, never paid",
+            "detail": (
+                "We closed detection on these and the money never arrived. This is "
+                "the row behind \"my customer paid and it still says pending\"."
+            ),
+            "count": detection_closed_unpaid,
+            "severity": "warn",
+            "href": "/payments?attention=detection_closed_unpaid",
+        },
+        {
+            "key": "deliveries_failed_24h",
+            "label": "Webhooks failed (24h)",
+            "detail": (
+                "Merchant endpoints that gave up in the last day. A merchant whose "
+                "endpoint is failing sees a payment that never reaches their system."
+            ),
+            "count": deliveries_failed_24h,
+            "severity": "warn",
+            "href": "/deliveries?status=failed",
+        },
+    ]
+
+
+async def _worker_signals() -> dict[str, Any]:
+    """Queue depth and worker heartbeat age, when the deployment can report them.
+
+    Both live in Redis and only mean anything under `WORKER_TRANSPORT=redis`. With the
+    in-process transport the API *is* the worker, so there is no cross-process stamp to
+    read and no shared backlog to measure; reporting zeros there would turn "not
+    measurable" into "all clear", which is the one wrong answer. `watched: false` says
+    so instead.
+
+    Failure to reach Redis is reported as an error string rather than raised: an
+    operator opening the console because something is wrong should still get the
+    payment counters.
+    """
+    settings = get_settings()
+    signals: dict[str, Any] = {
+        "transport": settings.worker_transport,
+        "watched": False,
+        "heartbeat_ages": None,
+        "stale_queues": None,
+        "queue_depth": None,
+        "error": None,
+    }
+    if (settings.worker_transport or "").strip().lower() != "redis":
+        return signals
+
+    queues = list(worker_registry())
+    try:
+        ages = await queue_heartbeat_ages(queues=queues, url=settings.redis_url)
+        signals["heartbeat_ages"] = ages
+        signals["stale_queues"] = [
+            queue
+            for queue, age in ages.items()
+            if age is None or age > DEFAULT_MAX_AGE_SECONDS
+        ]
+    except Exception as exc:  # noqa: BLE001 - reported to the operator, not raised
+        signals["error"] = f"heartbeats unavailable: {exc}"
+
+    # A separate read because it is a separate store question: the stamps come from
+    # `GET`, the backlog from the transport's own counters.
+    transport = None
+    try:
+        transport = build_transport(settings)
+        metrics = await transport.metrics()
+        signals["queue_depth"] = {
+            queue: int(row.get(JobStatus.PENDING, 0))
+            for queue, row in metrics.items()
+        }
+        signals["watched"] = signals["error"] is None
+    except Exception as exc:  # noqa: BLE001 - reported to the operator, not raised
+        signals["error"] = f"queue depth unavailable: {exc}"
+    finally:
+        if transport is not None:
+            close = getattr(transport, "aclose", None)
+            if close is not None:
+                await close()
+
+    return signals
 
 
 # --------------------------------------------------------------------------- #
@@ -1071,3 +2178,177 @@ async def list_audit_logs(
             total_pages=(total_rows + per_page - 1) // per_page,
         ).model_dump(),
     }
+
+
+# --------------------------------------------------------------------------- #
+# Plan-fee collection — the store ChmabaPay itself is paid into
+# --------------------------------------------------------------------------- #
+# The platform earns subscription fees, so it needs somewhere to receive them. That
+# used to be configuration only: `CHMABAPAY_HQ_PAYWAY_LINK` in `deploy/.env` plus a
+# sign-in to seed the store, which meant switching billing on required a shell session
+# and a restart. These two routes make it a field in the console instead.
+
+
+class HqLinkIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    raw_link: str = Field(min_length=6, max_length=500)
+    # Optional: derived from the link when omitted, which is the normal case. An
+    # operator pasting their own PayWay link should not have to dig the merchant
+    # account id out of it.
+    merchant_account_id: str | None = Field(default=None, max_length=120)
+    merchant_name: str | None = Field(default=None, max_length=120)
+
+
+class HqStoreOut(BaseModel):
+    configured: bool
+    # Why the store being reported is the one in use. "env" specifically means
+    # `CHMABAPAY_HQ_STORE_ID` is pinning a *different* store than the console saved,
+    # which an operator needs to be able to see.
+    source: str
+    store_public_id: str | None = None
+    store_status: str | None = None
+    raw_link: str | None = None
+    merchant_account_id: str | None = None
+    merchant_name: str | None = None
+
+
+# The PayWay link host, and the shape of a bare slug it resolves to. Checked because
+# this field decides where the platform's *own* revenue lands: pasting an ABA account
+# number, a Bakong QR or a random URL here would otherwise be accepted, and the mistake
+# would only surface later as an invoice whose QR does not mint.
+_PAYWAY_LINK_HOST = "payway.com.kh"
+_BARE_SLUG = re.compile(r"[A-Za-z0-9._-]{4,64}")
+
+
+def _looks_like_payway_link(raw: str) -> bool:
+    s = raw.strip()
+    if not s:
+        return False
+    if "/" in s:
+        return _PAYWAY_LINK_HOST in s.lower()
+    return _BARE_SLUG.fullmatch(s) is not None
+
+
+async def _hq_store_out(session: AsyncSession) -> HqStoreOut:
+    resolution = await billing_svc.resolve_hq_store(session)
+    store = resolution.store
+    if store is None:
+        return HqStoreOut(configured=False, source=resolution.source)
+    link = await store_svc.load_link(session, store.id)
+    return HqStoreOut(
+        configured=True,
+        source=resolution.source,
+        store_public_id=store.public_id,
+        store_status=store.status,
+        raw_link=link.raw_link if link else None,
+        merchant_account_id=link.merchant_account_id if link else None,
+        merchant_name=link.merchant_name if link else None,
+    )
+
+
+@router.get("/hq-store", response_model=HqStoreOut)
+async def get_hq_store(
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Where subscription fees are collected, and which setting decided it."""
+    return await _hq_store_out(session)
+
+
+async def _hq_store_for_write(
+    session: AsyncSession, admin_account: models.Account
+) -> models.Store:
+    """The HQ store to write to: the one already resolved, else a new one.
+
+    Falling back to creating a store under the calling admin means an operator can
+    switch billing on without any environment variable — the console is the only place
+    they need to touch. The name is the marker `resolve_hq_store` looks for.
+    """
+    resolution = await billing_svc.resolve_hq_store(session)
+    if resolution.store is not None:
+        return resolution.store
+
+    store = models.Store(
+        public_id=gen_public_id("st_"),
+        account_id=admin_account.id,
+        created_via="admin",
+        name=billing_svc.HQ_STORE_NAME,
+        status=models.STORE_DRAFT,
+        city="Phnom Penh",
+    )
+    session.add(store)
+    await session.flush()
+    audit.record(
+        session,
+        actor=admin_account,
+        action="hq_store.created",
+        target_type="Store",
+        target_id=store.id,
+        details={"name": store.name},
+    )
+    return store
+
+
+@router.put("/hq-store/link", response_model=HqStoreOut)
+async def set_hq_store_link(
+    body: HqLinkIn,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Point plan-fee collection at an ABA PayWay link.
+
+    The console's equivalent of `CHMABAPAY_HQ_PAYWAY_LINK`, and the supported way to
+    switch billing on: no restart, no shell.
+
+    The merchant account id is derived from the link when it is not supplied, which is
+    what pasting your own PayWay link should require — an operator should not have to
+    dig it out. The host is checked but not reachability: a probe here would put an
+    outbound fetch to ABA behind a save button, and a link that is wrong shows up
+    immediately as an invoice whose QR will not mint, which is a clearer signal than a
+    timeout on this form.
+    """
+    raw_link = body.raw_link.strip()
+    if not _looks_like_payway_link(raw_link):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "invalid_payway_link: expected an ABA PayWay share link such as "
+                "https://link.payway.com.kh/ABAPAYxxxxxxx"
+            ),
+        )
+    merchant_account_id = (body.merchant_account_id or "").strip() or _extract_slug(
+        raw_link
+    )
+    if not merchant_account_id:
+        raise HTTPException(status_code=400, detail="invalid_payway_link")
+
+    store = await _hq_store_for_write(session, ctx.account)
+    await store_svc.attach_link_to_store(
+        session,
+        store,
+        LinkIn(
+            raw_link=raw_link,
+            merchant_account_id=merchant_account_id,
+            merchant_name=(body.merchant_name or billing_svc.HQ_STORE_NAME).strip(),
+        ),
+        # Verified without a probe: this is the platform's own link, checked for host
+        # and slug shape just above, and an outbound fetch to ABA behind a save button
+        # would turn their downtime into ours. See the route docstring.
+        verification=models.LINK_VERIFIED,
+    )
+    store.status = models.STORE_ACTIVE
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="hq_store.link_set",
+        target_type="Store",
+        target_id=store.id,
+        details={
+            "merchant_account_id": merchant_account_id,
+            "raw_link": raw_link,
+        },
+    )
+    await session.commit()
+    await session.refresh(store)
+    return await _hq_store_out(session)

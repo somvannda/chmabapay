@@ -14,13 +14,25 @@ from .. import audit, models, schemas
 from ..auth import AuthContext, get_current_auth_context
 from ..config import get_settings
 from ..db import get_session
+from ..openapi import (
+    AUTH_ERRORS,
+    AUTH_SECURITY,
+    CONFLICT_ERROR,
+    QUOTA_ERROR,
+    merged,
+)
 from ..schemas import money_to_str
 from ..services import payments as svc
 from ..workers import Q_DETECTION, get_global_transport
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/payments", tags=["payments"])
+router = APIRouter(
+    prefix="/v1/payments",
+    tags=["payments"],
+    dependencies=AUTH_SECURITY,
+    responses=AUTH_ERRORS,
+)
 
 
 class PaymentListResponse(BaseModel):
@@ -169,7 +181,11 @@ async def resolve_target(
     return single
 
 
-@router.post("", response_model=schemas.PaymentOut)
+@router.post(
+    "",
+    response_model=schemas.PaymentOut,
+    responses=QUOTA_ERROR,
+)
 async def create_payment(
     body: schemas.PaymentCreate,
     request: Request,
@@ -223,7 +239,11 @@ async def create_payment(
     )
 
 
-@router.post("/{public_id}/reissue", response_model=schemas.PaymentOut)
+@router.post(
+    "/{public_id}/reissue",
+    response_model=schemas.PaymentOut,
+    responses=merged(AUTH_ERRORS, CONFLICT_ERROR),
+)
 async def reissue_payment(
     public_id: str,
     request: Request,
@@ -283,7 +303,11 @@ async def reissue_payment(
     )
 
 
-@router.post("/{public_id}/reverse", response_model=schemas.PaymentOut)
+@router.post(
+    "/{public_id}/reverse",
+    response_model=schemas.PaymentOut,
+    responses=merged(AUTH_ERRORS, CONFLICT_ERROR),
+)
 async def reverse_payment(
     public_id: str,
     body: PaymentReverseIn,

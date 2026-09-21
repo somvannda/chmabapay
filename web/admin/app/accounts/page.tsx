@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { readApiError } from "@/lib/apiError";
+import { apiFetch } from "@/lib/apiFetch";
 
 type AdminAccountRow = {
   id: number;
@@ -99,7 +100,7 @@ export default function AdminAccountsPage() {
         if (appliedQ) params.set("q", appliedQ);
         params.set("page", String(page));
         params.set("per_page", "25");
-        const res = await fetch(`/v1/admin/accounts?${params.toString()}`, {
+        const res = await apiFetch(`/v1/admin/accounts?${params.toString()}`, {
           credentials: "include",
         });
         if (!res.ok) throw new Error(await readApiError(res));

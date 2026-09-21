@@ -37,9 +37,10 @@ import secrets
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from .. import schemas
+from ..auth import AuthContext, get_current_auth_context
 from ..config import get_settings
 from ..khqr import (
     _CURRENCY_ISO_NUMERIC,
@@ -50,6 +51,7 @@ from ..khqr import (
     render_qr_svg,
     tlv,
 )
+from ..openapi import AUTH_ERRORS, AUTH_SECURITY, UPSTREAM_ERROR, merged
 from ..services.payway_parser import (
     PAYWAY_BASE,
     PayWayHostedError,
@@ -65,6 +67,9 @@ from ..services.payway_parser import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/khqr", tags=["khqr"])
+# No router-level security: `GET /v1/khqr/render.svg` is public by design — a QR image
+# is what a merchant pastes into a page their customers load. The four routes that
+# drive an outbound ABA fetch carry `AUTH_SECURITY` individually.
 
 
 def _normalize_link(link: str) -> tuple[str, str]:
@@ -109,12 +114,20 @@ def _tags_dump(qr: str) -> dict[str, Any]:
     return out
 
 
-@router.post("/from-link", response_model=schemas.KHQRFromLinkResponse)
+@router.post(
+    "/from-link",
+    response_model=schemas.KHQRFromLinkResponse,
+    dependencies=AUTH_SECURITY,
+    responses=merged(AUTH_ERRORS, UPSTREAM_ERROR),
+)
 async def khqr_from_link(
     body: schemas.KHQRFromLinkRequest,
+    _ctx: AuthContext = Depends(get_current_auth_context),
 ) -> schemas.KHQRFromLinkResponse:
     """Generate a real scannable KHQR given only an ABA PayWay link slug/URL
-    and an amount. No ABA API key required.
+    and an amount. No ABA API key required — but a workspace key is: this
+    endpoint drives an outbound ABA PayWay fetch on every call, so an anonymous
+    caller would otherwise get unbounded outbound traffic on our account.
 
     The PayWay link is the destination: Tag 30.01 is built from the link slug,
     and we best-effort SSR-fetch https://link.payway.com.kh/<slug> to resolve
@@ -282,12 +295,15 @@ async def khqr_from_link(
     "/probe-aba-status",
     response_model=dict[str, Any],
     summary="Best-effort status check on an ABA PayWay page (1st priority for ABA-link payments)",
+    dependencies=AUTH_SECURITY,
+    responses=merged(AUTH_ERRORS, UPSTREAM_ERROR),
 )
 async def probe_aba_status(
     slug_or_url: str = Query(..., min_length=6),
     bill_number: str | None = Query(None, max_length=64),
     reference_id: str | None = Query(None, max_length=255),
     expected_amount_usd: float | None = Query(None, gt=0),
+    _ctx: AuthContext = Depends(get_current_auth_context),
 ) -> dict[str, Any]:
     """Re-fetch the public ABA PayWay SSR page and search for PAID indicators.
 
@@ -328,9 +344,12 @@ async def probe_aba_status(
     "/payway/checkout",
     response_model=schemas.PayWayHostedCheckoutResponse,
     summary="Mint a real ABA-issued KHQR for a PayWay link (payable AND trackable)",
+    dependencies=AUTH_SECURITY,
+    responses=merged(AUTH_ERRORS, UPSTREAM_ERROR),
 )
 async def payway_hosted_checkout(
     body: schemas.PayWayHostedCheckoutRequest,
+    _ctx: AuthContext = Depends(get_current_auth_context),
 ) -> schemas.PayWayHostedCheckoutResponse:
     slug, link_url = _normalize_link(body.link)
     amount_str = f"{body.amount:.2f}"
@@ -372,9 +391,12 @@ async def payway_hosted_checkout(
     "/payway/status",
     response_model=schemas.PayWayHostedStatusResponse,
     summary="Has this ABA-hosted QR been paid? (the only working confirmation)",
+    dependencies=AUTH_SECURITY,
+    responses=merged(AUTH_ERRORS, UPSTREAM_ERROR),
 )
 async def payway_hosted_status(
     body: schemas.PayWayHostedStatusRequest,
+    _ctx: AuthContext = Depends(get_current_auth_context),
 ) -> schemas.PayWayHostedStatusResponse:
     try:
         status = await fetch_hosted_status(

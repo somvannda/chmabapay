@@ -32,6 +32,7 @@ from .. import models, schemas
 from ..auth import AuthContext, get_current_auth_context
 from ..config import get_settings
 from ..db import get_session
+from ..openapi import AUTH_ERRORS, AUTH_SECURITY
 from ..services.bakong import BakongApiClient, BakongApiError, get_bakong_client
 from ..services.status_reconciler import (
     ReconcileResult,
@@ -40,7 +41,12 @@ from ..services.status_reconciler import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/transactions", tags=["transactions"])
+router = APIRouter(
+    prefix="/v1/transactions",
+    tags=["transactions"],
+    dependencies=AUTH_SECURITY,
+    responses=AUTH_ERRORS,
+)
 
 
 # --------------------------------------------------------------------------- #

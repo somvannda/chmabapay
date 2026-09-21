@@ -1682,6 +1682,39 @@ body {
   color: var(--ink);
 }
 
+/* A group whose routes cannot answer yet. Dashed rather than solid so it reads as
+   provisional at a glance, without hiding it — an integrator who has heard of the
+   Bakong ledger should find it and see why it is not usable. */
+.docs-endpoint-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.docs-endpoint-badge {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.docs-endpoint-card.is-unavailable {
+  border-style: dashed;
+  background: #fcfcfd;
+}
+
+.docs-endpoint-card.is-unavailable .docs-path,
+.docs-endpoint-card.is-unavailable .docs-description {
+  color: var(--muted);
+  opacity: 0.75;
+}
+
 .docs-endpoint-summary {
   margin: 8px 0 0;
   max-width: 540px;
@@ -1772,6 +1805,13 @@ body {
   font-size: 12px;
   line-height: 1.6;
   color: var(--muted);
+  /* Descriptions name wire values, and one of them is
+     `search_type=hash|md5|short_hash|instruction_ref|external_ref` — 62 characters
+     with no space in it. Text that cannot break sets the card's min-content width,
+     which sets its grid track, which is what made the page scroll sideways at
+     390px and 430px. `anywhere` (rather than `break-word`) also lets the min-content
+     size collapse, which is the half that actually fixes the layout. */
+  overflow-wrap: anywhere;
 }
 
 .docs-signature-shell {
@@ -1779,6 +1819,17 @@ body {
   grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
   gap: 32px;
   align-items: start;
+}
+
+/* A grid *item* defaults to `min-width: auto`, so it can never shrink below its
+   content. The Node.js sample is ~82 columns of 12px monospace, which set the width
+   of the whole document and made /api/docs scroll sideways on a phone — the <pre>'s
+   own `overflow: auto` never got a chance to run, because the column was already
+   wide enough to hold every line. Zeroing the automatic minimum here is what lets
+   the code block scroll inside the page instead of the page scrolling around it. */
+.docs-signature-left,
+.docs-signature-panel {
+  min-width: 0;
 }
 
 .docs-signature-list {
@@ -4947,31 +4998,6 @@ body.dash-path-dashboard > .landing-footer {
 .legal-shell {
   max-width: 720px;
   margin: 0 auto;
-}
-.legal-draft {
-  display: flex;
-  gap: var(--sp-3);
-  align-items: flex-start;
-  margin-bottom: var(--sp-8);
-  padding: var(--sp-4) var(--sp-5);
-  border: 1px solid #f0c36d;
-  border-left-width: 3px;
-  border-radius: var(--r-md);
-  background: #fdf6e7;
-}
-.legal-draft-mark {
-  flex: none;
-  font-size: var(--fs-11);
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: #8a6100;
-  line-height: 20px;
-}
-.legal-draft-text {
-  font-size: var(--fs-13);
-  line-height: var(--lh-body);
-  color: #6b4c00;
 }
 .legal-eyebrow {
   font-size: var(--fs-11);

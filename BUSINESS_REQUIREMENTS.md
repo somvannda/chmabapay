@@ -504,6 +504,13 @@ ADD/EDIT MODAL:
   Scope (same pattern as Keys for IND vs BUSINESS)
   [Add Endpoint] → SIGNING SECRET ONE-TIME DISPLAY  whsec_… copy
 
+  NOTE (2026-09-21): the selectable list is now the four events the platform
+  actually raises — payment.completed, payment.expired, payment.superseded,
+  payment.reversed. `payment.scanned` is emitted only by the development
+  gateway and `payment.failed` has no producer, so neither is offered: a
+  merchant who subscribed to one would build a handler for an event that
+  never arrives. See the launch-gap-closure spec, G-11.
+
 ENDPOINT DETAIL tabs:
   Tab 1: Settings (edit URL, events, status, disable)
   Tab 2: Deliveries log (200 most recent rows):
@@ -681,8 +688,9 @@ class Plan(Base):
     max_stores: int | null
     max_keys_per_account: int
     max_webhooks_per_account: int
-    csv_export_enabled: bool
     priority_support: bool
+    # csv_export_enabled was dropped on 2026-09-21: CSV export is available on
+    # every plan, so the flag gated nothing (launch-gap-closure D6 / migration 0010).
     is_public: bool default True         # shows in pricing UI
     is_active: bool default True         # retired plans remain historical
     ...

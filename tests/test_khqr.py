@@ -161,3 +161,50 @@ def test_the_parser_drops_a_truncated_tail_instead_of_raising() -> None:
     assert [tag for tag, _ in truncated] == list(whole)[: len(truncated)]
     assert len(truncated) < len(whole)
     assert "63" not in [tag for tag, _ in truncated]
+
+
+# --------------------------------------------------------------------------- #
+# Auth on the generator routes                                                #
+# --------------------------------------------------------------------------- #
+# These four handlers reach out to ABA / PayWay on every call. For a long time
+# they carried no auth dependency at all, so an anonymous caller could drive our
+# outbound traffic without bound — the rate limiter was the only thing standing
+# in front of them, and it caps per address rather than per credential. The
+# internal testplan asserted the 401s these tests now hold up (see the AUTH-*
+# cases in `src/chmabapay/tools/testplan.py`).
+
+
+async def test_the_khqr_generator_routes_require_a_credential(client) -> None:
+    """No credential means 401, and it means it *before* body validation.
+
+    An empty body would otherwise be a 422, so a 422 here would prove the request
+    was being parsed by an unauthenticated handler.
+    """
+    unauthenticated = [
+        ("POST", "/v1/khqr/from-link", {}),
+        ("POST", "/v1/khqr/probe-aba-status?slug_or_url=ABAPAYpe518710Y", None),
+        ("POST", "/v1/khqr/payway/checkout", {}),
+        ("POST", "/v1/khqr/payway/status", {}),
+    ]
+    for method, path, body in unauthenticated:
+        resp = await client.request(method, path, json=body)
+        assert resp.status_code == 401, f"{method} {path} answered {resp.status_code}"
+
+    # An unknown key is refused too, rather than being treated as anonymous.
+    resp = await client.post(
+        "/v1/khqr/from-link",
+        json={"link": "https://link.payway.com.kh/ABAPAYpe518710Y", "amount": 1.0},
+        headers={"Authorization": "Bearer ck_test_0000000000000000000"},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "unauthorized"
+
+
+async def test_the_qr_renderer_stays_public(client) -> None:
+    """`render.svg` is deliberately unauthenticated: it is loaded as an `<img src>`
+    on the hosted checkout page and by `web/shared/components/KHQR.tsx`, where no
+    Authorization header can be attached. Locking it down would blank every
+    customer-facing QR, so this asserts the exemption survives future edits.
+    """
+    resp = await client.get("/v1/khqr/render.svg", params={"payload": "not-a-payload"})
+    assert resp.status_code != 401

@@ -842,9 +842,75 @@ def extract_merchant_fields(
     )
 
 
+@dataclass
+class PayWayLinkCheck:
+    """What PayWay said about a link, before it becomes a store's destination.
+
+    Three outcomes, and the difference matters because only one of them is a
+    reason to refuse the merchant's input:
+
+      - ``ok``            — the page resolved and named its merchant. The link is
+                            real. Only this outcome marks a link verified.
+      - ``not_found``     — PayWay itself answered 4xx for the slug. The link does
+                            not exist, which is the typo we want to catch before it
+                            becomes an "active" store that fails at the first sale.
+      - ``inconclusive``  — we could not reach PayWay, or could not read the page.
+                            Not the merchant's fault and not evidence of a typo, so
+                            it must never reject the input.
+    """
+
+    outcome: Literal["ok", "not_found", "inconclusive"]
+    slug: str
+    merchant_name: str | None = None
+    detail: str | None = None
+
+    @property
+    def verified(self) -> bool:
+        return self.outcome == "ok"
+
+
+async def verify_link(raw_link: str, *, timeout: float = 6.0) -> PayWayLinkCheck:
+    """Ask PayWay whether a share link exists, and read its merchant name.
+
+    Why this is a network call and not a regex: the failure it exists to prevent is
+    a *typo in the slug*, and a mistyped slug is still a perfectly well-formed
+    string. `ABAPAYpe518710Y` and `ABAPAYpe518710X` are indistinguishable by shape;
+    only PayWay can say that one of them is not a link. Before this, the platform
+    stored whatever it was given, hardcoded ``verification=verified``, and left the
+    merchant to discover the mistake as a 502 on their first customer.
+
+    The cost is an outbound fetch on the store-create/link-set path, which is why
+    the ``inconclusive`` outcome exists: if PayWay is slow or down we record the
+    link as *unverified* rather than refusing it. Turning an ABA outage into a
+    blocked signup would be a worse bug than the one being fixed.
+    """
+    slug = _extract_slug(raw_link)
+    if not slug:
+        return PayWayLinkCheck("not_found", "", None, "no link reference found")
+
+    try:
+        html = await fetch_link_html(raw_link, timeout=timeout)
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        if 400 <= status < 500:
+            # PayWay's own verdict on the slug: this link is not there.
+            return PayWayLinkCheck("not_found", slug, None, f"payway answered {status}")
+        return PayWayLinkCheck("inconclusive", slug, None, f"payway answered {status}")
+    except Exception as exc:  # noqa: BLE001 - DNS, TLS, timeout, a parser crash
+        return PayWayLinkCheck("inconclusive", slug, None, str(exc)[:200] or "unreachable")
+
+    info = extract_merchant_fields(parse_nuxt_fields(html), client_id_hint=slug)
+    if not info.merchant_name:
+        # The page came back but carried no merchant. That is a limit of reading the
+        # SSR payload, not proof the link is bogus, so it is not a rejection.
+        return PayWayLinkCheck(
+            "inconclusive", slug, None, "link page carried no merchant name"
+        )
+    return PayWayLinkCheck("ok", slug, info.merchant_name)
+
+
 def md5hex(s: str) -> str:
     return hashlib.md5(s.encode()).hexdigest()
-
 
 # --------------------------------------------------------------------------- #
 # PayWay payment status polling                                               #

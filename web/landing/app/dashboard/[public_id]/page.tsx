@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { CopyField } from "@/components/portal/CopyField";
+
 type Payment = {
   id: string | number;
   amount_cents: number;
@@ -17,6 +19,7 @@ type Payment = {
 type StoreDetail = {
   id: string;
   name?: string;
+  external_id?: string | null;
   status?: string;
   created_at?: string | null;
   [k: string]: unknown;
@@ -254,12 +257,6 @@ export default function StoreOverviewPage({
               <div className="dash-plan-label">Store details</div>
               <ul className="dash-plan-list">
                 <li>
-                  Public ID:{" "}
-                  <code className="dash-code-mono">
-                    {String(store.id).slice(0, 10)}…
-                  </code>
-                </li>
-                <li>
                   {totalPaidCount} total paid{" "}
                   {totalPaidCount === 1 ? "payment" : "payments"}
                 </li>
@@ -268,6 +265,26 @@ export default function StoreOverviewPage({
                   {transactionsCount === 1 ? "transaction" : "transactions"}
                 </li>
               </ul>
+              {/* Both identifiers are here rather than only the store id: `merchant=`
+                  is the friendlier of the two to pass from an integration, and it
+                  used to exist only inside the create wizard — set once, then
+                  unreadable anywhere afterwards. */}
+              <div className="dash-plan-label">Store ID</div>
+              <CopyField value={store.id} />
+              {store.external_id ? (
+                <>
+                  <div className="dash-plan-label">Merchant ID</div>
+                  <CopyField value={store.external_id} />
+                  <div className="dash-hint">
+                    Pass this as <code>merchant=</code> instead of the store ID.
+                  </div>
+                </>
+              ) : (
+                <div className="dash-hint">
+                  No merchant ID set. Add one in Settings to create payments with{" "}
+                  <code>merchant=</code> instead of the store ID.
+                </div>
+              )}
             </div>
           </div>
         </section>
@@ -373,7 +390,8 @@ export default function StoreOverviewPage({
                 </div>
                 <div className="dash-step-desc">
                   Receive real-time events for payment.completed,
-                  payment.scanned and more across all your stores.
+                  payment.expired, payment.reversed and more across all your
+                  stores.
                 </div>
               </div>
             </li>

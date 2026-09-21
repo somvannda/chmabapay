@@ -20,15 +20,21 @@ from . import models
 def record(
     session: AsyncSession,
     *,
-    actor: models.Account,
+    actor: models.Account | None,
     action: str,
     target_type: str,
     target_id: int,
     details: dict | None = None,
 ) -> models.AuditLog:
-    """Stage one audit row in the caller's transaction. The caller commits."""
+    """Stage one audit row in the caller's transaction. The caller commits.
+
+    `actor` is None for an action with no account to attribute it to — a sign-in
+    attempted against an address that has no account. The column is nullable
+    precisely so that attempt can still be recorded; see `_audit_login` in
+    `routers/auth.py`.
+    """
     entry = models.AuditLog(
-        actor_account_id=actor.id,
+        actor_account_id=actor.id if actor is not None else None,
         action=action,
         target_type=target_type,
         target_id=target_id,

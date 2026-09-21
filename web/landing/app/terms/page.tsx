@@ -5,14 +5,18 @@ import type { Metadata } from "next";
  *
  * Two things to know before editing this file.
  *
- * 1. **This text is submitted as a draft for legal review.** Every page carrying
- *    terms, privacy or merchant-agreement language in this repository exists as
- *    a first draft written from the system's actual behaviour, so there is a
- *    concrete artifact for a Cambodian lawyer to edit rather than a blank page.
- *    The banner below is the flag, not decoration: while it is present the text
- *    is not binding and must not be presented to real merchants as final.
- *    Removing the banner is the signal that review happened — do it deliberately,
- *    and only then.
+ * 1. **This text has still not been reviewed by a lawyer.** Every page carrying
+ *    terms, privacy or merchant-agreement language in this repository was written
+ *    from the system's actual behaviour as a first draft, so there is a concrete
+ *    artifact for a Cambodian lawyer to edit rather than a blank page — and that
+ *    review is still outstanding (`P1-4` in `docs/production-readiness.md`).
+ *
+ *    A visible "Draft / not yet binding" banner used to sit at the top of this
+ *    page. It was removed on 2026-09-18 by an explicit product decision to open
+ *    the service to real merchant traffic, **not** because the text was
+ *    reviewed. Do not read its absence as approval. When the review does happen,
+ *    replace this comment and the same one in `privacy/page.tsx` at the same time
+ *    as the text they describe.
  *
  * 2. **`TERMS_VERSION` in the backend must move with this page.** The recorded
  *    acceptance stores the version the merchant was shown, so the two are a pair:
@@ -31,16 +35,6 @@ export default function TermsPage() {
     <main className="legal-page">
       <div className="landing-shell">
         <div className="legal-shell">
-          <div className="legal-draft" role="note">
-            <span className="legal-draft-mark">Draft</span>
-            <span className="legal-draft-text">
-              This is a first draft written from how the service actually works. It
-              has not been reviewed by a qualified lawyer and is not yet binding.
-              It must be reviewed and replaced before ChmabaPay accepts real
-              merchant traffic.
-            </span>
-          </div>
-
           <span className="legal-eyebrow">Legal</span>
           <h1 className="legal-title">Terms of Service</h1>
           <p className="legal-lede">

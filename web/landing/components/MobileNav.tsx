@@ -6,7 +6,7 @@ import { useState } from "react";
  * The phone-sized menu.
  *
  * `globals.css` hides `.landing-header-links` at 768px and below, which left no
- * way to reach Product / How it works / Plans / API / Customers on a phone —
+ * way to reach Product / How it works / Plans / API / Late payments on a phone —
  * the links were simply gone. This is the disclosure that replaces them.
  *
  * Anchors are absolute (`/#plans`) rather than bare (`#plans`) because the header
@@ -18,7 +18,7 @@ const LINKS = [
   { href: "/#how-it-works", label: "How it works" },
   { href: "/#plans", label: "Plans" },
   { href: "/api/docs", label: "API" },
-  { href: "/#customers", label: "Customers" },
+  { href: "/#late-payments", label: "Late payments" },
 ] as const;
 
 const SIGN_IN_HREF = "/auth/google/login";

@@ -238,7 +238,9 @@ Body:
 `data.merchant.external_id` is your merchant id — route on it directly instead of maintaining a
 store-id map. It is `null` for stores created without an `external_id`.
 
-Event types: `payment.completed`, `payment.scanned`, `payment.expired`, `payment.failed`.
+Event types: `payment.completed`, `payment.expired`, `payment.superseded`,
+`payment.reversed`. (`payment.failed` is not produced; a development-only
+`payment.scanned` never fires in production.)
 
 **Delivery.** Any 2xx acknowledges. Anything else retries with exponential backoff
 (`2^attempt` seconds, capped at 1 hour) up to **8 attempts**, then the delivery is marked failed.

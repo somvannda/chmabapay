@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { readApiError } from "@/components/portal/apiError";
 import { useSession, type Profile } from "@/components/portal/useSession";
 
 type Payment = {
@@ -132,26 +133,35 @@ export default function DashboardOverviewPage() {
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [summaryAll, setSummaryAll] = useState<ReportSummary | null>(null);
   const [summaryToday, setSummaryToday] = useState<ReportSummary | null>(null);
+  // A failed fetch used to be indistinguishable from an empty account: the cards
+  // read $0.00 and "No stores yet" whether the account was new or the API was down.
+  // These hold the reason so the page can say what it does not know.
+  const [paymentsError, setPaymentsError] = useState<string | null>(null);
+  const [storesError, setStoresError] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
+    setPaymentsLoading(true);
+    setPaymentsError(null);
     (async () => {
       try {
         const res = await fetch("/v1/payments?limit=200", {
           credentials: "include",
         });
-        if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          const items: Payment[] = Array.isArray(data)
-            ? data
-            : Array.isArray(data?.items)
-              ? data.items
-              : Array.isArray(data?.data)
-                ? data.data
-                : [];
-          if (alive) setPaymentsList(items);
-        }
-      } catch {
+        if (!res.ok) throw new Error(await readApiError(res));
+        const data = await res.json().catch(() => ({}));
+        const items: Payment[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.items)
+            ? data.items
+            : Array.isArray(data?.data)
+              ? data.data
+              : [];
+        if (alive) setPaymentsList(items);
+      } catch (e) {
+        if (alive) setPaymentsError(e instanceof Error ? e.message : String(e));
       } finally {
         if (alive) setPaymentsLoading(false);
       }
@@ -159,25 +169,27 @@ export default function DashboardOverviewPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [reloadKey]);
 
   useEffect(() => {
     let alive = true;
+    setStoresLoading(true);
+    setStoresError(null);
     (async () => {
       try {
         const res = await fetch("/v1/stores", { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          const items: Store[] = Array.isArray(data)
-            ? data
-            : Array.isArray(data?.items)
-              ? data.items
-              : Array.isArray(data?.data)
-                ? data.data
-                : [];
-          if (alive) setStoresList(items);
-        }
-      } catch {
+        if (!res.ok) throw new Error(await readApiError(res));
+        const data = await res.json().catch(() => ({}));
+        const items: Store[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.items)
+            ? data.items
+            : Array.isArray(data?.data)
+              ? data.data
+              : [];
+        if (alive) setStoresList(items);
+      } catch (e) {
+        if (alive) setStoresError(e instanceof Error ? e.message : String(e));
       } finally {
         if (alive) setStoresLoading(false);
       }
@@ -185,7 +197,7 @@ export default function DashboardOverviewPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [reloadKey]);
 
   useEffect(() => {
     let alive = true;
@@ -204,10 +216,12 @@ export default function DashboardOverviewPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [reloadKey]);
 
   useEffect(() => {
     let alive = true;
+    setSummaryLoading(true);
+    setSummaryError(null);
     (async () => {
       // The reports summary is the only place these totals exist: the payments
       // list returns `amount` without `amount_cents`/`paid_at` and is capped at
@@ -223,15 +237,15 @@ export default function DashboardOverviewPage() {
             { credentials: "include" },
           ),
         ]);
-        if (allRes.ok) {
-          const data = await allRes.json().catch(() => null);
-          if (alive && data?.summary) setSummaryAll(data.summary);
-        }
+        if (!allRes.ok) throw new Error(await readApiError(allRes));
+        const data = await allRes.json().catch(() => null);
+        if (alive && data?.summary) setSummaryAll(data.summary);
         if (todayRes.ok) {
-          const data = await todayRes.json().catch(() => null);
-          if (alive && data?.summary) setSummaryToday(data.summary);
+          const todayData = await todayRes.json().catch(() => null);
+          if (alive && todayData?.summary) setSummaryToday(todayData.summary);
         }
-      } catch {
+      } catch (e) {
+        if (alive) setSummaryError(e instanceof Error ? e.message : String(e));
       } finally {
         if (alive) setSummaryLoading(false);
       }
@@ -239,7 +253,7 @@ export default function DashboardOverviewPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [reloadKey]);
 
   const todayCents = summaryToday?.total_matching_paid_amount_cents ?? 0;
   const todayCount = summaryToday?.total_matching_paid_count ?? 0;
@@ -262,7 +276,11 @@ export default function DashboardOverviewPage() {
     .slice(0, 5);
 
   const dataReady = !paymentsLoading && !storesLoading && !summaryLoading;
-  const isFirstRun = dataReady && storesList.length === 0;
+  // `isFirstRun` is a claim about the account, so it has to be false when we could
+  // not read the stores rather than when there are none.
+  const isFirstRun = dataReady && storesError === null && storesList.length === 0;
+  const figuresReady = dataReady && summaryError === null;
+  const anythingFailed = Boolean(paymentsError || storesError || summaryError);
 
   if (loading || !profile) {
     return <div className="dash-info">Loading ChmabaPay…</div>;
@@ -287,6 +305,22 @@ export default function DashboardOverviewPage() {
           </Link>
         </div>
       </div>
+
+      {anythingFailed && (
+        <div className="dash-warn">
+          <strong>Some of this page could not be loaded.</strong> Where a figure is
+          missing below it is because we could not read it, not because it is zero.
+          <div className="dash-empty-cta-row">
+            <button
+              type="button"
+              className="dash-btn dash-btn-secondary dash-btn-sm"
+              onClick={() => setReloadKey((k) => k + 1)}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
 
       {isFirstRun && (
         <section aria-label="Get started" className="dash-panels">
@@ -344,7 +378,7 @@ export default function DashboardOverviewPage() {
         <div className="dash-stat-card dash-stat-accent">
           <div className="dash-stat-label">Paid today</div>
           <div className="dash-stat-value">
-            {dataReady ? formatDollars(todayCents) : "—"}
+            {figuresReady ? formatDollars(todayCents) : "—"}
           </div>
           <div className="dash-stat-trend">
             {todayCount} payment{todayCount === 1 ? "" : "s"} today
@@ -353,7 +387,7 @@ export default function DashboardOverviewPage() {
         <div className="dash-stat-card">
           <div className="dash-stat-label">Settled</div>
           <div className="dash-stat-value">
-            {dataReady ? formatDollars(allTimeCents) : "—"}
+            {figuresReady ? formatDollars(allTimeCents) : "—"}
           </div>
           <div className="dash-stat-trend">
             {refundedCount > 0
@@ -364,14 +398,14 @@ export default function DashboardOverviewPage() {
         <div className="dash-stat-card">
           <div className="dash-stat-label">Avg. payment</div>
           <div className="dash-stat-value">
-            {dataReady ? formatDollars(avgCents) : "—"}
+            {figuresReady ? formatDollars(avgCents) : "—"}
           </div>
           <div className="dash-stat-trend">{allTimeCount} total paid</div>
         </div>
         <div className="dash-stat-card">
           <div className="dash-stat-label">Active stores</div>
           <div className="dash-stat-value">
-            {dataReady ? String(activeStores) : "—"}
+            {dataReady && storesError === null ? String(activeStores) : "—"}
           </div>
           <div className="dash-stat-trend">
             <Link className="dash-link-btn" href="/dashboard/stores">
@@ -386,6 +420,19 @@ export default function DashboardOverviewPage() {
           <div className="dash-panel-title">Stores</div>
           {storesLoading ? (
             <div className="dash-empty">Loading stores…</div>
+          ) : storesError ? (
+            <div className="dash-warn">
+              Your stores could not be loaded. This is not an empty account.
+              <div className="dash-empty-cta-row">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary dash-btn-sm"
+                  onClick={() => setReloadKey((k) => k + 1)}
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
           ) : storesList.length === 0 ? (
             <div className="dash-empty">
               No stores yet.
@@ -435,7 +482,22 @@ export default function DashboardOverviewPage() {
 
         <div className="dash-panel">
           <div className="dash-panel-title">Recent activity</div>
-          {recentPayments.length === 0 && dataReady ? (
+          {paymentsLoading ? (
+            <div className="dash-empty">Loading activity…</div>
+          ) : paymentsError ? (
+            <div className="dash-warn">
+              Recent activity could not be loaded. This is not a quiet account.
+              <div className="dash-empty-cta-row">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary dash-btn-sm"
+                  onClick={() => setReloadKey((k) => k + 1)}
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
+          ) : recentPayments.length === 0 && dataReady ? (
             <div className="dash-empty">
               No payments yet.
               <div className="dash-empty-desc">

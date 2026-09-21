@@ -1,13 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useState } from "react";
-
-type PlanInfo = {
-  name?: string;
-  code?: string;
-  csv_export_enabled?: boolean;
-};
+import { useState } from "react";
 
 function csvEscape(value: unknown): string {
   if (value === null || value === undefined) return "";
@@ -49,32 +42,10 @@ function today(): string {
 export default function DashboardReportsPage() {
   const [from, setFrom] = useState<string>(defaultFrom());
   const [to, setTo] = useState<string>(today());
-  const [csvEnabled, setCsvEnabled] = useState<boolean | null>(null);
   const [paymentsBusy, setPaymentsBusy] = useState(false);
   const [storesBusy, setStoresBusy] = useState(false);
   const [paymentsError, setPaymentsError] = useState<string | null>(null);
   const [storesError, setStoresError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await fetch("/v1/billing/subscription", {
-          credentials: "include",
-        });
-        if (res.ok && res.status !== 501) {
-          const data = await res.json().catch(() => null);
-          const plan: PlanInfo | null =
-            data && typeof data.plan === "object" ? data.plan : null;
-          if (alive && plan) setCsvEnabled(Boolean(plan.csv_export_enabled));
-        }
-      } catch {
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   async function handleDownloadPayments() {
     setPaymentsError(null);
@@ -86,11 +57,6 @@ export default function DashboardReportsPage() {
       const res = await fetch(`/v1/reports/payments.csv?${params.toString()}`, {
         credentials: "include",
       });
-      if (res.status === 403) {
-        setCsvEnabled(false);
-        setPaymentsError("CSV exports are not available on your current plan.");
-        return;
-      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       triggerDownload(blob, `chmabapay-payments-${yyyymmdd(new Date())}.csv`);
@@ -137,8 +103,6 @@ export default function DashboardReportsPage() {
     }
   }
 
-  const csvLocked = csvEnabled === false;
-
   return (
     <>
       <div className="dash-page-head">
@@ -149,15 +113,6 @@ export default function DashboardReportsPage() {
           </div>
         </div>
       </div>
-
-      {csvLocked && (
-        <div className="dash-warn">
-          CSV exports are not available on your current plan.{" "}
-          <Link className="dash-link-btn" href="/dashboard/billing">
-            View plans
-          </Link>
-        </div>
-      )}
 
       <section aria-label="Exports" className="dash-panels">
         <div className="dash-panel">

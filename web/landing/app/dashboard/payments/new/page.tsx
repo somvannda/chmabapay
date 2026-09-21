@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { readApiErrorInfo } from "@/components/portal/apiError";
+
 type StoreOption = {
   id: string;
   name: string;
@@ -25,6 +27,7 @@ export default function DashboardPaymentsNewPage() {
   const [metaVal2, setMetaVal2] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [upgrade, setUpgrade] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -100,6 +103,7 @@ export default function DashboardPaymentsNewPage() {
     if (!isFormValid() || submitting) return;
     setSubmitting(true);
     setFormError(null);
+    setUpgrade(false);
     try {
       const body: Record<string, unknown> = {
         amount: parsedAmount,
@@ -124,8 +128,9 @@ export default function DashboardPaymentsNewPage() {
         router.push("/dashboard/payments");
         return;
       }
-      const err = await res.json().catch(() => ({}));
-      setFormError(err?.detail || "Failed to create payment.");
+      const info = await readApiErrorInfo(res);
+      setFormError(info.message);
+      setUpgrade(info.upgrade);
     } catch {
       setFormError("Network error. Please try again.");
     } finally {
@@ -152,9 +157,17 @@ export default function DashboardPaymentsNewPage() {
         </div>
       </div>
 
-      {formError && (
-        <div className="dash-form-alert dash-form-alert-error">{formError}</div>
-      )}
+      {formError &&
+        (upgrade ? (
+          <div className="dash-warn">
+            <strong>Plan limit reached.</strong> {formError}{" "}
+            <Link className="dash-link-btn" href="/dashboard/billing">
+              Upgrade your plan
+            </Link>
+          </div>
+        ) : (
+          <div className="dash-form-alert dash-form-alert-error">{formError}</div>
+        ))}
 
       <form className="dash-panel dash-form" onSubmit={handleSubmit}>
         <div className="dash-form-row">

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { readApiError } from "@/lib/apiError";
+import { apiFetch } from "@/lib/apiFetch";
 import { useToast } from "@/components/Toast";
 
 type Plan = {
@@ -14,7 +15,6 @@ type Plan = {
   max_stores: number | null;
   max_keys_per_account: number;
   max_webhooks_per_account: number;
-  csv_export_enabled: boolean;
   priority_support: boolean;
   is_public: boolean;
   is_active: boolean;
@@ -31,7 +31,6 @@ type Draft = {
   max_stores: string;
   max_keys_per_account: string;
   max_webhooks_per_account: string;
-  csv_export_enabled: boolean;
   priority_support: boolean;
   is_public: boolean;
   is_active: boolean;
@@ -72,7 +71,6 @@ function toDraft(plan: Plan): Draft {
     max_stores: plan.max_stores === null ? "" : String(plan.max_stores),
     max_keys_per_account: String(plan.max_keys_per_account),
     max_webhooks_per_account: String(plan.max_webhooks_per_account),
-    csv_export_enabled: plan.csv_export_enabled,
     priority_support: plan.priority_support,
     is_public: plan.is_public,
     is_active: plan.is_active,
@@ -180,7 +178,6 @@ function buildPatch(
   if (copyError) return { patch: {}, error: copyError };
 
   const boolFields: { draft: keyof Draft; plan: keyof Plan }[] = [
-    { draft: "csv_export_enabled", plan: "csv_export_enabled" },
     { draft: "priority_support", plan: "priority_support" },
     { draft: "is_public", plan: "is_public" },
     { draft: "is_active", plan: "is_active" },
@@ -330,14 +327,6 @@ function PlanFields<T extends Draft>({
           <label>
             <input
               type="checkbox"
-              checked={draft.csv_export_enabled}
-              onChange={(e) => onChange("csv_export_enabled", e.target.checked)}
-            />{" "}
-            CSV export
-          </label>
-          <label>
-            <input
-              type="checkbox"
               checked={draft.priority_support}
               onChange={(e) => onChange("priority_support", e.target.checked)}
             />{" "}
@@ -383,7 +372,6 @@ const NEW_PLAN: CreateDraft = {
   max_stores: "1",
   max_keys_per_account: "1",
   max_webhooks_per_account: "5",
-  csv_export_enabled: true,
   priority_support: false,
   is_public: true,
   is_active: true,
@@ -413,7 +401,7 @@ export default function AdminPlansPage() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch("/v1/admin/plans", { credentials: "include" });
+      const res = await apiFetch("/v1/admin/plans", { credentials: "include" });
       if (!res.ok) throw new Error(await readApiError(res));
       const data = (await res.json()) as Plan[];
       setPlans(Array.isArray(data) ? data : []);
@@ -469,7 +457,7 @@ export default function AdminPlansPage() {
       setSavingId(plan.id);
       setErrorMsg(null);
       try {
-        const res = await fetch(`/v1/admin/plans/${plan.id}`, {
+        const res = await apiFetch(`/v1/admin/plans/${plan.id}`, {
           method: "PATCH",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -525,7 +513,6 @@ export default function AdminPlansPage() {
       name,
       tagline: tagline || null,
       features,
-      csv_export_enabled: newPlan.csv_export_enabled,
       priority_support: newPlan.priority_support,
       is_public: newPlan.is_public,
       is_active: newPlan.is_active,
@@ -552,7 +539,7 @@ export default function AdminPlansPage() {
     setCreating(true);
     setErrorMsg(null);
     try {
-      const res = await fetch("/v1/admin/plans", {
+      const res = await apiFetch("/v1/admin/plans", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -584,7 +571,7 @@ export default function AdminPlansPage() {
       setDeletingId(plan.id);
       setErrorMsg(null);
       try {
-        const res = await fetch(`/v1/admin/plans/${plan.id}`, {
+        const res = await apiFetch(`/v1/admin/plans/${plan.id}`, {
           method: "DELETE",
           credentials: "include",
         });
@@ -841,16 +828,6 @@ export default function AdminPlansPage() {
                           <label className="dash-check">
                             <input
                               type="checkbox"
-                              checked={draft.csv_export_enabled}
-                              onChange={(e) =>
-                                setDraftField("csv_export_enabled", e.target.checked)
-                              }
-                            />{" "}
-                            CSV
-                          </label>
-                          <label className="dash-check">
-                            <input
-                              type="checkbox"
                               checked={draft.priority_support}
                               onChange={(e) =>
                                 setDraftField("priority_support", e.target.checked)
@@ -936,7 +913,6 @@ export default function AdminPlansPage() {
                         <td>{nf.format(plan.max_webhooks_per_account)}</td>
                         <td>
                           <div className="dash-flags">
-                            <Flag on={plan.csv_export_enabled} label="CSV" />
                             <Flag on={plan.priority_support} label="Priority" />
                             <Flag on={plan.is_public} label="Public" />
                             <Flag on={plan.is_active} label="Active" />

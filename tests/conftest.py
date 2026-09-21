@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 
 TEST_DB = "chmabapay_test.db"
 
@@ -34,6 +35,7 @@ import pytest_asyncio  # noqa: E402
 from sqlalchemy import select, text  # noqa: E402
 
 from chmabapay import models  # noqa: E402
+from chmabapay.config import get_settings  # noqa: E402
 from chmabapay.db import engine, session_factory  # noqa: E402
 from chmabapay.main import app  # noqa: E402
 from chmabapay.schemas import LinkIn, StoreCreate  # noqa: E402
@@ -105,18 +107,40 @@ def _no_live_aba(request, monkeypatch):
         payments_svc, "create_hosted_checkout", fake_create_hosted_checkout
     )
 
+    # And the same for the link check: attaching a PayWay link to a store asks ABA
+    # whether that slug exists, which is another live fetch on the store-write path.
+    # Stubbed as a link that resolves, so a store created with a link still reads
+    # `active`. Tests about the check itself replace this with the outcome they need
+    # (`not_found`, `inconclusive`) — see tests/test_store_links.py.
+    from chmabapay.services import payway_parser
+
+    async def fake_verify_link(raw_link: str, *, timeout: float = 6.0):
+        return payway_parser.PayWayLinkCheck(
+            outcome="ok",
+            slug=payway_parser._extract_slug(raw_link),
+            merchant_name="Probed Merchant",
+        )
+
+    monkeypatch.setattr(payway_parser, "verify_link", fake_verify_link)
+
 
 @pytest.fixture(autouse=True)
 def _fresh_rate_limits():
-    """Every test starts with empty request counters.
+    """Every test starts with empty request counters and no login lockout.
 
     Limits are counted per caller, and the whole suite is one caller: one
     process, one client address. Without this, a test that deliberately exhausts
-    a bucket would leak its count into whichever test ran next.
+    a bucket would leak its count into whichever test ran next. The sign-in
+    lockout has the same shape of problem one level down — it is keyed per email,
+    and several tests sign in as the same fixture account, so a test that
+    deliberately fails a login five times would lock out every test after it.
     """
     limiter = getattr(app.state, "rate_limiter", None)
     if limiter is not None:
         limiter.reset()
+    lockout = getattr(app.state, "login_lockout", None)
+    if lockout is not None:
+        lockout.reset()
 
 
 @pytest.fixture(autouse=True)
@@ -143,9 +167,29 @@ async def _fresh_db():
     await engine.dispose()
 
 
-async def make_account(email: str = "pos@chmaba.test", name: str = "Chmaba POS"):
+async def make_account(
+    email: str = "pos@chmaba.test",
+    name: str = "Chmaba POS",
+    *,
+    terms_accepted: bool = True,
+):
+    """A merchant account, onboarded by default.
+
+    The terms are marked accepted unless a caller opts out, because minting an API
+    key is refused until they are (`_require_terms_accepted` in `routers/keys.py`)
+    and nearly every test reaches the API with a key. A test whose subject *is*
+    onboarding — the acceptance flow, or what an un-accepted account may do — asks
+    for `terms_accepted=False` rather than widening this fixture, or it silently
+    stops representing a real merchant.
+    """
+    published = get_settings().terms_version
     async with session_factory() as session:
-        account = models.Account(email=email, name=name)
+        account = models.Account(
+            email=email,
+            name=name,
+            terms_accepted_version=published if terms_accepted else None,
+            terms_accepted_at=datetime.now(UTC) if terms_accepted else None,
+        )
         session.add(account)
         await session.commit()
         await session.refresh(account)

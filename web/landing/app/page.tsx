@@ -18,7 +18,7 @@ const featureCards = [
     index: "01",
     icon: "setup",
     title: "Set up in minutes",
-    body: "Create your workspace, connect ABA PayWay or Bakong, and go live without a heavy setup process.",
+    body: "Create your workspace, connect your ABA PayWay link, and go live without a heavy setup process.",
   },
   {
     index: "02",
@@ -96,7 +96,7 @@ function HeroSection() {
             </h1>
             <p className="landing-hero-description">
               ChmabaPay brings checkouts, payment visibility, and cleaner operations into one calm
-              workspace for KHQR, Bakong, and ABA PayWay.
+              workspace for KHQR payments over ABA PayWay.
             </p>
 
             <div className="landing-button-row landing-hero-actions">
@@ -336,8 +336,8 @@ async function PricingSection() {
         </div>
 
         <p className="landing-pricing-footnote">
-          Money from each payment goes straight to your own ABA or Bakong account. ChmabaPay does not
-          hold funds or settle on your behalf.
+          Money from each payment goes straight to your own ABA PayWay account. ChmabaPay does not
+          hold funds and does not move them on your behalf.
         </p>
       </div>
     </section>
@@ -346,13 +346,13 @@ async function PricingSection() {
 
 function ClosingSection() {
   return (
-    <section id="customers" className="landing-section landing-surface">
+    <section id="late-payments" className="landing-section landing-surface">
       <div className="landing-shell">
         <div className="landing-closing-grid">
           <div className="landing-testimonial-card">
             <p className="landing-testimonial-quote">
               An expired code is not a lost sale. If a customer pays after the window closes, we
-              keep reconciling and settle the payment anyway — so what you report matches what
+              keep confirming and record the payment as paid anyway — so what you report matches what
               reached the bank.
             </p>
             <div className="landing-testimonial-author">

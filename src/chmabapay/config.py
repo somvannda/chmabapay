@@ -117,6 +117,14 @@ class Settings(BaseSettings):
     # means the loop is gone rather than busy.
     alert_worker_stall_seconds: float = 60.0
     alert_webhook_backlog: int = 50
+    # A backlog says the queue is not draining; this says the rail is *working* and
+    # failing. A merchant whose endpoint refuses every POST keeps its deliveries
+    # moving — each one goes `retrying`, then `failed` — so the backlog never grows
+    # and only the ratio moves. Callers below the sample floor are ignored so a
+    # single failed delivery on a quiet night cannot page.
+    alert_webhook_failure_rate: float = 0.1
+    alert_webhook_failure_window_seconds: float = 900.0
+    alert_webhook_failure_min_sample: int = 20
     # Error tracking (P1-3) shares that channel. First sighting of an exception is
     # sent immediately; repeats inside this window are counted and summarised with
     # the next report. Five minutes is long enough that a hot error cannot flood the
@@ -139,6 +147,13 @@ class Settings(BaseSettings):
     retention_gateway_raw_days: int = 90
     # Once a day. The sweep is idempotent, so a missed day costs nothing.
     retention_sweep_interval_seconds: float = 86400.0
+
+    # Billing invoice issuance. Hourly rather than daily, because a subscription
+    # becomes due at an arbitrary moment (a signup on the 14th is due on the 14th)
+    # and the invoice should appear close to that moment rather than up to a day
+    # later. Issuance is idempotent on (account_id, period_month), so the frequency
+    # costs one indexed query per sweep and can never double-bill.
+    billing_sweep_interval_seconds: float = 3600.0
 
     # Bakong Open API integration
     bakong_base_url: str = "https://api-bakong.nbc.gov.kh"

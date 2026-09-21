@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { useToast } from "@/components/Toast";
 import { readApiError } from "@/lib/apiError";
+import { apiFetch } from "@/lib/apiFetch";
 
 type AdminDeliveryRow = {
   id: number;
@@ -84,17 +86,34 @@ function isOverdue(row: AdminDeliveryRow): boolean {
 }
 
 export default function AdminDeliveriesPage() {
+  const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<AdminDeliveryRow[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState<number | null>(null);
+  const { notify } = useToast();
 
   const [status, setStatus] = useState("");
   const [endpointId, setEndpointId] = useState("");
   const [accountId, setAccountId] = useState("");
   const [page, setPage] = useState(1);
 
+  // Seeded from the URL so the overview's failure counter can link straight to the
+  // rows it counted, and so a filtered view can be pasted into a thread.
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const initialStatus = params.get("status") || "";
+    const initialEndpoint = params.get("endpoint_id") || "";
+    const initialAccount = params.get("account_id") || "";
+    if (initialStatus) setStatus(initialStatus);
+    if (initialEndpoint) setEndpointId(initialEndpoint);
+    if (initialAccount) setAccountId(initialAccount);
+    setReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return;
     let alive = true;
     setLoading(true);
     setErrorMsg(null);
@@ -106,7 +125,7 @@ export default function AdminDeliveriesPage() {
         if (accountId) params.set("account_id", accountId);
         params.set("page", String(page));
         params.set("per_page", "25");
-        const res = await fetch(`/v1/admin/deliveries?${params.toString()}`, {
+        const res = await apiFetch(`/v1/admin/deliveries?${params.toString()}`, {
           credentials: "include",
         });
         if (!res.ok) throw new Error(await readApiError(res));
@@ -123,7 +142,40 @@ export default function AdminDeliveriesPage() {
     return () => {
       alive = false;
     };
-  }, [status, endpointId, accountId, page]);
+  }, [ready, status, endpointId, accountId, page]);
+
+  // The row-level counterpart to the payment page's "re-deliver": one endpoint was
+  // down, one event never arrived, and the merchant has already fixed their side.
+  const retry = useCallback(
+    async (row: AdminDeliveryRow) => {
+      setBusy(row.id);
+      try {
+        const res = await apiFetch(`/v1/admin/deliveries/${row.id}/retry`, {
+          method: "POST",
+          credentials: "include",
+        });
+        if (!res.ok) throw new Error(await readApiError(res));
+        const data = (await res.json()) as { retried: boolean };
+        notify(
+          data.retried
+            ? "Delivery queued — the sender picks it up on its next pass."
+            : "That delivery was already queued to go.",
+        );
+        setRows((current) =>
+          current.map((item) =>
+            item.id === row.id
+              ? { ...item, status: "retrying", attempts: 0 }
+              : item,
+          ),
+        );
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [notify],
+  );
 
   const clearFilters = useCallback(() => {
     setStatus("");
@@ -226,6 +278,7 @@ export default function AdminDeliveriesPage() {
                 <th>Last response</th>
                 <th>Next attempt</th>
                 <th>Created</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -268,6 +321,21 @@ export default function AdminDeliveriesPage() {
                       {overdue && <div className="dash-sub">overdue</div>}
                     </td>
                     <td>{formatDateTime(row.created_at)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="dash-btn dash-btn-secondary dash-btn-sm"
+                        onClick={() => void retry(row)}
+                        disabled={busy !== null}
+                        title={
+                          row.status === "success"
+                            ? "Send it again even though it succeeded."
+                            : "Queue this delivery to go out now."
+                        }
+                      >
+                        {busy === row.id ? "Retrying…" : "Retry"}
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
