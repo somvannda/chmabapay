@@ -100,18 +100,32 @@
 /* Buttons and selects are drawn entirely by this stylesheet. Removing the platform
    appearance is what stops the browser substituting its own rendering — which is
    where the system accent colour and the system UI font entered, and the whole
-   reason a violet button could come back green and oversized. The `-webkit-` line is
-   not redundant: Tailwind's Preflight sets `-webkit-appearance: button` on these
-   elements, and the two spellings are aliases of one property, so both have to be
-   cleared for the platform look to actually be gone. Every `<select>` in the console
-   already carries `.dash-select`, which draws its own arrow, so dropping the platform
-   arrow changes nothing.
+   reason a violet button could come back green and oversized.
+
+   The full selector list is load-bearing: Tailwind's Preflight writes
+   `button, [type='button'], [type='reset'], [type='submit'] { -webkit-appearance:
+   button }`, and those attribute selectors give it specificity (0,1,1). A bare
+   `button { appearance: none }` is (0,0,1), so Preflight silently WON and the
+   platform look never actually went away — the earlier fix was a no-op. Matching the
+   selector list makes this rule tie Preflight on specificity, and because it comes
+   later in the file it wins.
+
+   `forced-color-adjust: none` is the same defence for Windows High Contrast /
+   Forced Colors mode, which overrides author colours on native controls regardless
+   of appearance. `accent-color` (set on :root) still governs the genuinely native
+   checkboxes. Every `<select>` in the console already carries `.dash-select`, which
+   draws its own arrow, so dropping the platform arrow changes nothing.
+
    Deliberately not applied to `input`: the checkboxes on Plans, Payments and
    Deliveries are real checkboxes, and `appearance: none` would erase the tick. */
 button,
+[type='button'],
+[type='submit'],
+[type='reset'],
 select {
   -webkit-appearance: none;
   appearance: none;
+  forced-color-adjust: none;
 }
 
 html {

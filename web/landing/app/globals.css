@@ -87,12 +87,18 @@
 /* Same baseline as web/admin/app/globals.css: the platform appearance is what let
    Chrome on Windows paint buttons with the system accent colour and the system UI
    font, so a violet button could arrive green and oversized while Firefox drew it
-   correctly. `accent-color` keeps the genuinely native controls (checkboxes, radios)
-   on the brand violet instead of the user's Windows accent. */
+   correctly. The full selector list matches Tailwind's Preflight on specificity —
+   a bare `button` selector loses to Preflight's `[type='submit']` etc., which is why
+   the earlier one-line version was a no-op. `accent-color` (on :root) keeps the
+   genuinely native controls (checkboxes, radios) on brand violet. */
 button,
+[type='button'],
+[type='submit'],
+[type='reset'],
 select {
   -webkit-appearance: none;
   appearance: none;
+  forced-color-adjust: none;
 }
 
 
