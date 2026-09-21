@@ -268,6 +268,9 @@ async def _ensure_hq_store(session: AsyncSession, account: models.Account) -> No
             )
         ).scalar_one_or_none()
     if existing is not None:
+        # The store being seeded (or already present) is the platform's own, so mark it
+        # internal even when it was created before this flag existed. The caller commits.
+        existing.is_internal = True
         return
 
     # Imported here rather than at module scope: `services.payments` pulls in the
@@ -278,6 +281,7 @@ async def _ensure_hq_store(session: AsyncSession, account: models.Account) -> No
         account_id=account.id,
         public_id=configured_id or gen_public_id("st_"),
         name=HQ_STORE_NAME,
+        is_internal=True,
         status=models.ACCOUNT_ACTIVE,
         city="Phnom Penh",
     )

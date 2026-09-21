@@ -431,6 +431,7 @@ async def get_account_detail(
                 "name": store.name,
                 "external_id": store.external_id,
                 "status": store.status,
+                "is_internal": store.is_internal,
             }
             for store in stores
         ],
@@ -1205,6 +1206,78 @@ async def enable_account_store(
         "account_id": store.account_id,
         "status": store.status,
         "enabled": True,
+    }
+
+
+class StoreInternalIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    is_internal: bool
+    # Optional, and recorded when given: flagging a store internal is what stops it
+    # counting against the owning account's quota and moves its takings out of merchant
+    # volume, so a one-line explanation is worth keeping next to the change.
+    reason: str | None = Field(default=None, max_length=500)
+
+
+@router.put("/stores/{store_public_id}/internal")
+async def set_account_store_internal(
+    store_public_id: str,
+    body: StoreInternalIn,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Mark (or unmark) a store as the platform's own.
+
+    An internal store is the platform's own storefront — "ChmabaPay HQ" is the one this
+    exists for — and is treated differently from a merchant tenant: it is exempt from
+    the account's monthly quota, writes no usage-ledger row, and its takings are
+    reported as platform revenue rather than merchant GMV. This route makes the concept
+    editable by hand instead of only something the HQ link route sets implicitly.
+
+    Quiet on a repeat: setting the flag to the value it already holds changes nothing,
+    so it records nothing — the same rule the disable and enable routes follow.
+    """
+    store = (
+        await session.execute(
+            select(models.Store).where(models.Store.public_id == store_public_id)
+        )
+    ).scalar_one_or_none()
+    if store is None:
+        raise HTTPException(status_code=404, detail="store_not_found")
+
+    if store.is_internal == body.is_internal:
+        return {
+            "id": store.public_id,
+            "account_id": store.account_id,
+            "is_internal": store.is_internal,
+            "changed": False,
+        }
+
+    previous = store.is_internal
+    store.is_internal = body.is_internal
+    details: dict[str, Any] = {
+        "account_id": store.account_id,
+        "name": store.name,
+        "from": previous,
+        "to": body.is_internal,
+    }
+    if body.reason:
+        details["reason"] = body.reason
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="store.internal_changed",
+        target_type="Store",
+        target_id=store.id,
+        details=details,
+    )
+    await session.commit()
+    await session.refresh(store)
+    return {
+        "id": store.public_id,
+        "account_id": store.account_id,
+        "is_internal": store.is_internal,
+        "changed": True,
     }
 
 
@@ -2023,9 +2096,15 @@ async def admin_overview(
         )
     ).scalar_one()
 
+    # Merchant volume excludes the platform's own internal stores. Without the join an
+    # operator reading "Paid today" would see the plan fees merchants paid *us* reported
+    # as though they were merchant GMV; that money is broken out below instead.
     paid_today_count = (
         await session.execute(
-            select(func.count(models.Payment.id)).where(
+            select(func.count(models.Payment.id))
+            .join(models.Store, models.Store.id == models.Payment.store_id)
+            .where(
+                models.Store.is_internal.is_(False),
                 models.Payment.status == models.PAYMENT_PAID,
                 models.Payment.paid_at >= today_start,
             )
@@ -2033,9 +2112,37 @@ async def admin_overview(
     ).scalar_one() or 0
     paid_today_cents = (
         await session.execute(
-            select(func.coalesce(func.sum(models.Payment.amount_cents), 0)).where(
+            select(func.coalesce(func.sum(models.Payment.amount_cents), 0))
+            .join(models.Store, models.Store.id == models.Payment.store_id)
+            .where(
+                models.Store.is_internal.is_(False),
                 models.Payment.status == models.PAYMENT_PAID,
                 models.Payment.paid_at >= today_start,
+            )
+        )
+    ).scalar_one()
+    # The platform's own revenue, from internal stores only — plan fees collected into
+    # "ChmabaPay HQ". Reported separately rather than summed into merchant volume, which
+    # is the whole reason internal stores exist as a category.
+    platform_revenue_today_cents = (
+        await session.execute(
+            select(func.coalesce(func.sum(models.Payment.amount_cents), 0))
+            .join(models.Store, models.Store.id == models.Payment.store_id)
+            .where(
+                models.Store.is_internal.is_(True),
+                models.Payment.status == models.PAYMENT_PAID,
+                models.Payment.paid_at >= today_start,
+            )
+        )
+    ).scalar_one()
+    platform_revenue_this_month_cents = (
+        await session.execute(
+            select(func.coalesce(func.sum(models.Payment.amount_cents), 0))
+            .join(models.Store, models.Store.id == models.Payment.store_id)
+            .where(
+                models.Store.is_internal.is_(True),
+                models.Payment.status == models.PAYMENT_PAID,
+                models.Payment.paid_at >= month_start,
             )
         )
     ).scalar_one()
@@ -2076,6 +2183,10 @@ async def admin_overview(
         "mrr_cents": int(mrr_cents or 0),
         "paid_today_count": paid_today_count,
         "paid_today_cents": int(paid_today_cents or 0),
+        "platform_revenue_today_cents": int(platform_revenue_today_cents or 0),
+        "platform_revenue_this_month_cents": int(
+            platform_revenue_this_month_cents or 0
+        ),
         "needs_attention": attention,
         "ops": ops,
     }
@@ -2443,6 +2554,10 @@ async def set_hq_store_link(
         raise HTTPException(status_code=400, detail="invalid_payway_link")
 
     store = await _hq_store_for_write(session, ctx.account)
+    # The store this link points at collects plan fees, which makes it the platform's
+    # own store rather than a merchant tenant: internal stores are exempt from the
+    # monthly quota and excluded from merchant GMV (see `models.Store.is_internal`).
+    store.is_internal = True
     await store_svc.attach_link_to_store(
         session,
         store,
@@ -2460,6 +2575,7 @@ async def set_hq_store_link(
     details: dict[str, Any] = {
         "merchant_account_id": merchant_account_id,
         "raw_link": raw_link,
+        "is_internal": True,
     }
     if body.reason:
         details["reason"] = body.reason

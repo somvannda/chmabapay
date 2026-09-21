@@ -10,6 +10,9 @@ type Store = {
   name: string;
   status: string;
   created_at?: string | null;
+  // True for the platform's own store ("ChmabaPay HQ"), from which plan fees are
+  // collected. Shown rather than hidden, so the owner sees why it is different.
+  is_internal?: boolean;
   [k: string]: unknown;
 };
 
@@ -237,6 +240,12 @@ export default function DashboardStoresPage() {
                     >
                       {s.name}
                     </Link>
+                    {s.is_internal && (
+                      <span className="dash-badge dash-badge-muted">
+                        {" "}
+                        platform store
+                      </span>
+                    )}
                   </td>
                   <td>
                     <span className={pillClassForStatus(s.status)}>

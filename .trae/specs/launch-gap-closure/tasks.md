@@ -1154,6 +1154,30 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   recording this audit and what it closed.
 - **Test**: the probes, re-run against production.
 
+### T-47 — Give the platform its own separate context, so it is not its own tenant
+- **Status**: `pending` · **Priority**: S1 · **Gaps**: new (found 2026-09-21, "should we subscribe ourselves to our own plan?") · **Depends on**: T-44
+- **Description**: asked whether the platform should be on its own plan, the answer
+  turned out to be that the code currently makes it a tenant **and meters it**. Verified
+  in source: `check_plan_quota` (`services/payments.py:380-410`) has no exemption, and
+  `count_paid_payments_this_month` (`:413-426`) counts every paid payment on the
+  account's stores; `_record_plan_ledger_entry(store.account_id, payment)` is called from
+  `mark_paid` (`:635`) — and the HQ store **belongs to the platform-admin account**, so
+  **every plan fee a merchant pays writes a usage and volume row against the platform's
+  own account**; and the console's paid-today figure (`routers/admin.py:2034-2041`) sums
+  every paid payment platform-wide with no exclusion, so platform revenue would appear as
+  platform GMV. `grant-admin` attaching a free subscription is defensive and harmless in
+  itself (the account needs a billing row to hold an invoice), but it is what makes the
+  platform read as a tenant.
+  **The decision is to model this as a separate kind, not a discount**: a store that
+  belongs to the platform is an *internal store*, a first-class category rather than an
+  identity check inside the money path. That way the platform owner gets a real working
+  context — its own storefront receiving plan fees by KHQR through its own ABA PayWay
+  link — that is instrumented apart from merchant tenancy instead of being metered by it.
+- **Test**: pytest — an internal store's paid payment does not move the owning account's
+  month count, does not append a usage-ledger row, and is excluded from the console's
+  merchant volume while appearing in platform revenue; a merchant payment is unaffected
+  in every one of those four places.
+
 > **Launch gate.** When Wave 8 closes, the only open items are the ones no code can close,
 > and each is stated rather than implied:
 > 1. **P1-4 — the lawyer review.** T-43 removes the last code-visible trace of the draft

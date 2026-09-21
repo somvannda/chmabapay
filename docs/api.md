@@ -300,6 +300,11 @@ Codes returned in `detail` (verified against `src/`):
   stores on the account. Pending, scanned, expired and failed payments never count, and the
   window is keyed on `paid_at` — the month the money landed, not the month the code was minted.
   Exhausted → create returns `402` until the month rolls over or the plan is upgraded.
+- A store can be marked **internal** on the store object (`is_internal`), which means it belongs
+  to the platform itself rather than a merchant tenant — "ChmabaPay HQ" is the one such store,
+  and it is where plan fees are collected. An internal store's payments are exempt from quota,
+  count no usage against the owning account, and are reported as platform revenue rather than
+  merchant volume. Merchant stores are `is_internal: false`.
 - `metadata` is **not** validated: no key count, byte size or nesting depth is enforced, so keep
   it small yourself. The only hard ceiling on a request body is the edge's
   `client_max_body_size`, which is nginx's 1 MB default — nothing in this repository raises it.

@@ -613,3 +613,169 @@ async def test_account_detail_exposes_keys_limits_and_usage(client):
     assert detail["limits"]["max_stores"] == 5
     assert detail["limits"]["payments_included"] == 15000
     assert [s["id"] for s in detail["stores"]] == [store.public_id]
+
+
+# --------------------------------------------------------------------------- #
+# Internal stores — the platform's own storefront, not a merchant tenant
+# --------------------------------------------------------------------------- #
+async def make_paid_payment(client, account, store, *, amount_cents: int) -> dict:
+    """A live payment on `store`, settled through the dev gateway.
+
+    Uses the offline builder (`hosted_qr: false`) so the test exercises our own state
+    machine; the conftest `_no_live_aba` fixture keeps the hosted path off the network
+    either way.
+    """
+    raw_key, _ = await make_key(account)
+    created = (
+        await client.post(
+            "/v1/payments",
+            json={
+                "amount": amount_cents / 100,
+                "reference_id": "order_internal",
+                "store": store.public_id,
+                "hosted_qr": False,
+            },
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+    ).json()
+    settled = await client.post(f"/_dev/payments/{created['id']}/pay")
+    assert settled.status_code == 200, settled.text
+    return created
+
+
+async def month_count(account_id: int) -> int:
+    from chmabapay.services.payments import count_paid_payments_this_month
+
+    async with session_factory() as session:
+        return await count_paid_payments_this_month(session, account_id)
+
+
+async def ledger_rows(account_id: int) -> list[models.PlanLedgerEntry]:
+    async with session_factory() as session:
+        return list(
+            (
+                await session.execute(
+                    select(models.PlanLedgerEntry).where(
+                        models.PlanLedgerEntry.account_id == account_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+async def test_an_internal_store_is_not_metered_and_reports_as_platform_revenue(
+    client,
+):
+    """The platform's own store takes plan fees; none of that is merchant activity.
+
+    The store hangs off the platform-admin account, so without the flag every rule
+    keyed on "this account's stores" would treat the platform as one of its own
+    merchants — counting plan fees against its quota, writing usage ledger rows for
+    them, and reporting them as platform-wide merchant volume.
+    """
+    operator = await make_operator()
+    internal_store = await make_store(operator, name="ChmabaPay HQ", owner="Hq")
+    merchant = await make_merchant()
+    merchant_store = await make_store(merchant, name="Sokha Cafe")
+
+    async with signed_in(operator) as admin:
+        marked = await admin.put(
+            f"/v1/admin/stores/{internal_store.public_id}/internal",
+            json={"is_internal": True, "reason": "this is where plan fees land"},
+        )
+        assert marked.status_code == 200, marked.text
+        assert marked.json()["is_internal"] is True
+        assert marked.json()["changed"] is True
+
+    # A plan fee paid into the internal store…
+    await make_paid_payment(client, operator, internal_store, amount_cents=2500)
+    # …and an ordinary merchant sale, which must still behave as it always did.
+    await make_paid_payment(client, merchant, merchant_store, amount_cents=1250)
+
+    # 1. The internal store's payment does not count toward the owning account's month.
+    assert await month_count(operator.id) == 0
+    assert await month_count(merchant.id) == 1
+
+    # 2. It writes no usage-ledger row; the merchant's does.
+    assert await ledger_rows(operator.id) == []
+    merchant_ledger = await ledger_rows(merchant.id)
+    assert len(merchant_ledger) == 1
+    assert merchant_ledger[0].amount_cents_delta == 1250
+
+    async with signed_in(operator) as admin:
+        overview = (await admin.get("/v1/admin/overview")).json()
+
+    # 3. Excluded from merchant volume…
+    assert overview["paid_today_count"] == 1
+    assert overview["paid_today_cents"] == 1250
+    # 4. …and surfaced as platform revenue instead, not summed into the volume above.
+    assert overview["platform_revenue_today_cents"] == 2500
+    assert overview["platform_revenue_this_month_cents"] == 2500
+
+    # The change is audited, and the reason travels with it.
+    entries = await rows("store.internal_changed")
+    assert len(entries) == 1
+    assert entries[0].actor_account_id == operator.id
+    assert entries[0].target_type == "Store"
+    assert entries[0].details["from"] is False
+    assert entries[0].details["to"] is True
+    assert entries[0].details["reason"] == "this is where plan fees land"
+
+
+async def test_marking_a_store_internal_is_quiet_on_a_repeat(client):
+    """Setting the flag to the value it already holds changes nothing, so records nothing."""
+    operator = await make_operator()
+    store = await make_store(operator, name="ChmabaPay HQ", owner="Hq")
+
+    async with signed_in(operator) as admin:
+        first = await admin.put(
+            f"/v1/admin/stores/{store.public_id}/internal",
+            json={"is_internal": True},
+        )
+        assert first.json()["changed"] is True
+
+        again = await admin.put(
+            f"/v1/admin/stores/{store.public_id}/internal",
+            json={"is_internal": True},
+        )
+        assert again.status_code == 200
+        assert again.json()["changed"] is False
+
+    assert len(await rows("store.internal_changed")) == 1
+
+
+async def test_marking_an_unknown_store_internal_is_404(client):
+    operator = await make_operator()
+    async with signed_in(operator) as admin:
+        res = await admin.put(
+            "/v1/admin/stores/st_nope/internal", json={"is_internal": True}
+        )
+    assert res.status_code == 404
+    assert res.json()["detail"] == "store_not_found"
+    assert await rows("store.internal_changed") == []
+
+
+async def test_the_internal_toggle_is_admin_gated(client):
+    """The same gate every operator action carries: 401 anonymous, 403 a merchant session."""
+    merchant = await make_merchant(with_password=True)
+    store = await make_store(merchant, name="Sokha Cafe")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+    ) as anonymous:
+        res = await anonymous.put(
+            f"/v1/admin/stores/{store.public_id}/internal",
+            json={"is_internal": True},
+        )
+        assert res.status_code == 401
+
+    async with signed_in(merchant) as own_session:
+        res = await own_session.put(
+            f"/v1/admin/stores/{store.public_id}/internal",
+            json={"is_internal": True},
+        )
+        assert res.status_code == 403
+
+    assert await rows("store.internal_changed") == []

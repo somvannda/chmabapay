@@ -133,6 +133,13 @@ class Store(Base):
     brand_color: Mapped[str | None] = mapped_column(String(16))
     logo_image_url: Mapped[str | None] = mapped_column(Text)
     whitelabel_css: Mapped[str | None] = mapped_column(Text)
+    # True when this store belongs to the platform itself — "ChmabaPay HQ", where plan
+    # fees are collected. Modelled as data on the store rather than derived from the
+    # owning account's `is_platform_admin`, so the money path branches on a property of
+    # the store and not on a person's identity: an internal store is not metered as one
+    # of its own merchants (see `services.payments.count_paid_payments_this_month`) and
+    # the console reports its takings as platform revenue, separately from merchant GMV.
+    is_internal: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(16), default=STORE_DRAFT, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

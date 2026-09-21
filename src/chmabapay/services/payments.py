@@ -414,12 +414,20 @@ async def check_plan_quota(
 async def count_paid_payments_this_month(
     session: AsyncSession, account_id: int
 ) -> int:
+    """Paid payments this month across the account's *merchant* stores.
+
+    Internal stores are excluded: the platform's own collection store hangs off the
+    platform-admin account, and counting plan fees paid by merchants as the platform's
+    own usage would meter the platform against its own quota — and report plan fees as
+    that account's volume in the console.
+    """
     month_start = _now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     res = await session.execute(
         select(func.count(models.Payment.id))
         .join(models.Store, models.Store.id == models.Payment.store_id)
         .where(
             models.Store.account_id == account_id,
+            models.Store.is_internal.is_(False),
             models.Payment.status == models.PAYMENT_PAID,
             models.Payment.paid_at >= month_start,
         )
@@ -632,7 +640,11 @@ async def mark_paid(
     payment.gateway_status_raw = gateway_raw
 
     store = await session.get(models.Store, payment.store_id)
-    await _record_plan_ledger_entry(session, store.account_id, payment)
+    # The platform's own store is not a tenant, so its plan-fee takings do not count as
+    # usage against the platform's own account. The invoice settlement below stays
+    # unconditional — settling a plan invoice is exactly what an internal store exists for.
+    if not store.is_internal:
+        await _record_plan_ledger_entry(session, store.account_id, payment)
     # A plan invoice settles in the same transaction as the payment that paid it, so
     # the plan it buys cannot activate against an invoice that failed to persist —
     # and an invoice cannot read `paid` while the merchant still has the old plan.

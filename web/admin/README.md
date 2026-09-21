@@ -58,7 +58,7 @@ only" gate. `grant-admin` sets `is_platform_admin` directly; listing an address 
 | Route | What it does |
 |-------|--------------|
 | `/login` | Email + password sign-in. The only way into the console |
-| `/` | Platform totals: accounts, stores (total + active), payments paid (all-time + this month), MRR. Below the stats, **Plan fee collection** — where ChmabaPay's own subscription fees are received, with the ABA PayWay link editable in place |
+| `/` | Platform totals: accounts, stores (total + active), payments paid (all-time + this month), merchant volume paid today, platform revenue (today + this month), MRR. Below the stats, **Plan fee collection** — where ChmabaPay's own subscription fees are received, with the ABA PayWay link editable in place |
 | `/accounts` | Every account with plan, subscription status, store/payment counts. Search by email or name; 25 per page |
 | `/accounts/[account_id]` | One account: plan & usage, profile, stores, last 24 invoices. The Profile panel's Whitelabel row toggles the white-label checkout entitlement. The Payments count links to `/payments?account_id=` |
 | `/payments` | Every payment on the platform, newest first, with the account and store that took it. Search by payment id or the merchant's reference, filter by status or account. The "Settled" column carries the reconciliation story — paid, refunded, or the point at which we stopped watching |
@@ -82,6 +82,15 @@ password-session requirement, so a Google session belonging to an admin cannot r
 Both it and `GET /v1/admin/hq-store` are gated the same way. The write is audit-logged
 (`hq_store.created` when the store is first created, `hq_store.link_set` on every save);
 the read is not, because reading where the money goes is not a privileged action.
+
+Setting that link also marks the store **internal**. An internal store is the platform's
+own — it is exempt from the monthly quota, writes no usage-ledger row, and its takings
+are reported as *platform revenue* on `/` rather than folded into merchant volume.
+`PUT /v1/admin/stores/{public_id}/internal` flips that flag on any store by hand
+(`{is_internal, reason?}`), with the same `get_hybrid_admin_context` gate, a 404
+`store_not_found`, one `store.internal_changed` audit row per change, and no row on a
+repeat that changes nothing. `GET /v1/admin/accounts/{id}` carries `is_internal` on each
+store row, which is what the account page labels as "platform".
 
 Leaving the branch unreachable is deliberate, and pending a decision (P1-2 in
 `docs/production-readiness.md`): reaching it would let any API key belonging to a

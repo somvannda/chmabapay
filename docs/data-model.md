@@ -42,6 +42,7 @@ account's. Stores are created manually in the dashboard **or automatically via t
 | support_email | |
 | redirect_success_url / redirect_failure_url | success/failure redirects for this store's checkouts |
 | telegram_chat_id | optional notify |
+| is_internal | true = the platform's own store ("ChmabaPay HQ", where plan fees are collected), not a merchant tenant. Exempt from quota, writes no usage ledger, and reported as platform revenue rather than merchant volume |
 | status | draft / link_pending / active / disabled |
 | created_at, updated_at | |
 

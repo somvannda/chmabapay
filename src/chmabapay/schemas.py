@@ -77,6 +77,10 @@ class StoreOut(BaseModel):
     brand_color: str | None
     logo_image_url: str | None
     whitelabel_css: str | None
+    # True when the store belongs to the platform itself rather than a merchant tenant —
+    # "ChmabaPay HQ", where plan fees are collected. Surfaced so the platform owner's
+    # dashboard can label its own store rather than silently hide it.
+    is_internal: bool
     link: LinkOut | None
     created_at: datetime
 
@@ -96,6 +100,7 @@ class StoreOut(BaseModel):
             brand_color=store.brand_color,
             logo_image_url=store.logo_image_url,
             whitelabel_css=store.whitelabel_css,
+            is_internal=store.is_internal,
             link=LinkOut.from_model(link) if link else None,
             created_at=store.created_at,
         )

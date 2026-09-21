@@ -34,6 +34,10 @@ type AdminOverview = {
   mrr_cents: number;
   paid_today_count: number;
   paid_today_cents: number;
+  // Plan fees collected into the platform's own store. Kept apart from paid_today_*,
+  // which is merchant volume only — the two are never summed.
+  platform_revenue_today_cents: number;
+  platform_revenue_this_month_cents: number;
   needs_attention: AttentionItem[];
   ops: OpsSignals;
 };
@@ -189,12 +193,22 @@ export default function AdminOverviewPage() {
             </div>
 
             <div className="dash-stat-card">
-              <div className="dash-stat-label">Paid today</div>
+              <div className="dash-stat-label">Paid today (merchants)</div>
               <div className="dash-stat-value">
                 {formatCents(overview.paid_today_cents)}
               </div>
               <div className="dash-stat-trend">
                 {nf.format(overview.paid_today_count)} payments
+              </div>
+            </div>
+
+            <div className="dash-stat-card">
+              <div className="dash-stat-label">Platform revenue</div>
+              <div className="dash-stat-value">
+                {formatCents(overview.platform_revenue_today_cents)}
+              </div>
+              <div className="dash-stat-trend">
+                {formatCents(overview.platform_revenue_this_month_cents)} this month
               </div>
             </div>
 

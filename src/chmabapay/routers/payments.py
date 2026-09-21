@@ -231,7 +231,11 @@ async def create_payment(
                 "be confirmed. Omit hosted_qr to let ABA issue the code."
             ),
         )
-    await svc.check_plan_quota(session, ctx.account, mode)
+    # The platform's own store is not a tenant, so its payments are not metered against
+    # the platform's plan quota. Keyed off the store, not the owner's identity, so the
+    # money path stays free of identity branches.
+    if not store.is_internal:
+        await svc.check_plan_quota(session, ctx.account, mode)
     cents = int(Decimal(str(body.amount)) * 100)
     payment, created = await svc.create_payment(
         session,

@@ -29,6 +29,9 @@ type AccountStore = {
   name: string;
   external_id: string | null;
   status: string;
+  // The platform's own store ("ChmabaPay HQ"), which is where plan fees are collected.
+  // Labelled below so an operator can see which store is not a merchant tenant.
+  is_internal: boolean;
 };
 
 type AccountKey = {
@@ -872,7 +875,15 @@ export default function AdminAccountDetailPage({
                     const disabled = store.status.toLowerCase() === "disabled";
                     return (
                       <tr key={store.id}>
-                        <td>{store.name}</td>
+                        <td>
+                          {store.name}
+                          {store.is_internal && (
+                            <span className="dash-badge dash-badge-muted">
+                              {" "}
+                              platform
+                            </span>
+                          )}
+                        </td>
                         <td>
                           <code>{store.id}</code>
                         </td>
