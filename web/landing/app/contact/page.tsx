@@ -4,13 +4,31 @@ export const metadata: Metadata = {
   title: "Contact — ChmabaPay",
   description:
     "How to reach ChmabaPay about an integration, a live payment, legal terms or privacy.",
+  // Same shape as /api/docs: without these the page inherits the landing card.
+  alternates: { canonical: "/contact" },
+  openGraph: {
+    type: "article",
+    title: "Contact — ChmabaPay",
+    description:
+      "Support, legal and privacy contact addresses for ChmabaPay, and what to include so we can trace a payment.",
+    url: "/contact",
+    siteName: "ChmabaPay",
+    images: [{ url: "/og-image.png", width: 1024, height: 1024, alt: "ChmabaPay" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Contact — ChmabaPay",
+    description:
+      "Support, legal and privacy contact addresses for ChmabaPay, and what to include so we can trace a payment.",
+    images: ["/og-image.png"],
+  },
 };
 
 const CHANNELS = [
   {
     title: "Support",
     email: "support@chmaba.com",
-    copy: "Integration questions, webhook deliveries, or anything about a specific live payment. Include the payment id (pay_…) or your reference id and we can trace it.",
+    copy: "Integration questions, webhook deliveries, or anything about a specific live payment. Include the payment id or your own reference id and we can trace it.",
   },
   {
     title: "Legal",

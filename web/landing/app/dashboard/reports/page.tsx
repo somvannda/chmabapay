@@ -118,8 +118,8 @@ export default function DashboardReportsPage() {
         <div className="dash-panel">
           <div className="dash-panel-title">Payments export</div>
           <div className="dash-info">
-            Every payment in your workspace with status, amount, store, and
-            Bakong references.
+            Every payment in your workspace with its status, amount, currency,
+            store, reference and the paid, created and approved timestamps.
           </div>
           <div className="dash-form-row">
             <div className="dash-field">
@@ -159,7 +159,7 @@ export default function DashboardReportsPage() {
         <div className="dash-panel">
           <div className="dash-panel-title">Stores catalog</div>
           <div className="dash-info">
-            All store records with status, city, owner email, and created dates.
+            Every store with its id, name, status, city and created date.
           </div>
           <div>
             <button

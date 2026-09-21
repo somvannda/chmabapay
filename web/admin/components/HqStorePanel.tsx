@@ -38,6 +38,36 @@ const SOURCE_LABEL: Record<string, string> = {
   none: "not set",
 };
 
+/**
+ * Mirror of `services.payway_parser._extract_slug`, so the confirmation can echo
+ * the exact merchant account id the API will derive from the link. Kept small and
+ * literal: this is the one value the operator is being asked to check, so a
+ * different answer here would be worse than no confirmation at all.
+ */
+function deriveMerchantAccountId(raw: string): string {
+  const s = raw.trim();
+  if (!s) return "";
+  if (s.includes("://")) {
+    try {
+      const parsed = new URL(s);
+      const path = parsed.pathname.replace(/\/+$/, "");
+      if (path) return path.split("/").filter(Boolean).pop() || "";
+    } catch {
+      // Not a parseable URL; fall through to the string handling below.
+    }
+  }
+  const base = "https://link.payway.com.kh";
+  if (s.startsWith(base)) {
+    let tail = s.slice(base.length).replace(/^\/+|\/+$/g, "");
+    tail = tail.split("?")[0].split("#")[0];
+    return tail || s;
+  }
+  let cut = s;
+  if (cut.includes("?")) cut = cut.split("?")[0];
+  if (cut.includes("#")) cut = cut.split("#")[0];
+  return cut;
+}
+
 export function HqStorePanel() {
   const { notify } = useToast();
   const [store, setStore] = useState<HqStore | null>(null);
@@ -45,6 +75,8 @@ export function HqStorePanel() {
   const [saving, setSaving] = useState(false);
   const [link, setLink] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [reason, setReason] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -66,7 +98,11 @@ export function HqStorePanel() {
     void load();
   }, [load]);
 
-  async function save(e: React.FormEvent) {
+  // Staging, not saving: this write reroutes *all* plan-fee revenue, and the
+  // merchant account id is a shape-valid string whenever the link is, so a typo
+  // passes every check the form can make. The confirmation echoes the resolved id
+  // before the write.
+  function requestSave(e: React.FormEvent) {
     e.preventDefault();
     if (saving) return;
     const trimmed = link.trim();
@@ -74,18 +110,34 @@ export function HqStorePanel() {
       notify("Paste your ABA PayWay share link first.", "error");
       return;
     }
+    if (!deriveMerchantAccountId(trimmed)) {
+      notify("That link does not carry a merchant account id.", "error");
+      return;
+    }
+    setReason("");
+    setConfirmOpen(true);
+  }
+
+  async function applySave() {
+    if (saving) return;
+    const trimmed = link.trim();
     setSaving(true);
     try {
       const res = await apiFetch("/v1/admin/hq-store/link", {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ raw_link: trimmed }),
+        body: JSON.stringify({
+          raw_link: trimmed,
+          reason: reason.trim() || undefined,
+        }),
       });
       if (!res.ok) throw new Error(await readApiError(res));
       const data = (await res.json()) as HqStore;
       setStore(data);
       setLink(data.raw_link ?? trimmed);
+      setConfirmOpen(false);
+      setReason("");
       notify("Plan fees will now be collected into that link.");
     } catch (err) {
       notify(err instanceof Error ? err.message : String(err), "error");
@@ -136,7 +188,7 @@ export function HqStorePanel() {
             </div>
           )}
 
-          <form className="dash-form" onSubmit={save}>
+          <form className="dash-form" onSubmit={requestSave}>
             <div className="dash-field">
               <label htmlFor="hq-payway-link">ABA PayWay link</label>
               <input
@@ -161,6 +213,74 @@ export function HqStorePanel() {
             </div>
           </form>
         </>
+      )}
+
+      {confirmOpen && (
+        <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="dash-modal">
+            <div className="dash-modal-head">
+              <h2 className="dash-modal-title">
+                Change where plan fees are collected
+              </h2>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => setConfirmOpen(false)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="dash-modal-body">
+              <div className="dash-warn">
+                Plan invoices will be collected into merchant account{" "}
+                <strong>{deriveMerchantAccountId(link) || "—"}</strong>
+                {store?.merchant_account_id &&
+                store.merchant_account_id !== deriveMerchantAccountId(link) ? (
+                  <>
+                    {" "}
+                    — replacing <strong>{store.merchant_account_id}</strong>
+                  </>
+                ) : null}
+                . Check the identifier before saving: a wrong-but-well-formed link
+                sends every future plan fee somewhere else.
+              </div>
+              <div className="dash-field">
+                <label htmlFor="hq-reason">Reason (optional)</label>
+                <textarea
+                  id="hq-reason"
+                  className="dash-textarea"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  rows={3}
+                  maxLength={500}
+                  placeholder="e.g. Moving collection to the new company ABA account."
+                />
+                <div className="dash-hint">
+                  Stored in the audit trail next to the merchant account id.
+                </div>
+              </div>
+              <div className="dash-modal-foot">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={() => setConfirmOpen(false)}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-primary"
+                  onClick={() => void applySave()}
+                  disabled={saving}
+                >
+                  {saving ? "Saving…" : "Save link"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

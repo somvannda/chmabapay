@@ -43,8 +43,7 @@ class ErrorOut(BaseModel):
 API_KEY_SCHEME = HTTPBearer(
     scheme_name="ApiKey",
     description=(
-        "`Authorization: Bearer ck_live_…` — an API key created in the dashboard. "
-        "`ck_test_…` keys are for test stores."
+        "`Authorization: Bearer ck_live_…` — an API key created in the dashboard."
     ),
     auto_error=False,
 )
@@ -96,6 +95,25 @@ UPSTREAM_ERROR = {
     502: {
         "model": ErrorOut,
         "description": "The upstream rail failed (`payway_hosted_error`).",
+    }
+}
+
+# A precondition on the request itself failed: a disabled store or link, an amount
+# outside the link's bounds, an offline QR nothing can confirm. Only on the routes
+# that create or transition a payment.
+BAD_REQUEST_ERROR = {
+    400: {
+        "model": ErrorOut,
+        "description": "A precondition the request must meet was not met.",
+    }
+}
+
+# The resource named by the path is not in the caller's account (`store_not_found`,
+# `merchant_not_found`, `payment_not_found`). Only on the routes that look one up.
+NOT_FOUND_ERROR = {
+    404: {
+        "model": ErrorOut,
+        "description": "The named resource is not in this account.",
     }
 }
 

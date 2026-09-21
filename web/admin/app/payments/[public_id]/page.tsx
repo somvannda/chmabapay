@@ -152,6 +152,8 @@ export default function AdminPaymentDetailPage({
   const [markOpen, setMarkOpen] = useState(false);
   const [markReason, setMarkReason] = useState("");
   const [showRaw, setShowRaw] = useState(false);
+  const [redeliverOpen, setRedeliverOpen] = useState(false);
+  const [redeliverSuccesses, setRedeliverSuccesses] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -232,33 +234,50 @@ export default function AdminPaymentDetailPage({
     }
   }, [publicId, markReason, notify, load]);
 
-  const redeliver = useCallback(async () => {
-    setBusy("redeliver");
-    try {
-      const res = await apiFetch(`/v1/admin/payments/${publicId}/redeliver`, {
-        method: "POST",
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error(await readApiError(res));
-      const data = (await res.json()) as { redelivered: number };
-      notify(
-        data.redelivered === 1
-          ? "Webhook queued for re-delivery."
-          : `${data.redelivered} webhooks queued for re-delivery.`,
-      );
-      await load();
-    } catch (e) {
-      notify(e instanceof Error ? e.message : String(e), "error");
-    } finally {
-      setBusy(null);
-    }
-  }, [publicId, notify, load]);
+  const redeliver = useCallback(
+    async (includeSuccesses: boolean) => {
+      setBusy("redeliver");
+      try {
+        const res = await apiFetch(
+          `/v1/admin/payments/${publicId}/redeliver${
+            includeSuccesses ? "?include_successes=true" : ""
+          }`,
+          { method: "POST", credentials: "include" },
+        );
+        if (!res.ok) throw new Error(await readApiError(res));
+        const data = (await res.json()) as { redelivered: number };
+        if (data.redelivered === 0) {
+          notify(
+            "Nothing to re-send: success was already recorded for every delivery.",
+          );
+        } else {
+          notify(
+            data.redelivered === 1
+              ? "Webhook queued for re-delivery."
+              : `${data.redelivered} webhooks queued for re-delivery.`,
+          );
+        }
+        setRedeliverOpen(false);
+        await load();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [publicId, notify, load],
+  );
 
   const pill = paymentPill(detail?.status);
   const settled = Boolean(detail?.paid_at);
   const terminal = ["paid", "failed", "reversed"].includes(
     (detail?.status || "").toLowerCase(),
   );
+  // Re-sending a delivery the merchant already processed can double-process the
+  // sale, so the count is surfaced next to the opt-in.
+  const successCount = (detail?.deliveries ?? []).filter(
+    (d) => d.status.toLowerCase() === "success",
+  ).length;
 
   return (
     <>
@@ -295,6 +314,14 @@ export default function AdminPaymentDetailPage({
 
       {loading ? (
         <div className="dash-info">Loading payment…</div>
+      ) : errorMsg && !detail ? (
+        <div className="dash-empty">
+          Could not load this payment.
+          <div className="dash-empty-desc">
+            The request failed, so this is not a missing payment. Use Retry above,
+            or reload the page.
+          </div>
+        </div>
       ) : notFound || !detail ? (
         <div className="dash-empty">
           Payment not found.
@@ -473,7 +500,10 @@ export default function AdminPaymentDetailPage({
               <button
                 type="button"
                 className="dash-btn dash-btn-secondary"
-                onClick={() => void redeliver()}
+                onClick={() => {
+                  setRedeliverSuccesses(false);
+                  setRedeliverOpen(true);
+                }}
                 disabled={busy !== null || detail.deliveries.length === 0}
                 title={
                   detail.deliveries.length === 0
@@ -585,6 +615,62 @@ export default function AdminPaymentDetailPage({
                   disabled={busy !== null || markReason.trim().length < 3}
                 >
                   {busy === "mark-paid" ? "Marking paid…" : "Mark paid"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {redeliverOpen && (
+        <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="dash-modal">
+            <div className="dash-modal-head">
+              <h2 className="dash-modal-title">Re-deliver this payment&rsquo;s webhooks</h2>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => setRedeliverOpen(false)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="dash-modal-body">
+              <div className="dash-hint">
+                Failed and still-queued deliveries are queued to go out now, with
+                their attempt budget reset. Deliveries that already succeeded are
+                left alone by default: re-sending a <code>payment.completed</code>{" "}
+                the merchant already processed can double-process the sale on their
+                side.
+              </div>
+              <div className="dash-field">
+                <label className="dash-check">
+                  <input
+                    type="checkbox"
+                    checked={redeliverSuccesses}
+                    onChange={(e) => setRedeliverSuccesses(e.target.checked)}
+                  />{" "}
+                  Also re-send deliveries that already succeeded
+                  {successCount > 0 ? ` (${successCount})` : ""}
+                </label>
+              </div>
+              <div className="dash-modal-foot">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={() => setRedeliverOpen(false)}
+                  disabled={busy !== null}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-primary"
+                  onClick={() => void redeliver(redeliverSuccesses)}
+                  disabled={busy !== null}
+                >
+                  {busy === "redeliver" ? "Re-delivering…" : "Re-deliver"}
                 </button>
               </div>
             </div>

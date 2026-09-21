@@ -92,23 +92,29 @@ export default function AdminDeliveriesPage() {
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
+  const [retryTarget, setRetryTarget] = useState<AdminDeliveryRow | null>(null);
+  const [retrySuccesses, setRetrySuccesses] = useState(false);
   const { notify } = useToast();
 
   const [status, setStatus] = useState("");
   const [endpointId, setEndpointId] = useState("");
   const [accountId, setAccountId] = useState("");
+  const [sinceHours, setSinceHours] = useState("");
   const [page, setPage] = useState(1);
 
   // Seeded from the URL so the overview's failure counter can link straight to the
-  // rows it counted, and so a filtered view can be pasted into a thread.
+  // rows it counted — including its 24-hour window — and so a filtered view can be
+  // pasted into a thread.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const initialStatus = params.get("status") || "";
     const initialEndpoint = params.get("endpoint_id") || "";
     const initialAccount = params.get("account_id") || "";
+    const initialSince = params.get("since_hours") || "";
     if (initialStatus) setStatus(initialStatus);
     if (initialEndpoint) setEndpointId(initialEndpoint);
     if (initialAccount) setAccountId(initialAccount);
+    if (initialSince) setSinceHours(initialSince);
     setReady(true);
   }, []);
 
@@ -123,6 +129,7 @@ export default function AdminDeliveriesPage() {
         if (status) params.set("status", status);
         if (endpointId) params.set("endpoint_id", endpointId);
         if (accountId) params.set("account_id", accountId);
+        if (sinceHours) params.set("since_hours", sinceHours);
         params.set("page", String(page));
         params.set("per_page", "25");
         const res = await apiFetch(`/v1/admin/deliveries?${params.toString()}`, {
@@ -142,7 +149,7 @@ export default function AdminDeliveriesPage() {
     return () => {
       alive = false;
     };
-  }, [ready, status, endpointId, accountId, page]);
+  }, [ready, status, endpointId, accountId, sinceHours, page]);
 
   // The row-level counterpart to the payment page's "re-deliver": one endpoint was
   // down, one event never arrived, and the merchant has already fixed their side.
@@ -161,6 +168,7 @@ export default function AdminDeliveriesPage() {
             ? "Delivery queued — the sender picks it up on its next pass."
             : "That delivery was already queued to go.",
         );
+        setRetryTarget(null);
         setRows((current) =>
           current.map((item) =>
             item.id === row.id
@@ -181,10 +189,11 @@ export default function AdminDeliveriesPage() {
     setStatus("");
     setEndpointId("");
     setAccountId("");
+    setSinceHours("");
     setPage(1);
   }, []);
 
-  const filtered = Boolean(status || endpointId || accountId);
+  const filtered = Boolean(status || endpointId || accountId || sinceHours);
   const showPagination = pagination !== null && pagination.total_pages > 1;
 
   return (
@@ -197,6 +206,22 @@ export default function AdminDeliveriesPage() {
           </div>
         </div>
       </div>
+
+      {sinceHours && (
+        <div className="dash-info">
+          Showing deliveries touched in the last {sinceHours} hours.{" "}
+          <button
+            type="button"
+            className="dash-btn dash-btn-secondary dash-btn-sm"
+            onClick={() => {
+              setSinceHours("");
+              setPage(1);
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       <div className="dash-toolbar">
         <div className="dash-toolbar-filters">
@@ -256,6 +281,14 @@ export default function AdminDeliveriesPage() {
       <div className="dash-panel">
         {loading ? (
           <div className="dash-info">Loading deliveries…</div>
+        ) : errorMsg ? (
+          <div className="dash-empty">
+            Could not load the deliveries.
+            <div className="dash-empty-desc">
+              The request failed, so this is not an empty result. Reload the page
+              to try again.
+            </div>
+          </div>
         ) : rows.length === 0 ? (
           <div className="dash-empty">
             No delivery attempts match these filters.
@@ -325,11 +358,14 @@ export default function AdminDeliveriesPage() {
                       <button
                         type="button"
                         className="dash-btn dash-btn-secondary dash-btn-sm"
-                        onClick={() => void retry(row)}
+                        onClick={() => {
+                          setRetrySuccesses(false);
+                          setRetryTarget(row);
+                        }}
                         disabled={busy !== null}
                         title={
                           row.status === "success"
-                            ? "Send it again even though it succeeded."
+                            ? "Re-sending a delivery that already succeeded can double-process the event at the merchant."
                             : "Queue this delivery to go out now."
                         }
                       >
@@ -367,6 +403,74 @@ export default function AdminDeliveriesPage() {
             >
               Next
             </button>
+          </div>
+        </div>
+      )}
+
+      {retryTarget && (
+        <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="dash-modal">
+            <div className="dash-modal-head">
+              <h2 className="dash-modal-title">Retry this delivery</h2>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => setRetryTarget(null)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="dash-modal-body">
+              <div className="dash-hint">
+                <span className="dash-code-mono">
+                  {retryTarget.event_type}
+                </span>{" "}
+                to{" "}
+                <span className="dash-code-mono">{retryTarget.endpoint_url}</span>{" "}
+                is queued to go out now, with its attempt budget reset.
+              </div>
+              {retryTarget.status === "success" && (
+                <>
+                  <div className="dash-warn">
+                    This delivery already succeeded. Sending it again can
+                    double-process the event at the merchant — only do it if their
+                    endpoint acknowledges duplicates or they have asked for it.
+                  </div>
+                  <div className="dash-field">
+                    <label className="dash-check">
+                      <input
+                        type="checkbox"
+                        checked={retrySuccesses}
+                        onChange={(e) => setRetrySuccesses(e.target.checked)}
+                      />{" "}
+                      Re-send it even though it succeeded
+                    </label>
+                  </div>
+                </>
+              )}
+              <div className="dash-modal-foot">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={() => setRetryTarget(null)}
+                  disabled={busy !== null}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-primary"
+                  onClick={() => void retry(retryTarget)}
+                  disabled={
+                    busy !== null ||
+                    (retryTarget.status === "success" && !retrySuccesses)
+                  }
+                >
+                  {busy === retryTarget.id ? "Retrying…" : "Retry"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -814,6 +814,15 @@ body {
   border-radius: 3px 3px 0 0;
   background: #6957f5;
 }
+/* The chart is a fixed seven-bar demo series, so each height is a static class
+   rather than an inline percentage. */
+.landing-chart-bar-h34 { height: 34%; }
+.landing-chart-bar-h44 { height: 44%; }
+.landing-chart-bar-h54 { height: 54%; }
+.landing-chart-bar-h64 { height: 64%; }
+.landing-chart-bar-h68 { height: 68%; }
+.landing-chart-bar-h78 { height: 78%; }
+.landing-chart-bar-h86 { height: 86%; }
 
 .landing-items-row {
   display: flex;
@@ -3829,13 +3838,39 @@ body.dash-path-dashboard > .landing-footer {
   background: #eceaf4;
   overflow: hidden;
 }
+/* The quota bar is a <progress> rather than a span carrying an inline width: an
+   arbitrary percentage cannot be expressed as a static class. `.cp-plan-bar` still
+   draws the track, so the element itself stays transparent and the value is painted
+   with the same gradient as before — the visual result is unchanged. */
 .cp-plan-fill {
   display: block;
+  width: 100%;
   height: 100%;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.cp-plan-fill::-webkit-progress-bar {
+  background: transparent;
+  border-radius: var(--r-pill);
+}
+.cp-plan-fill::-webkit-progress-value {
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--violet), #8b7cf7);
+}
+.cp-plan-fill::-moz-progress-bar {
   border-radius: var(--r-pill);
   background: linear-gradient(90deg, var(--violet), #8b7cf7);
 }
 .cp-plan-fill-warn {
+  background: transparent;
+}
+.cp-plan-fill-warn::-webkit-progress-value {
+  background: linear-gradient(90deg, #d97706, #f59e0b);
+}
+.cp-plan-fill-warn::-moz-progress-bar {
   background: linear-gradient(90deg, #d97706, #f59e0b);
 }
 .cp-plan-usage {

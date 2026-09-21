@@ -93,6 +93,13 @@ export default function DashboardKeysPage() {
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
   const [revealKey, setRevealKey] = useState<string | null>(null);
+  // Which row is mid-action, and which action. Without this a double-click on Rotate
+  // mints two keys — `rotate` inserts a new key rather than updating in place — and
+  // the second reveal banner replaces the first, losing one raw key for good.
+  const [busy, setBusy] = useState<{
+    id: string;
+    action: "rotate" | "revoke";
+  } | null>(null);
 
   const fetchKeys = useCallback(async () => {
     setLoading(true);
@@ -150,9 +157,20 @@ export default function DashboardKeysPage() {
   );
 
   const handleRevoke = useCallback(
-    async (id: string | number) => {
+    async (key: ApiKey) => {
+      const label = key.name?.trim() || "this key";
+      // Both actions invalidate a secret the merchant may already have deployed, so
+      // neither happens without a deliberate confirmation.
+      if (
+        !window.confirm(
+          `Revoke "${label}"?\n\nAnything using this key stops working immediately, and a revoked key cannot be restored.`,
+        )
+      ) {
+        return;
+      }
+      setBusy({ id: String(key.id), action: "revoke" });
       try {
-        const res = await fetch(`/v1/keys/${id}/revoke`, {
+        const res = await fetch(`/v1/keys/${key.id}/revoke`, {
           method: "POST",
           credentials: "include",
         });
@@ -161,15 +179,26 @@ export default function DashboardKeysPage() {
         void fetchKeys();
       } catch (err) {
         notify(err instanceof Error ? err.message : String(err), "error");
+      } finally {
+        setBusy(null);
       }
     },
     [notify, fetchKeys],
   );
 
   const handleRotate = useCallback(
-    async (id: string | number) => {
+    async (key: ApiKey) => {
+      const label = key.name?.trim() || "this key";
+      if (
+        !window.confirm(
+          `Rotate "${label}"?\n\nThe current key is revoked immediately, and anything using it stops working until you deploy the replacement.`,
+        )
+      ) {
+        return;
+      }
+      setBusy({ id: String(key.id), action: "rotate" });
       try {
-        const res = await fetch(`/v1/keys/${id}/rotate`, {
+        const res = await fetch(`/v1/keys/${key.id}/rotate`, {
           method: "POST",
           credentials: "include",
         });
@@ -182,6 +211,8 @@ export default function DashboardKeysPage() {
         void fetchKeys();
       } catch (err) {
         notify(err instanceof Error ? err.message : String(err), "error");
+      } finally {
+        setBusy(null);
       }
     },
     [notify, fetchKeys],
@@ -266,6 +297,7 @@ export default function DashboardKeysPage() {
         <div className="dash-key-list">
           {sortedKeys.map((k) => {
             const active = k.status === "active";
+            const rowBusy = busy?.id === String(k.id);
             return (
               <div className="dash-key-row" key={String(k.id)}>
                 <div className="dash-key-row-main">
@@ -294,16 +326,18 @@ export default function DashboardKeysPage() {
                     <button
                       type="button"
                       className="dash-btn dash-btn-secondary dash-btn-sm"
-                      onClick={() => handleRotate(k.id)}
+                      onClick={() => handleRotate(k)}
+                      disabled={rowBusy}
                     >
-                      Rotate
+                      {rowBusy && busy?.action === "rotate" ? "…" : "Rotate"}
                     </button>
                     <button
                       type="button"
                       className="dash-btn dash-btn-danger dash-btn-sm"
-                      onClick={() => handleRevoke(k.id)}
+                      onClick={() => handleRevoke(k)}
+                      disabled={rowBusy}
                     >
-                      Revoke
+                      {rowBusy && busy?.action === "revoke" ? "…" : "Revoke"}
                     </button>
                   </div>
                 )}

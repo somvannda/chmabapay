@@ -49,6 +49,8 @@ function subscriptionPill(status: string | null | undefined): {
       return { className: "dash-pill dash-pill-paid", label: "active" };
     case "trial":
       return { className: "dash-pill dash-pill-scanned", label: "trial" };
+    case "pending":
+      return { className: "dash-pill dash-pill-pending", label: "pending" };
     case "canceled":
       return { className: "dash-pill dash-pill-failed", label: "canceled" };
     default:
@@ -162,6 +164,14 @@ export default function AdminAccountsPage() {
       <div className="dash-panel">
         {loading ? (
           <div className="dash-info">Loading accounts…</div>
+        ) : errorMsg ? (
+          <div className="dash-empty">
+            Could not load the accounts.
+            <div className="dash-empty-desc">
+              The request failed, so this is not an empty result. Reload the page
+              to try again.
+            </div>
+          </div>
         ) : rows.length === 0 ? (
           <div className="dash-empty">
             No accounts match this search.

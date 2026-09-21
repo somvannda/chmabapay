@@ -679,3 +679,67 @@ async def test_every_detection_attempt_is_recorded_not_only_the_first(client):
         ).scalar_one()
 
     assert [entry["poll"] for entry in history] == [1, 2, 3]
+
+
+async def test_payment_list_offset_paginates_without_changing_the_first_page(client):
+    """`GET /v1/payments` now pages with `offset`, so older rows are reachable.
+
+    A merchant could previously only ever see the newest `limit` payments. The
+    first page must stay exactly what it was for a caller that sends no `offset`,
+    which is why `offset=0` is not even serialized by the portal.
+    """
+    account = await make_account()
+    await make_store(account, name="Sokha Cafe", owner="Sokha")
+    raw_key, _ = await make_key(account)
+    headers = {"Authorization": f"Bearer {raw_key}"}
+
+    created = [
+        (
+            await client.post(
+                "/v1/payments",
+                json={"amount": 1.0 + index, "hosted_qr": False},
+                headers=headers,
+            )
+        ).json()
+        for index in range(3)
+    ]
+    newest_first = [payment["id"] for payment in reversed(created)]
+
+    first = (await client.get("/v1/payments?limit=2", headers=headers)).json()
+    assert [p["id"] for p in first["data"]] == newest_first[:2]
+
+    second = (
+        await client.get("/v1/payments?limit=2&offset=2", headers=headers)
+    ).json()
+    assert [p["id"] for p in second["data"]] == newest_first[2:]
+
+    # The first page is byte-for-byte what it always was: no `offset` and an
+    # explicit `offset=0` return the same body, and the shape is unchanged.
+    default = (await client.get("/v1/payments", headers=headers)).json()
+    explicit_zero = (
+        await client.get("/v1/payments?offset=0", headers=headers)
+    ).json()
+    assert default == explicit_zero
+    assert set(default.keys()) == {"data"}
+    assert set(default["data"][0].keys()) == {
+        "id",
+        "status",
+        "amount",
+        "currency",
+        "reference_id",
+        "store",
+        "created_at",
+        "expires_at",
+        "approved_at",
+        "paid_at",
+    }
+
+    # A negative offset is rejected by the parameter declaration (422), not clamped.
+    assert (
+        await client.get("/v1/payments?offset=-1", headers=headers)
+    ).status_code == 422
+
+    # An absurd offset is clamped rather than walked: an empty page, not an error.
+    clamped = await client.get("/v1/payments?offset=1000000000", headers=headers)
+    assert clamped.status_code == 200
+    assert clamped.json()["data"] == []

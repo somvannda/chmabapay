@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import audit, models
@@ -218,11 +218,28 @@ async def _plans_by_account(
             .join(models.Plan, models.Plan.id == models.PlanSubscription.plan_id)
             .where(
                 models.PlanSubscription.account_id.in_(account_ids),
-                models.PlanSubscription.status.in_(["trial", "active"]),
+                # `pending` is included on purpose: a plan purchase waiting on its
+                # invoice is the only record of what that invoice buys, so hiding it
+                # left the console showing "—" next to an open invoice.
+                models.PlanSubscription.status.in_(["trial", "active", "pending"]),
+            )
+            # Ordered by preference, so an account mid-upgrade still reports the plan
+            # it is *on*: active first, then trial, then a pending purchase.
+            .order_by(
+                case(
+                    (models.PlanSubscription.status == "active", 0),
+                    (models.PlanSubscription.status == "trial", 1),
+                    else_=2,
+                ),
+                models.PlanSubscription.id,
             )
         )
     ).all()
-    return {aid: (code, name, status) for aid, code, name, status in rows}
+    plans: dict[int, tuple[str, str, str]] = {}
+    for aid, code, name, status in rows:
+        # First row per account wins, which is the highest-priority status above.
+        plans.setdefault(aid, (code, name, status))
+    return plans
 
 
 @router.get("/accounts", response_model=AdminAccountListOut)
@@ -1124,6 +1141,73 @@ async def disable_account_store(
     }
 
 
+@router.post("/stores/{store_public_id}/enable")
+async def enable_account_store(
+    store_public_id: str,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Bring back a store an operator disabled.
+
+    Disabling had no counterpart on this side: the console could stop a store
+    mid-incident, but the only route back was the merchant-authenticated
+    `POST /v1/stores/{public_id}/enable`, so an operator who disabled the wrong
+    store — or whose fix the merchant had already made — had to ask the merchant
+    to undo it. The status it restores to is derived the same way the merchant
+    route derives it: `active` only while the store still has a payment link,
+    otherwise `draft`, because reading `active` on a store with no destination
+    would advertise a capability `create_payment` then refuses.
+    """
+    store = (
+        await session.execute(
+            select(models.Store).where(models.Store.public_id == store_public_id)
+        )
+    ).scalar_one_or_none()
+    if store is None:
+        raise HTTPException(status_code=404, detail="store_not_found")
+
+    if store.status != models.STORE_DISABLED:
+        # Already live. Nothing changed, so nothing is recorded — the same rule the
+        # disable route follows, and the same rule `services.stores.enable_store`
+        # follows for a store that was never disabled.
+        return {
+            "id": store.public_id,
+            "account_id": store.account_id,
+            "status": store.status,
+            "enabled": False,
+        }
+
+    has_link = (
+        await session.execute(
+            select(models.PaymentLink.id).where(
+                models.PaymentLink.store_id == store.id
+            )
+        )
+    ).scalar_one_or_none()
+    restored = models.STORE_ACTIVE if has_link is not None else models.STORE_DRAFT
+    store.status = restored
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="store.enabled",
+        target_type="Store",
+        target_id=store.id,
+        details={
+            "account_id": store.account_id,
+            "name": store.name,
+            "status": restored,
+        },
+    )
+    await session.commit()
+    await session.refresh(store)
+    return {
+        "id": store.public_id,
+        "account_id": store.account_id,
+        "status": store.status,
+        "enabled": True,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Payments
 # --------------------------------------------------------------------------- #
@@ -1610,6 +1694,7 @@ async def mark_admin_payment_paid(
 @router.post("/payments/{public_id}/redeliver", response_model=PaymentRedeliverOut)
 async def redeliver_admin_payment_events(
     public_id: str,
+    include_successes: bool = False,
     ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
     session: AsyncSession = Depends(get_session),
 ):
@@ -1617,22 +1702,34 @@ async def redeliver_admin_payment_events(
 
     A delivery that exhausted `webhook_max_attempts` is terminal, and a merchant
     who fixes their endpoint should not have to wait for the next sale to find
-    out whether the fix worked. Every delivery for the payment is reset to due
-    now, including ones that already succeeded, because the operator's intent is
-    "send this merchant their event again" — re-sending a success is harmless
-    next to silently skipping the one delivery they actually needed.
+    out whether the fix worked.
+
+    By default only deliveries that have **not** already succeeded are reset —
+    failed, retrying, or still queued. Re-sending a `payment.completed` that the
+    merchant already processed can double-process the sale on their side, so
+    re-sending a success is a deliberate choice: the caller asks for it with
+    `include_successes=true`. The operator's console makes that an explicit
+    opt-in rather than the default.
 
     Delivery is picked up by the sender's own scan on its next pass, so this
-    writes state and returns; there is no queue to enqueue into.
+    writes state and returns; there is no queue to enqueue into. If every
+    delivery already succeeded and successes were not included, nothing changes
+    and nothing is recorded.
     """
     payment, store, account = await _load_admin_payment(session, public_id)
     rows = await _payment_delivery_rows(session, payment.id)
     if not rows:
         raise HTTPException(status_code=404, detail="no_deliveries_for_payment")
 
+    targets = [
+        row
+        for row in rows
+        if include_successes or row[0].status != models.DELIVERY_SUCCESS
+    ]
+
     now = datetime.now(UTC)
     delivery_ids: list[int] = []
-    for delivery, _event in rows:
+    for delivery, _event in targets:
         delivery.status = models.DELIVERY_RETRYING
         # The attempt budget is reset too: this is a fresh, deliberate send, not
         # the tail of the one that already exhausted itself.
@@ -1641,19 +1738,21 @@ async def redeliver_admin_payment_events(
         delivery.last_error = None
         delivery_ids.append(delivery.id)
 
-    audit.record(
-        session,
-        actor=ctx.account,
-        action="admin.payment_redelivered",
-        target_type="Payment",
-        target_id=payment.id,
-        details={
-            "deliveries": len(delivery_ids),
-            "delivery_ids": delivery_ids,
-            "account_id": account.id,
-        },
-    )
-    await session.commit()
+    if delivery_ids:
+        audit.record(
+            session,
+            actor=ctx.account,
+            action="admin.payment_redelivered",
+            target_type="Payment",
+            target_id=payment.id,
+            details={
+                "deliveries": len(delivery_ids),
+                "delivery_ids": delivery_ids,
+                "include_successes": include_successes,
+                "account_id": account.id,
+            },
+        )
+        await session.commit()
     return PaymentRedeliverOut(
         id=payment.public_id, redelivered=len(delivery_ids), delivery_ids=delivery_ids
     )
@@ -1691,6 +1790,7 @@ async def list_all_deliveries(
     status: str | None = None,
     endpoint_id: int | None = None,
     account_id: int | None = None,
+    since_hours: int | None = None,
     page: int = 1,
     per_page: int = 25,
     ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
@@ -1709,6 +1809,10 @@ async def list_all_deliveries(
     stalled sender. `last_error` is carried through because the transport-level
     reason — DNS, TLS, a refused connection — is what tells an operator whether
     the destination or our sender is at fault.
+
+    `since_hours` bounds the feed to rows touched in the last N hours, so the
+    overview's "Webhooks failed (24h)" card can link to exactly the rows it
+    counted rather than every failure the platform has ever seen.
     """
     page, per_page, offset = _clamp_paging(page, per_page)
 
@@ -1719,6 +1823,10 @@ async def list_all_deliveries(
         filters.append(models.EventDelivery.endpoint_id == endpoint_id)
     if account_id is not None:
         filters.append(models.WebhookEndpoint.account_id == account_id)
+    if since_hours is not None and since_hours > 0:
+        filters.append(
+            models.EventDelivery.updated_at >= datetime.now(UTC) - timedelta(hours=since_hours)
+        )
 
     total_rows = (
         await session.execute(
@@ -1951,7 +2059,11 @@ async def admin_overview(
                 ),
                 "count": len(stale),
                 "severity": "critical",
-                "href": None,
+                # A critical item with no destination is the one alert an operator
+                # cannot act on. The queue names are in `detail` above; the link
+                # lands on the deliveries feed, where a stalled sender shows up as
+                # retrying rows that are overdue.
+                "href": "/deliveries",
             }
         )
 
@@ -2040,7 +2152,10 @@ async def _needs_attention(
             ),
             "count": deliveries_failed_24h,
             "severity": "warn",
-            "href": "/deliveries?status=failed",
+            # The window is part of the filter: without it the link showed every
+            # failed delivery the platform had ever recorded, so the rows did not
+            # add up to the number the operator clicked.
+            "href": "/deliveries?status=failed&since_hours=24",
         },
     ]
 
@@ -2198,6 +2313,10 @@ class HqLinkIn(BaseModel):
     # account id out of it.
     merchant_account_id: str | None = Field(default=None, max_length=120)
     merchant_name: str | None = Field(default=None, max_length=120)
+    # Optional, and recorded when given. This write changes where *all* plan-fee
+    # revenue is collected, so a one-line explanation is worth keeping next to the
+    # merchant account id it moved.
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class HqStoreOut(BaseModel):
@@ -2338,16 +2457,19 @@ async def set_hq_store_link(
         verification=models.LINK_VERIFIED,
     )
     store.status = models.STORE_ACTIVE
+    details: dict[str, Any] = {
+        "merchant_account_id": merchant_account_id,
+        "raw_link": raw_link,
+    }
+    if body.reason:
+        details["reason"] = body.reason
     audit.record(
         session,
         actor=ctx.account,
         action="hq_store.link_set",
         target_type="Store",
         target_id=store.id,
-        details={
-            "merchant_account_id": merchant_account_id,
-            "raw_link": raw_link,
-        },
+        details=details,
     )
     await session.commit()
     await session.refresh(store)

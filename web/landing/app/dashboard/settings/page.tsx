@@ -49,6 +49,26 @@ function formatDate(iso: string | null | undefined): string {
   });
 }
 
+// The same mapping the standalone billing page uses. The Billing tab here used to
+// render the status inside the green "paid" pill unconditionally, so a failed read
+// showed a paying merchant "active" and a genuine trial or cancellation also looked
+// active.
+function statusPill(status: string | undefined): { className: string; label: string } {
+  switch (status) {
+    case "trial":
+      return { className: "dash-pill dash-pill-scanned", label: "Free trial" };
+    case "active":
+      return { className: "dash-pill dash-pill-paid", label: "Active" };
+    case "canceled":
+      return { className: "dash-pill dash-pill-failed", label: "Canceled" };
+    default:
+      return {
+        className: "dash-pill dash-pill-pending",
+        label: status ? status : "No subscription",
+      };
+  }
+}
+
 export default function DashboardSettingsPage() {
   const { profile, refresh } = useSession();
 
@@ -62,6 +82,11 @@ export default function DashboardSettingsPage() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [billingLoading, setBillingLoading] = useState(true);
+  // A failed read used to leave these at their defaults, so the tab showed "Free /
+  // active" and "No invoices yet." — claims the failed request never made.
+  const [subError, setSubError] = useState<string | null>(null);
+  const [invoicesError, setInvoicesError] = useState<string | null>(null);
+  const [billingReload, setBillingReload] = useState(0);
 
   // Security tab. The email and password forms are separate submissions on purpose:
   // each needs the current password, and neither should be able to happen as a side
@@ -94,29 +119,40 @@ export default function DashboardSettingsPage() {
     let alive = true;
     (async () => {
       setBillingLoading(true);
+      setSubError(null);
+      setInvoicesError(null);
       try {
         const subRes = await fetch("/v1/billing/subscription", {
           credentials: "include",
         });
-        if (subRes.ok && subRes.status !== 501) {
+        // 501 is the documented "no billing here" answer, not a failure.
+        if (!subRes.ok && subRes.status !== 501) {
+          throw new Error(await readApiError(subRes));
+        }
+        if (subRes.ok) {
           const sub = await subRes.json().catch(() => null);
           if (alive && sub) setSubscription(sub);
         }
+      } catch (e) {
+        if (alive) setSubError(e instanceof Error ? e.message : String(e));
+      }
+
+      try {
         const invRes = await fetch("/v1/billing/invoices?limit=5", {
           credentials: "include",
         });
-        if (invRes.ok) {
-          const data = await invRes.json().catch(() => ({}));
-          const items: Invoice[] = Array.isArray(data)
-            ? data
-            : Array.isArray(data?.items)
-              ? data.items
-              : Array.isArray(data?.data)
-                ? data.data
-                : [];
-          if (alive) setInvoices(items);
-        }
-      } catch {
+        if (!invRes.ok) throw new Error(await readApiError(invRes));
+        const data = await invRes.json().catch(() => ({}));
+        const items: Invoice[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.items)
+            ? data.items
+            : Array.isArray(data?.data)
+              ? data.data
+              : [];
+        if (alive) setInvoices(items);
+      } catch (e) {
+        if (alive) setInvoicesError(e instanceof Error ? e.message : String(e));
       } finally {
         if (alive) setBillingLoading(false);
       }
@@ -125,7 +161,7 @@ export default function DashboardSettingsPage() {
     return () => {
       alive = false;
     };
-  }, [activeTab]);
+  }, [activeTab, billingReload]);
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -233,6 +269,8 @@ export default function DashboardSettingsPage() {
     }
   };
 
+  const subPill = statusPill(subscription?.subscription?.status);
+
   return (
     <>
       <div className="dash-page-head">
@@ -336,6 +374,20 @@ export default function DashboardSettingsPage() {
             <div className="dash-panel-title">Subscription</div>
             {billingLoading ? (
               <div className="dash-info">Loading billing…</div>
+            ) : subError ? (
+              <div className="dash-warn">
+                Your subscription could not be loaded, so what is shown below may
+                be out of date.
+                <div className="dash-empty-cta-row">
+                  <button
+                    type="button"
+                    className="dash-btn dash-btn-secondary dash-btn-sm"
+                    onClick={() => setBillingReload((k) => k + 1)}
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
             ) : (
               <div className="dash-form">
                 <div className="dash-form-row">
@@ -351,9 +403,7 @@ export default function DashboardSettingsPage() {
                   <div className="dash-field">
                     <label>Status</label>
                     <div>
-                      <span className="dash-pill dash-pill-paid">
-                        {subscription?.subscription?.status || "active"}
-                      </span>
+                      <span className={subPill.className}>{subPill.label}</span>
                     </div>
                   </div>
                 </div>
@@ -383,6 +433,20 @@ export default function DashboardSettingsPage() {
             <div className="dash-panel-title">Recent invoices</div>
             {billingLoading ? (
               <div className="dash-info">Loading invoices…</div>
+            ) : invoicesError ? (
+              <div className="dash-warn">
+                Your invoices could not be loaded, so this is not a statement that
+                you have none.
+                <div className="dash-empty-cta-row">
+                  <button
+                    type="button"
+                    className="dash-btn dash-btn-secondary dash-btn-sm"
+                    onClick={() => setBillingReload((k) => k + 1)}
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
             ) : invoices.length === 0 ? (
               <div className="dash-empty">
                 No invoices yet.

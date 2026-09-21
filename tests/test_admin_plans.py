@@ -498,6 +498,35 @@ async def test_an_operator_can_point_plan_fees_at_a_payway_link(
     assert actions == ["hq_store.created", "hq_store.link_set"]
 
 
+async def test_the_link_set_reason_is_recorded(client, unconfigured_hq_store):
+    """This write reroutes every plan fee, so the operator's reason travels with it."""
+    admin = await make_admin()
+    await sign_in(client, admin.email, PASSWORD)
+
+    saved = await client.put(
+        "/v1/admin/hq-store/link",
+        json={
+            "raw_link": "https://link.payway.com.kh/ABAPAYreason01",
+            "reason": "Moving collection to the new company ABA account",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+    async with session_factory() as session:
+        entry = (
+            await session.execute(
+                select(models.AuditLog).where(
+                    models.AuditLog.action == "hq_store.link_set"
+                )
+            )
+        ).scalars().one()
+    assert entry.actor_account_id == admin.id
+    assert entry.details["merchant_account_id"] == "ABAPAYreason01"
+    assert (
+        entry.details["reason"] == "Moving collection to the new company ABA account"
+    )
+
+
 async def test_saving_a_link_twice_replaces_it_rather_than_adding_a_store(client):
     """A second save is a correction, not a second collection point."""
     admin = await make_admin()
@@ -1004,6 +1033,72 @@ async def test_redelivering_requeues_a_payments_webhooks(client):
     assert entry.details["delivery_ids"] == [delivery_id]
 
 
+async def test_redeliver_skips_successes_unless_explicitly_asked(client):
+    """A duplicate `payment.completed` can double-process the sale at the merchant.
+
+    So the default re-sends only deliveries that have not already reached them, and
+    re-sending a success is an explicit opt-in.
+    """
+    admin = await make_admin()
+    merchant = await make_account(email="sokha@chmaba.test", name="Sokha Cafe")
+    store = await make_store(merchant, name="Sokha Cafe", owner="Sokha")
+    await make_webhook(merchant, url="https://hooks.example.com/sokha")
+    raw_key, _ = await make_key(merchant)
+    created = (
+        await client.post(
+            "/v1/payments",
+            json={"amount": 2.0, "store": store.public_id, "hosted_qr": False},
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+    ).json()
+    assert (await client.post(f"/_dev/payments/{created['id']}/pay")).status_code == 200
+
+    async with session_factory() as session:
+        delivery = (await session.execute(select(models.EventDelivery))).scalars().one()
+        delivery.status = models.DELIVERY_SUCCESS
+        delivery.attempts = 1
+        delivery.next_attempt_at = None
+        delivery.last_error = None
+        await session.commit()
+        delivery_id = delivery.id
+
+    assert (await sign_in(client, admin.email, PASSWORD)).status_code == 200
+
+    # Default: the success is left alone, and nothing is recorded because nothing
+    # changed.
+    res = await client.post(f"/v1/admin/payments/{created['id']}/redeliver")
+    assert res.status_code == 200, res.text
+    assert res.json()["redelivered"] == 0
+    assert res.json()["delivery_ids"] == []
+
+    async with session_factory() as session:
+        row = await session.get(models.EventDelivery, delivery_id)
+        assert row is not None
+        assert row.status == models.DELIVERY_SUCCESS
+        recorded = (
+            await session.execute(
+                select(func.count(models.AuditLog.id)).where(
+                    models.AuditLog.action == "admin.payment_redelivered"
+                )
+            )
+        ).scalar_one()
+    assert recorded == 0
+
+    # Opt in, and the success is queued and the choice is in the record.
+    opted = await client.post(
+        f"/v1/admin/payments/{created['id']}/redeliver?include_successes=true"
+    )
+    assert opted.status_code == 200, opted.text
+    assert opted.json()["redelivered"] == 1
+    assert opted.json()["delivery_ids"] == [delivery_id]
+
+    async with session_factory() as session:
+        row = await session.get(models.EventDelivery, delivery_id)
+        assert row is not None
+        assert row.status == models.DELIVERY_RETRYING
+        assert row.attempts == 0
+
+
 async def test_redelivering_a_payment_with_no_webhook_is_a_404(client):
     """Saying "sent" when nothing exists would be worse than saying nothing."""
     admin, merchant, store, created = await make_disputed_payment(client)
@@ -1011,3 +1106,83 @@ async def test_redelivering_a_payment_with_no_webhook_is_a_404(client):
     res = await client.post(f"/v1/admin/payments/{created['id']}/redeliver")
     assert res.status_code == 404
     assert res.json()["detail"] == "no_deliveries_for_payment"
+
+
+# --------------------------------------------------------------------------- #
+# Pending plan purchases are visible to the operator
+# --------------------------------------------------------------------------- #
+async def test_a_pending_subscription_is_visible_in_the_plan_panel(client):
+    """A plan purchase waiting on its invoice is the only record of what it buys.
+
+    Filtering the plan lookup to trial/active left the console showing "—" next to
+    an open invoice, so the operator could not tell what they were about to settle.
+    """
+    admin = await make_admin()
+    merchant = await make_account(email="sokha@chmaba.test", name="Sokha Cafe")
+    await seed_default_plans_via_session()
+
+    async with session_factory() as session:
+        plan_id = (
+            await session.execute(select(models.Plan.id).where(models.Plan.code == "pro"))
+        ).scalar_one()
+        session.add(
+            models.PlanSubscription(
+                account_id=merchant.id,
+                plan_id=plan_id,
+                status="pending",
+                next_billing_at=datetime.now(UTC) + timedelta(days=30),
+            )
+        )
+        await session.commit()
+
+    await sign_in(client, admin.email, PASSWORD)
+
+    detail = (await client.get(f"/v1/admin/accounts/{merchant.id}")).json()
+    assert detail["plan"]["code"] == "pro"
+    assert detail["plan"]["name"] == "Pro"
+    assert detail["plan"]["subscription_status"] == "pending"
+
+    listing = (await client.get("/v1/admin/accounts")).json()
+    row = next(r for r in listing["data"] if r["id"] == merchant.id)
+    assert row["plan_code"] == "pro"
+    assert row["subscription_status"] == "pending"
+
+
+async def test_an_active_plan_wins_over_a_pending_upgrade(client):
+    """An account mid-upgrade still reports the plan it is *on*, not the one it wants."""
+    admin = await make_admin()
+    merchant = await make_account(email="sokha@chmaba.test", name="Sokha Cafe")
+    await seed_default_plans_via_session()
+
+    async with session_factory() as session:
+        starter_id = (
+            await session.execute(
+                select(models.Plan.id).where(models.Plan.code == "starter")
+            )
+        ).scalar_one()
+        pro_id = (
+            await session.execute(select(models.Plan.id).where(models.Plan.code == "pro"))
+        ).scalar_one()
+        now = datetime.now(UTC)
+        session.add_all(
+            [
+                models.PlanSubscription(
+                    account_id=merchant.id,
+                    plan_id=starter_id,
+                    status="active",
+                    next_billing_at=now + timedelta(days=30),
+                ),
+                models.PlanSubscription(
+                    account_id=merchant.id,
+                    plan_id=pro_id,
+                    status="pending",
+                    next_billing_at=now + timedelta(days=30),
+                ),
+            ]
+        )
+        await session.commit()
+
+    await sign_in(client, admin.email, PASSWORD)
+    detail = (await client.get(f"/v1/admin/accounts/{merchant.id}")).json()
+    assert detail["plan"]["code"] == "starter"
+    assert detail["plan"]["subscription_status"] == "active"

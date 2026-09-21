@@ -44,6 +44,7 @@ const endpointGroups = [
       { method: "GET", path: "/v1/stores", description: "List every store on the account, wrapped as {data: [...]}. Not paginated." },
       { method: "GET", path: "/v1/stores/{public_id}", description: "Get one store and its payment link." },
       { method: "PATCH", path: "/v1/stores/{public_id}", description: "Update a store. Pass any of name, external_id, city, support_email, telegram_chat_id, redirect URLs, or link={raw_link, merchant_account_id, merchant_name}. Branding fields require the white-label entitlement — otherwise 403 whitelabel_not_enabled." },
+      { method: "PUT", path: "/v1/stores/{public_id}", description: "Alias of PATCH /v1/stores/{public_id}: update a store with a full-body PUT. Same fields and validation, with the same 403 whitelabel_not_enabled when branding fields are sent without the entitlement." },
       { method: "PUT", path: "/v1/stores/{public_id}/link", description: "Attach or replace the store's ABA PayWay link. Requires raw_link and merchant_account_id. Promotes a draft store to active." },
       { method: "POST", path: "/v1/stores/{public_id}/disable", description: "Disable a store. New payments against it fail with 400 store_disabled, and no other write will touch it — a PATCH and a link attach are both refused while it is disabled." },
       { method: "POST", path: "/v1/stores/{public_id}/enable", description: "Re-enable a disabled store. Answers status active, or draft when the store has no payment link left — attach one with PUT /v1/stores/{public_id}/link and it becomes active. A no-op on a store that is not disabled." },
@@ -56,9 +57,9 @@ const endpointGroups = [
       "Create payments and track their status. The create call returns the KHQR string and a hosted checkout URL; reading a payment back returns the QR string without the URL, and the list returns neither.",
     items: [
       { method: "POST", path: "/v1/payments", description: "Create a payment. Pass amount (a positive decimal with at most two places, in the store link's currency), optional reference_id, metadata and idempotency_key, plus store=<store public id> or merchant=<store external_id>. hosted_qr is left out by default, which means auto: ABA issues the code whenever the store's link is an ABA PayWay link, because a code we build ourselves for one carries no ABA transaction and can never be confirmed. hosted_qr=false builds a code offline and is refused on a live request unless the deployment can confirm one. 201 returns qr_string, checkout_url and expires_at." },
-      { method: "GET", path: "/v1/payments", description: "List the account's payments, newest first. Filters: ?store=, ?merchant=<external_id>, ?status=, ?limit= (default 20). Older payments are still listed after their QR dies, so filter ?status=paid for a settlement feed. Statuses: pending, scanned, paid, expired, failed, superseded, reversed." },
+      { method: "GET", path: "/v1/payments", description: "List the account's payments, newest first. Filters: ?store=, ?merchant=<external_id>, ?status=, ?limit= (default 20, max 100) and ?offset= (default 0, skips that many newest rows so you can page). A negative offset is a 422. Older payments are still listed after their QR dies, so filter ?status=paid for a settlement feed. Statuses: pending, scanned, paid, expired, failed, superseded, reversed." },
       { method: "GET", path: "/v1/payments/{public_id}", description: "One payment: status, amount, currency, QR string, created/expires/approved/paid timestamps, the ABA reference once settled, and reversal state. checkout_url is null here — it is built by the create call, and the id inside it is this payment's own id, so /pay/{public_id} is the same page. Amounts are returned as decimal strings; summary totals elsewhere are integer *amount_cents." },
-      { method: "POST", path: "/v1/payments/{public_id}/reissue", description: "Replace a dead code with a fresh one and keep the lineage. Only an expired or failed payment can be replaced: paid answers 409 payment_already_paid, reversed answers 409 payment_reversed, and anything still live — pending, scanned, or superseded, which already has a replacement — answers 409 payment_not_expired. 201 mints a new payment, 200 returns the live replacement already created for this one." },
+      { method: "POST", path: "/v1/payments/{public_id}/reissue", description: "Replace a dead code with a fresh one and keep the lineage. Only an expired or failed payment can be replaced: paid answers 409 payment_already_paid, reversed answers 409 payment_reversed, and anything still live — pending, scanned, or a superseded code that already has a replacement — answers 409 payment_not_expired. 201 mints a new payment, 200 returns the live replacement already created for this one." },
       { method: "POST", path: "/v1/payments/{public_id}/reverse", description: "Record that a paid payment was refunded, with an optional note and a payment.reversed event. This is bookkeeping only — we never hold your funds, so send the money back to the customer yourself and record it here so your reports and quota stop counting the sale. 409 payment_not_paid or payment_already_reversed otherwise." },
     ],
   },
@@ -67,16 +68,17 @@ const endpointGroups = [
     summary:
       "Re-check a payment you created, and have the platform act on what it finds. These are the endpoints to use for confirmation. The Bakong ledger lookups below are a different thing and are not switched on.",
     items: [
-      { method: "GET", path: "/v1/transactions/check-status/{payment_public_id}", description: "Authoritative status for one of your payments. Query: prefer_aba_page (default true), aba_slug_hint, mark_paid (default true — when a source reports PAID, the payment row transitions too). Returns status (PAID/PENDING/FAILED/UNKNOWN), source (aba_payway_link_page or bakong_open_api), matched_amount, transitioned_to_paid, the signals behind the answer, and error when a source could not be reached. 404 payment_not_found if the id is not on your account. Works without Bakong credentials for a payment that has a hosted ABA session." },
-      { method: "POST", path: "/v1/transactions/verify-payment/{payment_public_id}", description: "The same reconciliation, returning the underlying Bakong transaction shape instead of a status object. Query: use_hash (default false — forces the Bakong path), prefer_aba_page (default true), aba_slug_hint. 404 tx_not_found_yet when nothing confirms it yet. Bakong credentials are required only for a payment with no hosted session to ask." },
+      { method: "GET", path: "/v1/transactions/check-status/{payment_public_id}", description: "Authoritative status for one of your payments. Query: prefer_aba_page (default true), aba_slug_hint, mark_paid (default true — when a source reports PAID, the payment row transitions too). Returns status (PAID/PENDING/FAILED/UNKNOWN), source (payway_hosted_checkout when an ABA-hosted session answered, bakong_open_api when the Bakong ledger matched, or null when no source could be reached), matched_amount, transitioned_to_paid, the signals behind the answer, and error when a source could not be reached. 404 payment_not_found if the id is not on your account. Works without Bakong credentials for a payment that has a hosted ABA session." },
+      { method: "POST", path: "/v1/transactions/verify-payment/{payment_public_id}", description: "The same reconciliation, returning the underlying Bakong transaction shape instead of a status object. Query: use_hash (default false — forces the Bakong path), prefer_aba_page (default true), aba_slug_hint. When nothing confirms it yet it answers 200 with found:false rather than a 404 — there is simply no transaction to return yet. Bakong credentials are required only for a payment with no hosted session to ask." },
     ],
   },
   {
     title: "Bakong Ledger Lookup",
     unavailable: true,
     summary:
-      "Look a transaction up in Bakong's own ledger. These require platform Bakong Open API credentials, which are not configured, so every route here answers 503 bakong_not_configured today. They are listed for completeness, not for use — reconcile with the two endpoints above instead.",
+      "Look a transaction up in Bakong's own ledger, and renew the token those lookups need. These require platform Bakong Open API credentials, which are not configured, so the ledger lookups here answer 503 bakong_not_configured today. They are listed for completeness, not for use — reconcile with the two endpoints above instead.",
     items: [
+      { method: "POST", path: "/v1/transactions/token/renew", description: "Ask NBC for a fresh short-lived Bakong JWT, used by the ledger lookups below. Body optional {email} — the registered Bakong developer email; 400 email_required when neither the body nor the deployment supplies one, and 400 bakong_error when NBC refuses. 200 returns {token, message}, with token null when one could not be issued." },
       { method: "POST", path: "/v1/transactions/search", description: "Bakong search by identifier (search_type=hash|md5|short_hash|instruction_ref|external_ref, value, optional amount filter)." },
       { method: "POST", path: "/v1/transactions/poll", description: "Poll Bakong until the transaction succeeds. Interval and attempts are set with interval_seconds (default 2) and max_attempts (default 60) — there is no timeout_seconds field." },
       { method: "GET", path: "/v1/transactions/md5/{md5_value}", description: "Lookup by 32-char QR MD5." },
@@ -120,17 +122,20 @@ const endpointGroups = [
     items: [
       { method: "GET", path: "/v1/billing/plans", description: "Public plans matrix (name, monthly fee, and per-plan limits such as max_stores and max_keys_per_account). No auth needed." },
       { method: "GET", path: "/v1/billing/subscription", description: "The account's current subscription and plan. Session only." },
-      { method: "POST", path: "/v1/billing/change-plan", description: "Change plan with plan_code=free|starter|pro. A move onto a free tier applies at once. A paid tier is bought rather than granted: the response comes back with payment_required=true, a pending subscription and the invoice for the period, and the plan activates when that invoice is paid — the pending subscription grants nothing until then. One invoice per account per period, so a 409 period_already_invoiced means this month is already billed. 400 plan_unchanged if it is the plan you are on, 404 plan_not_found, 400 plan_not_available if it is retired. 503 billing_not_open when the platform's own payment destination is not configured yet. Session only." },
+      { method: "POST", path: "/v1/billing/change-plan", description: "Change plan with plan_code=free|starter|pro. A move onto a free tier applies at once. A paid tier is bought rather than granted: the response comes back with payment_required=true, a pending subscription and the invoice for the period, and the plan activates when that invoice is paid — the pending subscription grants nothing until then. One invoice per account per period, so a 409 period_already_invoiced means this month is already billed. 400 plan_unchanged if it is the plan you are on, 404 plan_not_found, 400 plan_not_available if it is retired. Session only." },
       { method: "GET", path: "/v1/billing/invoices", description: "List the account's plan invoices, filtered by period_month=YYYY-MM. Session only." },
-      { method: "GET", path: "/v1/billing/invoices/{id}/khqr", description: "Mint a live KHQR to settle a plan invoice, through our own payments API. 201 returns payment_id, qr_string and checkout_url. Session only." },
+      { method: "GET", path: "/v1/billing/invoices/{id}/khqr", description: "Mint a live KHQR to settle a plan invoice, through our own payments API. 201 returns payment_id, qr_string and checkout_url. 400 invoice_already_paid, 404 invoice_not_found, and 503 billing_not_open when the platform's own payment destination is not configured yet. Session only." },
     ],
   },
   {
     title: "Account",
     summary: "The signed-in account's own profile. Everything here is session-cookie only — an API key is not accepted.",
     items: [
-      { method: "GET", path: "/v1/me", description: "Your profile: name, email, status, plan, feature gates, terms acceptance, and the version of the agreement published right now." },
+      { method: "GET", path: "/v1/me", description: "Your profile: id, email, name, status, whitelabel_enabled, is_platform_admin, has_password, created_at, updated_at, terms acceptance (terms_accepted_at / terms_accepted_version) and the version of the agreement published right now (terms_required_version), plus auth_method (password vs Google). There is no plan field here." },
       { method: "PATCH", path: "/v1/me", description: "Update name. email is deliberately not accepted here — the schema forbids unknown fields, so sending it is a 422, and moving an address is a verified operation instead (POST /v1/me/email)." },
+      { method: "PATCH", path: "/v1/account", description: "Alias of PATCH /v1/me: update the account name. Only name is accepted; any other field is a 422 because the schema forbids unknown fields." },
+      { method: "POST", path: "/v1/me/password", description: "Rotate the account's password. Body {current_password, new_password}. 401 invalid_password when the current one is wrong, 400 password_unchanged when the new one matches the old, and 409 no_password_set for a Google-only account that has no password to rotate. Session only." },
+      { method: "DELETE", path: "/v1/me", description: "Close and anonymise the account. Body {confirm_email, current_password} — the account's own address echoed back, plus the password when the account has one. 400 confirm_email_does_not_match, 401 invalid_password, and 409 platform_admin_cannot_self_delete for the console's own account. Irreversible: it suspends the account and revokes every key, store and webhook." },
       { method: "POST", path: "/v1/me/email", description: "Move the account's email. Requires current_password for an account that has one; an account created through Google has no password to prove ownership with, so it is refused and pointed at support. 400 email_already_taken if the address is in use." },
       { method: "POST", path: "/v1/me/terms", description: "Record acceptance of the merchant agreement. Send the version you displayed; a stale one is refused with 409 terms_version_superseded. Re-accepting the current version is a no-op." },
     ],
@@ -209,9 +214,10 @@ export CHMABA_API="${baseUrl}"`,
     "store": "st_your_store_id",
     "metadata": { "table": "A3" }
   }'
-# 201: { "id": "pay_abc123", "status": "pending",
-#        "qr_string": "000201...", "checkout_url": ".../pay/pay_abc123",
+# 201: { "id": "kQ7mZx2VaRt9LpBnWc4YsH1u", "status": "pending",
+#        "qr_string": "000201...", "checkout_url": ".../pay/kQ7mZx2VaRt9LpBnWc4YsH1u",
 #        "expires_at": "..." }
+# Payment ids carry no prefix — only stores are st_… — so do not strip one.
 # idempotency_key goes in the BODY — retry with the same value to get the
 # same payment back instead of minting a second one.`,
     },
@@ -220,12 +226,12 @@ export CHMABA_API="${baseUrl}"`,
       title: "Wait for settlement",
       lang: "bash",
       code: `# Poll the payment, or simply wait for the payment.completed webhook:
-curl "$CHMABA_API/v1/payments/pay_abc123" \\
+curl "$CHMABA_API/v1/payments/kQ7mZx2VaRt9LpBnWc4YsH1u" \\
   -H "Authorization: Bearer $CHMABA_KEY"
-# status: pending → scanned → paid, or expired / failed.
+# status: pending → paid, or expired / failed / superseded / reversed.
 
 # If the code died before the customer paid, mint a replacement:
-curl -X POST "$CHMABA_API/v1/payments/pay_abc123/reissue" \\
+curl -X POST "$CHMABA_API/v1/payments/kQ7mZx2VaRt9LpBnWc4YsH1u/reissue" \\
   -H "Authorization: Bearer $CHMABA_KEY"
 # 201 mints a new payment; 200 returns the live replacement if one exists.`,
     },
@@ -372,7 +378,7 @@ function EndpointSection() {
                 </div>
                 <ul className="docs-endpoint-list">
                   {group.items.map((item) => (
-                    <li key={item.path} className="docs-endpoint-row">
+                    <li key={`${item.method} ${item.path}`} className="docs-endpoint-row">
                       <span className={`docs-method docs-method-${item.method}`}>{item.method}</span>
                       <code className="docs-path">{item.path}</code>
                       <p className="docs-description">{item.description}</p>

@@ -428,9 +428,11 @@ export default function BillingPage() {
                   </span>
                 </div>
                 <div className="cp-plan-bar">
-                  <span
+                  <progress
                     className="cp-plan-fill"
-                    style={{ width: `${usagePct}%` }}
+                    max={100}
+                    value={usagePct}
+                    aria-label="Monthly payment quota used"
                   />
                 </div>
               </div>

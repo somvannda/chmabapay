@@ -636,9 +636,9 @@ class PaymentStatusOut(BaseModel):
     status: str = Field(description="PAID / PENDING / FAILED / UNKNOWN")
     source: str | None = Field(
         description=(
-            "Which source reported this result: 'aba_payway_link_page' "
-            "(#1 priority for ABA PayWay payments) or "
-            "'bakong_open_api' (#2 fallback, or #1 for generic account payments)."
+            "Which source reported this result: 'payway_hosted_checkout' when an "
+            "ABA-hosted session answered, 'bakong_open_api' when the Bakong ledger "
+            "matched, or null when no source could be reached."
         )
     )
     matched_amount: float | None

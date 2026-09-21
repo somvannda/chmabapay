@@ -291,6 +291,11 @@ services:
     volumes:
       - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./deploy/nginx/api-locations.inc:/etc/nginx/api-locations.inc:ro
+      # Security headers, re-included at every level that sets a header of its own.
+      # See the note at the top of the file. No HSTS locally: this edge is plain
+      # HTTP, and a browser that learned HSTS from http://localhost:8080 would
+      # refuse to reach anything else on that host afterwards.
+      - ./deploy/nginx/security-headers.inc:/etc/nginx/security-headers.inc:ro
     depends_on:
       api:
         condition: service_healthy

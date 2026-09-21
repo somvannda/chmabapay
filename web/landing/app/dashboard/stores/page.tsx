@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+
+import { readApiError } from "@/components/portal/apiError";
 
 type Store = {
   id: string;
@@ -31,35 +33,39 @@ function pillClassForStatus(status: string): string {
 export default function DashboardStoresPage() {
   const [loading, setLoading] = useState(true);
   const [stores, setStores] = useState<Store[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [disablingId, setDisablingId] = useState<string | null>(null);
   const [enablingId, setEnablingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await fetch("/v1/stores", { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          const items: Store[] = Array.isArray(data)
-            ? data
-            : Array.isArray(data?.items)
-              ? data.items
-              : Array.isArray(data?.data)
-                ? data.data
-                : [];
-          if (alive) setStores(items);
-        }
-      } catch {
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
+  const fetchStores = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await fetch("/v1/stores", { credentials: "include" });
+      // A failed read used to leave `stores` empty, which the page then rendered as
+      // "No stores yet." — the same screen as a fresh account, and the one state in
+      // which a merchant might create a duplicate store.
+      if (!res.ok) throw new Error(await readApiError(res));
+      const data = await res.json().catch(() => ({}));
+      const items: Store[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.items)
+          ? data.items
+          : Array.isArray(data?.data)
+            ? data.data
+            : [];
+      setStores(items);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void fetchStores();
+  }, [fetchStores]);
 
   async function handleDisable(store: Store) {
     if (!confirm(`Disable store "${store.name}"?`)) return;
@@ -181,6 +187,20 @@ export default function DashboardStoresPage() {
       <div className="dash-panel">
         {loading ? (
           <div className="dash-empty">Loading stores…</div>
+        ) : loadError ? (
+          <div className="dash-warn">
+            Your stores could not be loaded, so this list is unknown rather than
+            empty. Any store you already created is still working.
+            <div className="dash-empty-cta-row">
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary dash-btn-sm"
+                onClick={() => void fetchStores()}
+              >
+                Retry
+              </button>
+            </div>
+          </div>
         ) : stores.length === 0 ? (
           <div className="dash-empty">
             No stores yet.

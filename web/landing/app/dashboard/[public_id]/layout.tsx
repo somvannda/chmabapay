@@ -46,6 +46,7 @@ export default function StoreScopedLayout({
   const [storeLoading, setStoreLoading] = useState(true);
   const [store, setStore] = useState<StoreInfo | null>(null);
   const [stores, setStores] = useState<StoreInfo[]>([]);
+  const [storesError, setStoresError] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const switcherRef = useRef<HTMLDivElement | null>(null);
 
@@ -80,18 +81,20 @@ export default function StoreScopedLayout({
     (async () => {
       try {
         const res = await fetch("/v1/stores", { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          const items: StoreInfo[] = Array.isArray(data)
-            ? data
-            : Array.isArray(data?.items)
-              ? data.items
-              : Array.isArray(data?.data)
-                ? data.data
-                : [];
-          if (alive) setStores(items);
-        }
+        // A failed read used to leave `stores` empty, which the switcher then read as
+        // "No other stores" — a claim it cannot make from a request that did not answer.
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json().catch(() => ({}));
+        const items: StoreInfo[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.items)
+            ? data.items
+            : Array.isArray(data?.data)
+              ? data.data
+              : [];
+        if (alive) setStores(items);
       } catch {
+        if (alive) setStoresError(true);
       }
     })();
     return () => {
@@ -141,7 +144,11 @@ export default function StoreScopedLayout({
           </button>
           {switcherOpen && (
             <div className="cp-switcher-menu" role="menu">
-              {stores.length === 0 ? (
+              {storesError ? (
+                <div className="cp-switcher-empty">
+                  Could not load your other stores.
+                </div>
+              ) : stores.length === 0 ? (
                 <div className="cp-switcher-empty">No other stores</div>
               ) : (
                 stores.map((s) => {

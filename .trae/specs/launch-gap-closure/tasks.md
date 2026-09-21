@@ -992,6 +992,172 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 ---
 
+## Wave 8 — Launch closure (from the 2026-09-21 second production audit)
+
+> **Status: IN PROGRESS (2026-09-21).** The second A-to-Z audit was run against
+> production at `02fd387`, on the same four tracks as the first (public site, API docs,
+> portal, console) plus live probes of both hostnames: page metadata, the legal text as
+> rendered, security and cache headers, `robots.txt`/`sitemap.xml`, a full internal-link
+> crawl, and unauthenticated status codes on every money route. Findings were then
+> re-verified against source. **Method note:** the portal and console were audited from
+> source rather than rendered, because no merchant or admin credentials were used — every
+> claim about them is code-verified, not browser-verified, and the two items that need a
+> human are named in the Launch gate below.
+
+### T-37 — Correct the API docs where they contradict the code
+- **Status**: `pending` · **Priority**: S2 · **Gaps**: D1–D9 · **Depends on**: none
+- **Description**: the second audit re-ran the docs-vs-code comparison and the first
+  wave's fixes did not reach these. `check-status`'s documented `source` enum advertises
+  `aba_payway_link_page`, which is **never assigned anywhere**, and omits
+  `payway_hosted_checkout`, which is emitted for every ABA-hosted payment — the same dead
+  enum is in `schemas.py`. `verify-payment` is documented to return `404
+  tx_not_found_yet` but returns `200 {"found": false}`, so the documented branch is dead.
+  `docs/api.md` still lists `superseded` as reissuable when the service refuses it with
+  409, and still calls all of `/v1/billing/*` session-only when `GET /v1/billing/plans`
+  is public (confirmed live: 200 anonymous). The docs page claims `GET /v1/me` returns
+  `plan`; it does not. The `superseded` definition is inverted — it marks the
+  *replacement* code when the original settles. `503 billing_not_open` is attributed to
+  `change-plan`, which never raises it. The API-key security scheme still describes
+  `ck_test_` keys, which the system never issues. Five real endpoints published in the
+  OpenAPI appear in neither doc: `PUT /v1/stores/{public_id}`, `PATCH /v1/account`,
+  `POST /v1/me/password`, `DELETE /v1/me`, `POST /v1/transactions/token/renew`.
+- **Test**: pytest — the existing `tests/test_openapi_schema.py` stays green; a new
+  assertion that every path in the live schema is either documented or explicitly listed
+  as internal. Manual: re-read each corrected claim against the router.
+
+### T-38 — Make the published OpenAPI match the runtime
+- **Status**: `pending` · **Priority**: S3 · **Gaps**: D10 · **Depends on**: none
+- **Description**: `POST /v1/payments` returns 201 and `POST .../reissue` returns 201 or
+  200 depending on whether a code was minted, but neither decorator declares
+  `status_code`, so the published schema advertises only 200 and omits reachable 400/404/502.
+  A generated client is therefore wrong at runtime. Runtime behaviour is correct and must
+  not change — only the declarations.
+- **Test**: pytest — `tests/test_openapi_schema.py` asserts the declared status set for
+  both operations includes what the handler can actually return.
+
+### T-39 — Reach a merchant's older payments (pagination)
+- **Status**: `pending` · **Priority**: S2 · **Gaps**: P3 · **Depends on**: none
+- **Description**: `GET /v1/payments` accepts `limit` (default 20, clamped to 100) and no
+  offset, and the portal asks for 50. In the first weeks a merchant crosses 50 payments
+  and can no longer reach an older one anywhere in the portal — the only workaround is
+  the Reports CSV. Add `offset` to the list endpoint (with the total already available
+  from reports) and a "Load more" affordance on the payments pages.
+- **Test**: pytest — `offset` returns the next slice, is clamped, and rejects a negative
+  value; the first page is unchanged for an existing caller.
+
+### T-40 — Never render "empty" for a failure
+- **Status**: `pending` · **Priority**: S2 · **Gaps**: P1, P4, P5, P6, P7 · **Depends on**: none
+- **Description**: five pages act only on `res.ok`, swallow the error and then assert the
+  absence of data: the stores list, the payments list, the store-scoped payments list,
+  the webhooks list, and the store overview — which renders a fully zeroed dashboard. A
+  merchant with live stores sees "No stores yet." and may create duplicates. The keys
+  page and the root overview were fixed for exactly this in Wave 4; port that pattern
+  (`error` state + Retry + `—` placeholders). Same task, same files: the store-scoped
+  payments list renders `reversed`/`superseded` in the grey "pending" pill; the settings
+  billing tab always shows a green "active" pill regardless of the real status; the
+  reports copy promises CSV columns that do not exist (owner email, Bakong references);
+  and `describeApiError` falls through to raw machine codes for `period_already_invoiced`,
+  `plan_not_available`, `payment_link_disabled` and friends, so a merchant literally reads
+  `period_already_invoiced` on screen.
+- **Test**: pytest is not enough here — each page's failure path is a UI state. Verified
+  by reading each page against its fetch, plus the landing Docker build (type + lint).
+
+### T-41 — Confirm, and guard, the actions that destroy a live credential
+- **Status**: `pending` · **Priority**: S2 · **Gaps**: P2, P9 · **Depends on**: none
+- **Description**: Revoke/Rotate on an API key and Rotate-secret/Delete on a webhook
+  endpoint have no confirmation and no in-flight disabled state. One mis-click revokes
+  the secret a merchant has already deployed; a double-click on Rotate mints two keys and
+  the second reveal banner overwrites the first, so one raw key is lost permanently.
+  The stores list already implements the pattern to copy (`disablingId`). Also here: the
+  inline `style={{width}}` progress bars in `DashboardShell`/billing violate the
+  zero-inline-styles rule and move to `globals.css`.
+- **Test**: browser — each guard blocks the action until confirmed and cannot be
+  double-submitted.
+
+### T-42 — Security headers, cache policy and per-page metadata
+- **Status**: `pending` · **Priority**: S2 · **Gaps**: L1, L2, L3 · **Depends on**: none
+- **Description**: neither hostname sends `Strict-Transport-Security`,
+  `Content-Security-Policy`, `X-Frame-Options`, `X-Content-Type-Options`,
+  `Referrer-Policy` or `Permissions-Policy` — verified live. The dashboard and the console
+  are session-authenticated and framable, and the first request of a session is
+  downgrade-able. Every app HTML response also carries `Cache-Control:
+  s-maxage=31536000` (Next's static default) — one year of shared caching on
+  authenticated pages; Cloudflare answers `cf-cache-status: DYNAMIC` today, so this is a
+  latent risk rather than an active leak, and it is closed by a `no-store` app-route
+  policy. Separately, `/terms`, `/privacy` and `/contact` have no canonical and inherit
+  the landing `og:title`/`twitter:title`, so sharing a legal page shows the marketing
+  title; `/api/docs` and the 404 were fixed in Wave 6 and are the template.
+- **Test**: `curl -D -` on both hostnames shows the headers; `curl` shows each page's
+  canonical and its own `og:title`; app routes answer `no-store`.
+
+### T-43 — Remove the last trace of the draft state from the legal text
+- **Status**: `pending` · **Priority**: S2 · **Gaps**: L4, L5, L6, L7, L8 · **Depends on**: operator input for L5
+- **Description**: five things in the legal text itself, all found by reading it as
+  rendered. (1) Terms §3 still ends "This list is a starting point and is subject to
+  change following legal review" — the residue of the draft state whose banner D1 removed;
+  it tells the customer the document has not been reviewed. (2) Terms §6 says "Changes to
+  a paid plan take effect at your next billing period", which **contradicts the shipped
+  behaviour**: a paid-plan change is a purchase — a `pending` subscription and an invoice,
+  activating when the invoice is paid. The clause also never states the currency. (3) The
+  Terms never identify the contracting entity — no registered name, number or address —
+  and §8 excludes indirect loss but caps nothing. (4) Privacy §5 enumerates processors and
+  omits **Cloudflare**, which terminates TLS for every request. (5) Privacy §4 says raw
+  rail responses are kept "at most 90 days" while the sweep is daily, so the true bound is
+  90 days plus one sweep.
+- **Test**: read both pages as rendered; each corrected sentence checked against the code
+  it describes. **L5's entity clause ships only with the operator's real details** —
+  inventing a registration number is not an option this task has.
+
+### T-44 — Make a disabled store reversible, and stop revenue moving silently
+- **Status**: `pending` · **Priority**: S2 · **Gaps**: A1, A2 · **Depends on**: none
+- **Description**: two admin gaps with teeth. (1) There is no admin enable route: an
+  operator can disable a store from the console but only the *merchant* can re-enable it
+  (`POST /v1/stores/{id}/enable` is merchant-authed), so disabling during an incident is a
+  one-way door. Add `POST /v1/admin/stores/{public_id}/enable` mirroring disable, audited
+  as `store.enabled`, 404 `store_not_found`. (2) The HQ-store panel changes where **all**
+  plan-fee revenue is collected with no confirmation, and the resolved
+  `merchant_account_id` is only shown *after* the write — a shape-valid typo reroutes
+  platform revenue with no friction.
+- **Test**: pytest — the enable route requires a password session, is idempotent, 404s an
+  unknown store, and writes one audit row; browser — the link change prompts first.
+
+### T-45 — Console: distinguish failure from empty, and close the operator dead ends
+- **Status**: `pending` · **Priority**: S3 · **Gaps**: A3–A12 · **Depends on**: T-44
+- **Description**: the console's remaining rough edges, all operator-facing. List pages
+  render the error banner *and* the "no results" empty state together, so a failed fetch
+  reads as "there are none"; detail pages report any non-404 failure as "not found"; the
+  global invoices list has no Resolve action; `is_featured` can be set at creation but
+  never toggled; re-deliver resets successful deliveries too, with no confirmation
+  (duplicate `payment.completed` at the merchant); the **critical** "worker queues not
+  draining" alert has `href: None` and so renders with no next step; "Webhooks failed
+  (24h)" links to a list that applies no time filter; eight reachable refusal codes print
+  raw machine strings; `pending` subscriptions are invisible in the Plan panel while
+  their open invoice is visible; and self-suspension is allowed whenever more than one
+  admin exists.
+- **Test**: pytest for the code-side changes; browser for the failure-vs-empty states.
+
+### T-46 — Verification, release, and the launch gate
+- **Status**: `pending` · **Priority**: S1 · **Depends on**: T-37…T-45
+- **Description**: `ruff check`, the full suite against Postgres in Docker, `next build`
+  for both apps in Docker, browser checks of the new guards and states, then mirror to the
+  VPS and re-probe production. Update `docs/production-readiness.md` with a P1-6 section
+  recording this audit and what it closed.
+- **Test**: the probes, re-run against production.
+
+> **Launch gate.** When Wave 8 closes, the only open items are the ones no code can close,
+> and each is stated rather than implied:
+> 1. **P1-4 — the lawyer review.** T-43 removes the last code-visible trace of the draft
+>    state; it cannot substitute for the review. Unchanged and still open.
+> 2. **The registered entity's name, number and address** (L5), which the Terms must
+>    state and which no amount of reading the repository can produce. The clause ships
+>    with the operator's real values, not before.
+> 3. **The HQ PayWay link** (Wave 2's operator action). Without it a paid plan change
+>    correctly answers `503 billing_not_open`.
+> Everything else the second audit found is closed here. That is what makes this the last
+> wave before the launch announcement.
+
+---
+
 ## Summary
 
 | Wave | Tasks | S1 | S2 | S3–S4 |
@@ -1003,16 +1169,18 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 | 5 Admin console | T-19…T-24 | 1 | 3 | 2 |
 | 6 Docs and copy | T-25…T-34 | 0 | 5 | 5 |
 | 7 Verification | T-35…T-36 | 1 | 0 | 1 |
+| 8 Launch closure | T-37…T-46 | 1 | 7 | 2 |
 
 Waves 2 and 3 were gated on decisions D2 and D1 and could not start until those were
 answered. Waves 1, 4, 5 and 6 could start immediately; the tasks that depended on D5, D6
 and D8 took the low-risk default, and each default is recorded in the task's `Shipped:`
 block so the choice is visible rather than implied.
 
-**Closing state (2026-09-21):** all 37 registered tasks are `complete` — T-01…T-36 plus
-T-08b, which was added mid-flight on 2026-09-18 and is the only task outside the original
-numbering. Every wave banner reads `COMPLETE` and every task beneath it agrees, because the
-individual statuses were flipped in a final bookkeeping pass against the code each one
-cites. Production runs `4c4bffa` at Alembic `0010`. The one item no code can close —
-P1-4's lawyer review of the merchant agreement — remains open, by design, and is flagged
-as such in `docs/production-readiness.md`.
+**Closing state (2026-09-21):** Waves 1–7 are closed — all 37 registered tasks (T-01…T-36
+plus T-08b) are `complete` — and **Wave 8 (T-37…T-46) is the launch wave, in progress.**
+Production runs `02fd387` at Alembic `0010`. Three items no code can close are listed in
+Wave 8's Launch gate: P1-4's lawyer review of the merchant agreement, the registered
+entity's details that the Terms must state, and the HQ PayWay link without which a paid
+plan change correctly answers `503 billing_not_open`. Everything else the 2026-09-21
+audit found is closed inside Wave 8, which is what makes it the last wave before the
+launch announcement.

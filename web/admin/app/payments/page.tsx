@@ -287,6 +287,14 @@ export default function AdminPaymentsPage() {
       <div className="dash-panel">
         {loading ? (
           <div className="dash-info">Loading payments…</div>
+        ) : errorMsg ? (
+          <div className="dash-empty">
+            Could not load the payments.
+            <div className="dash-empty-desc">
+              The request failed, so this is not an empty result. Reload the page
+              to try again.
+            </div>
+          </div>
         ) : rows.length === 0 ? (
           <div className="dash-empty">
             No payments match these filters.

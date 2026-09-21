@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,8 +17,11 @@ from ..db import get_session
 from ..openapi import (
     AUTH_ERRORS,
     AUTH_SECURITY,
+    BAD_REQUEST_ERROR,
     CONFLICT_ERROR,
+    NOT_FOUND_ERROR,
     QUOTA_ERROR,
+    UPSTREAM_ERROR,
     merged,
 )
 from ..schemas import money_to_str
@@ -183,8 +186,23 @@ async def resolve_target(
 
 @router.post(
     "",
+    status_code=201,
     response_model=schemas.PaymentOut,
-    responses=QUOTA_ERROR,
+    responses=merged(
+        QUOTA_ERROR,
+        UPSTREAM_ERROR,
+        BAD_REQUEST_ERROR,
+        NOT_FOUND_ERROR,
+        {
+            200: {
+                "model": schemas.PaymentOut,
+                "description": (
+                    "Idempotent replay: the payment already stored for this "
+                    "`idempotency_key`, returned instead of minting a second one."
+                ),
+            }
+        },
+    ),
 )
 async def create_payment(
     body: schemas.PaymentCreate,
@@ -241,8 +259,24 @@ async def create_payment(
 
 @router.post(
     "/{public_id}/reissue",
+    status_code=201,
     response_model=schemas.PaymentOut,
-    responses=merged(AUTH_ERRORS, CONFLICT_ERROR),
+    responses=merged(
+        AUTH_ERRORS,
+        CONFLICT_ERROR,
+        UPSTREAM_ERROR,
+        BAD_REQUEST_ERROR,
+        NOT_FOUND_ERROR,
+        {
+            200: {
+                "model": schemas.PaymentOut,
+                "description": (
+                    "Replay: the live successor already minted for this payment, "
+                    "returned instead of spending a second ABA checkout."
+                ),
+            }
+        },
+    ),
 )
 async def reissue_payment(
     public_id: str,
@@ -368,6 +402,7 @@ async def list_payments(
     merchant: str | None = None,
     status: str | None = None,
     limit: int = 20,
+    offset: int = Query(default=0, ge=0),
     ctx: AuthContext = Depends(get_current_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
@@ -379,16 +414,20 @@ async def list_payments(
     payments"). It previously fell back to the account's only active store, so any
     account running two or more stores got 400 `store_required_or_merchant_required`
     and an empty list.
+
+    `offset` skips that many rows from the newest end so a caller can page past the
+    first `limit`. A negative value is refused by the parameter declaration (422);
+    an absurd one is clamped rather than scanned.
     """
     if store or merchant:
         target = await resolve_target(session, ctx, store, merchant)
         payments = await svc.list_payments(
-            session, target.id, status=status, limit=limit
+            session, target.id, status=status, limit=limit, offset=offset
         )
         rows = [(payment, target) for payment in payments]
     else:
         rows = await svc.list_payments_for_account(
-            session, ctx.account.id, status=status, limit=limit
+            session, ctx.account.id, status=status, limit=limit, offset=offset
         )
     items = [
         schemas.PaymentListed(

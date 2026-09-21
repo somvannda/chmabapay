@@ -289,9 +289,11 @@ export function DashboardShell({
                 {safeLimit > 0 && (
                   <>
                     <div className="cp-plan-bar">
-                      <span
+                      <progress
                         className={`cp-plan-fill${nearLimit ? " cp-plan-fill-warn" : ""}`}
-                        style={{ width: `${pct}%` }}
+                        max={100}
+                        value={pct}
+                        aria-label="Monthly payment quota used"
                       />
                     </div>
                     <div className="cp-plan-usage">

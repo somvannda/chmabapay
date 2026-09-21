@@ -19,6 +19,25 @@ export const metadata: Metadata = {
   title: "Privacy Policy — ChmabaPay",
   description:
     "What ChmabaPay stores, how long it is kept, and who else sees it.",
+  // Same shape as /api/docs: without these the privacy policy inherits the landing
+  // page's card and previews as the marketing home page when shared.
+  alternates: { canonical: "/privacy" },
+  openGraph: {
+    type: "article",
+    title: "Privacy Policy — ChmabaPay",
+    description:
+      "What ChmabaPay stores, why, how long it is kept, and who else sees it.",
+    url: "/privacy",
+    siteName: "ChmabaPay",
+    images: [{ url: "/og-image.png", width: 1024, height: 1024, alt: "ChmabaPay" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Privacy Policy — ChmabaPay",
+    description:
+      "What ChmabaPay stores, why, how long it is kept, and who else sees it.",
+    images: ["/og-image.png"],
+  },
 };
 
 export default function PrivacyPage() {
@@ -124,8 +143,7 @@ export default function PrivacyPage() {
                   supplied by the banking system about the sending side of the
                   transfer, such as a bank name or an account name.{" "}
                   <strong>
-                    We keep this raw response for at most 90 days and then delete
-                    it
+                    We keep this raw response for about 90 days and then delete it
                   </strong>{" "}
                   (see section 4). The token is useless long before that, as it
                   expires within minutes.
@@ -195,10 +213,11 @@ export default function PrivacyPage() {
               <h2>4. How long we keep it</h2>
               <ul>
                 <li>
-                  <strong>Raw payment-rail responses: at most 90 days.</strong> A
-                  daily sweep deletes them once a payment is older than that. This
-                  is enforced by the software, not by intention — the sweep runs on
-                  a schedule and on every restart of the service.
+                  <strong>Raw payment-rail responses: about 90 days.</strong> A
+                  daily sweep deletes them once a payment is older than 90 days, so
+                  in practice they go within a day of that. This is enforced by the
+                  software, not by intention — the sweep runs on a schedule and on
+                  every restart of the service.
                 </li>
                 <li>
                   <strong>
@@ -224,6 +243,13 @@ export default function PrivacyPage() {
                 asked for:
               </p>
               <ul>
+                <li>
+                  <strong>Cloudflare</strong> — our network provider, and the first
+                  party to see any request to ChmabaPay. It carries the traffic,
+                  terminates TLS for our hostnames, and therefore processes the
+                  request itself: the address you connect from, the page or endpoint
+                  asked for, and the response.
+                </li>
                 <li>
                   <strong>ABA PayWay</strong> — to mint a payment code and to check
                   whether it has been paid;

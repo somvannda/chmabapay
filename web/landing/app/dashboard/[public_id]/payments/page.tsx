@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { readApiError } from "@/components/portal/apiError";
+
 type StoreOption = {
   id: string;
   name: string;
@@ -53,6 +55,12 @@ function pillClassForStatus(status: string): string {
       return "dash-pill dash-pill-expired";
     case "failed":
       return "dash-pill dash-pill-failed";
+    // Both are terminal. Falling through to the grey "pending" pill made a refunded
+    // payment read as one still waiting for money, and a replaced code read as live.
+    case "reversed":
+      return "dash-pill dash-pill-reversed";
+    case "superseded":
+      return "dash-pill dash-pill-superseded";
     default:
       return "dash-pill dash-pill-pending";
   }
@@ -65,7 +73,13 @@ const STATUS_CHIPS = [
   { value: "paid", label: "paid" },
   { value: "expired", label: "expired" },
   { value: "failed", label: "failed" },
+  { value: "reversed", label: "reversed" },
+  { value: "superseded", label: "superseded" },
 ];
+
+// One API page. "Load more" asks for the next slice with `offset`, so a merchant
+// can reach payments older than the newest 50.
+const PAGE_SIZE = 50;
 
 export default function StorePaymentsPage({
   params,
@@ -78,9 +92,14 @@ export default function StorePaymentsPage({
   const effectiveStatus = statusFromUrl === "all" ? "" : statusFromUrl;
 
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [stores, setStores] = useState<StoreOption[]>([]);
   const [statusFilter, setStatusFilter] = useState(effectiveStatus);
+  const [offset, setOffset] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const storeNameMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -114,40 +133,62 @@ export default function StorePaymentsPage({
 
   useEffect(() => {
     setStatusFilter(effectiveStatus);
+    // A status change starts a different list, so paging restarts from its top.
+    setOffset(0);
   }, [effectiveStatus]);
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
+    if (offset === 0) {
+      setLoading(true);
+    } else {
+      setLoadingMore(true);
+    }
+    setLoadError(null);
     (async () => {
       try {
         const params = new URLSearchParams();
-        params.set("limit", "50");
+        params.set("limit", String(PAGE_SIZE));
         params.set("store", publicId);
+        // Only sent after the first page: a request with no `offset` is exactly
+        // what this page has always asked for.
+        if (offset > 0) params.set("offset", String(offset));
         if (statusFilter) params.set("status", statusFilter);
         const res = await fetch(`/v1/payments?${params.toString()}`, {
           credentials: "include",
         });
-        if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          const items: Payment[] = Array.isArray(data)
-            ? data
-            : Array.isArray(data?.items)
-              ? data.items
-              : Array.isArray(data?.data)
-                ? data.data
-                : [];
-          if (alive) setPayments(items);
+        // A failed read used to leave `payments` empty, which the page then rendered as
+        // "No payments yet for this store." — the same screen as a fresh store.
+        if (!res.ok) throw new Error(await readApiError(res));
+        const data = await res.json().catch(() => ({}));
+        const items: Payment[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.items)
+            ? data.items
+            : Array.isArray(data?.data)
+              ? data.data
+              : [];
+        if (alive) {
+          setPayments((prev) => (offset === 0 ? items : [...prev, ...items]));
+          setHasMore(items.length === PAGE_SIZE);
         }
-      } catch {
+      } catch (e) {
+        // A failed first page is "the list is unknown"; a failed later page must
+        // not throw away the rows already on screen.
+        if (alive && offset === 0) {
+          setLoadError(e instanceof Error ? e.message : String(e));
+        }
       } finally {
-        if (alive) setLoading(false);
+        if (alive) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
     })();
     return () => {
       alive = false;
     };
-  }, [statusFilter, publicId]);
+  }, [statusFilter, publicId, offset, reloadKey]);
 
   function storeNameFor(payment: Payment): string {
     if (payment.store_name) return payment.store_name;
@@ -198,6 +239,21 @@ export default function StorePaymentsPage({
       <div className="dash-panel">
         {loading ? (
           <div className="dash-empty">Loading payments…</div>
+        ) : loadError ? (
+          <div className="dash-warn">
+            This store&apos;s payments could not be loaded, so this list is
+            unknown rather than empty. Any payment already taken is still on
+            record.
+            <div className="dash-empty-cta-row">
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary dash-btn-sm"
+                onClick={() => setReloadKey((k) => k + 1)}
+              >
+                Retry
+              </button>
+            </div>
+          </div>
         ) : payments.length === 0 ? (
           <div className="dash-empty">
             No payments yet for this store.
@@ -260,6 +316,18 @@ export default function StorePaymentsPage({
             </tbody>
           </table>
         )}
+        {!loading && !loadError && hasMore ? (
+          <div className="dash-empty-cta-row">
+            <button
+              type="button"
+              className="dash-btn dash-btn-secondary"
+              onClick={() => setOffset((current) => current + PAGE_SIZE)}
+              disabled={loadingMore}
+            >
+              {loadingMore ? "Loading…" : "Load more"}
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

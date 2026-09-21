@@ -33,6 +33,25 @@ const ERROR_COPY: Record<string, string> = {
     "White-label checkout is not enabled for this account. Contact ChmabaPay to turn it on.",
   offline_qr_requires_a_confirmation_source:
     "An offline QR code is refused here: this deployment has no way to confirm the payment later, and an unverifiable code is worse than none. Ask for a hosted code instead.",
+  // Raised when a plan change would raise a second invoice for a period that already
+  // has one (billing.py, `period_already_invoiced`).
+  period_already_invoiced:
+    "This account already has an invoice open for this month, so we cannot raise another one. Settle the existing invoice before changing plan again.",
+  // Raised when the chosen plan exists but is not public or not active (billing.py).
+  plan_not_available:
+    "That plan is not available to switch to right now. Choose another plan.",
+  // Raised when a store has no active payment link to mint a QR against
+  // (services/payments.py).
+  payment_link_disabled:
+    "This store has no active payment link, so it cannot take payments. Add or re-enable one in the store's settings first.",
+  // Raised when a request has no store and the account has more than one active store
+  // (routers/payments.py): there is no single store to fall back on.
+  store_required_or_merchant_required:
+    "This account has more than one active store, so the request has to name one: pass the store's id or its merchant id.",
+  // Raised when a `merchant=` lookup finds no store on this account
+  // (routers/payments.py).
+  merchant_not_found:
+    "No store on this account uses that merchant id. Check the id, or pass the store id instead.",
 };
 
 function detailOf(body: unknown): string | null {

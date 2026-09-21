@@ -396,6 +396,9 @@ export default function AdminPlansPage() {
   const [creating, setCreating] = useState(false);
 
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  // The delete/retire confirmation goes through the styled modal, like every other
+  // mutation here, rather than a browser `window.confirm`.
+  const [removeTarget, setRemoveTarget] = useState<Plan | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -560,39 +563,34 @@ export default function AdminPlansPage() {
     }
   }, [creating, newPlan, notify]);
 
-  const remove = useCallback(
-    async (plan: Plan) => {
-      const inUse = plan.subscriptions_count > 0;
-      const prompt = inUse
-        ? `${plan.name} is in use by ${plan.subscriptions_count} subscription(s), so it will be retired (hidden and deactivated) rather than deleted. Continue?`
-        : `Delete ${plan.name}? This cannot be undone.`;
-      if (!window.confirm(prompt)) return;
+  const remove = useCallback(async () => {
+    const plan = removeTarget;
+    if (!plan) return;
 
-      setDeletingId(plan.id);
-      setErrorMsg(null);
-      try {
-        const res = await apiFetch(`/v1/admin/plans/${plan.id}`, {
-          method: "DELETE",
-          credentials: "include",
-        });
-        if (!res.ok) throw new Error(await readApiError(res));
-        const result = (await res.json()) as {
-          retired: boolean;
-          deleted: boolean;
-        };
-        await load();
-        if (result.retired) notify(`Plan ${plan.name} retired`);
-        else notify(`Plan ${plan.name} deleted`);
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        setErrorMsg(message);
-        notify(message, "error");
-      } finally {
-        setDeletingId(null);
-      }
-    },
-    [load, notify],
-  );
+    setDeletingId(plan.id);
+    setErrorMsg(null);
+    try {
+      const res = await apiFetch(`/v1/admin/plans/${plan.id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(await readApiError(res));
+      const result = (await res.json()) as {
+        retired: boolean;
+        deleted: boolean;
+      };
+      setRemoveTarget(null);
+      await load();
+      if (result.retired) notify(`Plan ${plan.name} retired`);
+      else notify(`Plan ${plan.name} deleted`);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setErrorMsg(message);
+      notify(message, "error");
+    } finally {
+      setDeletingId(null);
+    }
+  }, [removeTarget, load, notify]);
 
   return (
     <>
@@ -855,6 +853,16 @@ export default function AdminPlansPage() {
                             />{" "}
                             Active
                           </label>
+                          <label className="dash-check">
+                            <input
+                              type="checkbox"
+                              checked={draft.is_featured}
+                              onChange={(e) =>
+                                setDraftField("is_featured", e.target.checked)
+                              }
+                            />{" "}
+                            Featured
+                          </label>
                         </td>
                         <td>{plan.subscriptions_count}</td>
                         <td>
@@ -933,7 +941,7 @@ export default function AdminPlansPage() {
                             <button
                               type="button"
                               className="dash-btn dash-btn-secondary dash-btn-sm"
-                              onClick={() => void remove(plan)}
+                              onClick={() => setRemoveTarget(plan)}
                               disabled={isDeleting || editingId !== null}
                             >
                               {isDeleting
@@ -953,6 +961,66 @@ export default function AdminPlansPage() {
           </table>
         )}
       </div>
+
+      {removeTarget && (
+        <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="dash-modal">
+            <div className="dash-modal-head">
+              <h2 className="dash-modal-title">
+                {removeTarget.subscriptions_count > 0
+                  ? `Retire ${removeTarget.name}?`
+                  : `Delete ${removeTarget.name}?`}
+              </h2>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => setRemoveTarget(null)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="dash-modal-body">
+              {removeTarget.subscriptions_count > 0 ? (
+                <div className="dash-hint">
+                  {removeTarget.name} is in use by{" "}
+                  {removeTarget.subscriptions_count} subscription
+                  {removeTarget.subscriptions_count === 1 ? "" : "s"}, so it will be{" "}
+                  <strong>retired</strong> — hidden from the pricing page and made
+                  unselectable — rather than deleted. Accounts already on it keep it.
+                </div>
+              ) : (
+                <div className="dash-hint">
+                  This deletes {removeTarget.name} entirely. It is not in use, so
+                  nothing depends on it, but this cannot be undone.
+                </div>
+              )}
+              <div className="dash-modal-foot">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={() => setRemoveTarget(null)}
+                  disabled={deletingId !== null}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-danger"
+                  onClick={() => void remove()}
+                  disabled={deletingId !== null}
+                >
+                  {deletingId !== null
+                    ? "Working…"
+                    : removeTarget.subscriptions_count > 0
+                      ? "Retire"
+                      : "Delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

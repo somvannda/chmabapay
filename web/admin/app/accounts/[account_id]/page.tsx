@@ -89,6 +89,17 @@ type PlanOption = {
 
 type InvoiceAction = "mark-paid" | "waive" | "credit";
 
+/**
+ * The destructive/standing actions that used to run behind `window.prompt` and
+ * `window.confirm`. They all go through the styled modal now, so the confirmation
+ * style — and the warning it carries — is the same as every other mutation.
+ */
+type ConfirmAction =
+  | { kind: "status"; next: "active" | "suspended" }
+  | { kind: "revoke-key"; key: AccountKey }
+  | { kind: "disable-store"; store: AccountStore }
+  | { kind: "enable-store"; store: AccountStore };
+
 const nf = new Intl.NumberFormat("en-US");
 
 const INVOICE_ACTIONS: { value: InvoiceAction; label: string; help: string }[] = [
@@ -139,6 +150,10 @@ function subscriptionPill(status: string | null | undefined): {
       return { className: "dash-pill dash-pill-paid", label: "active" };
     case "trial":
       return { className: "dash-pill dash-pill-scanned", label: "trial" };
+    case "pending":
+      // A purchase waiting on its invoice. Without this it read as "none", which
+      // hid the one plan the account is actually trying to move to.
+      return { className: "dash-pill dash-pill-pending", label: "pending" };
     case "canceled":
       return { className: "dash-pill dash-pill-failed", label: "canceled" };
     default:
@@ -226,6 +241,13 @@ export default function AdminAccountDetailPage({
   const [invoiceReason, setInvoiceReason] = useState("");
   const [invoiceAmount, setInvoiceAmount] = useState("");
 
+  // The signed-in operator's own account id, so suspending *yourself* can be called
+  // out before it signs you out. `/v1/me` is the only place the console learns who
+  // it is acting as.
+  const [selfId, setSelfId] = useState<number | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
+  const [confirmReason, setConfirmReason] = useState("");
+
   const load = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
@@ -251,6 +273,26 @@ export default function AdminAccountDetailPage({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Who is signed in. This is the only way the page can tell that the account it is
+  // about to suspend is the operator's own — the API protects the *last* admin but
+  // not an admin from themselves while another admin exists.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await apiFetch("/v1/me", { credentials: "include" });
+        if (!res.ok) return;
+        const me = (await res.json()) as { id?: number };
+        if (alive && typeof me.id === "number") setSelfId(me.id);
+      } catch {
+        // Not fatal: without it the self-suspension warning simply does not fire.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const account = detail?.account ?? null;
   const sub = subscriptionPill(detail?.plan.subscription_status);
@@ -283,55 +325,14 @@ export default function AdminAccountDetailPage({
   // Standing was writable only by hand before this: the API has supported
   // `{status, reason}` (with `account.suspended`/`account.activated` audit
   // actions) but nothing in the console called it, so an abuse report had no
-  // in-product response.
-  const changeStatus = useCallback(async () => {
+  // in-product response. The confirmation and the reason are captured in the styled
+  // modal now, like every other mutation here.
+  const openStatusConfirm = useCallback(() => {
     if (!account) return;
     const next = account.status === "suspended" ? "active" : "suspended";
-    const reason = window.prompt(
-      next === "suspended"
-        ? `Reason for suspending ${account.email} (recorded in the audit trail):`
-        : `Reason for reactivating ${account.email} (optional):`,
-      "",
-    );
-    if (reason === null) return;
-    if (next === "suspended" && !reason.trim()) {
-      notify("A reason is required to suspend an account.", "error");
-      return;
-    }
-    // Suspension is not scoped to one surface: sessions end and every key stops at
-    // once, and codes already in a customer's hands keep working. The operator is
-    // about to tell a merchant "you are offline", so the blast radius is spelled out
-    // before it happens rather than discovered by the merchant.
-    if (next === "suspended") {
-      const confirmed = window.confirm(
-        `Suspend ${account.email}?\n\n` +
-          "This signs them out of every session, refuses every API key, stops new " +
-          "payment codes and pauses webhooks. QR codes already issued stay payable. " +
-          "Use \"Disable\" on a single store when only that store is the problem.",
-      );
-      if (!confirmed) return;
-    }
-    setStatusSaving(true);
-    try {
-      const res = await apiFetch(`/v1/admin/accounts/${accountId}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: next,
-          reason: reason.trim() || undefined,
-        }),
-      });
-      if (!res.ok) throw new Error(await readApiError(res));
-      const updated = (await res.json()) as AccountProfile;
-      setDetail((d) => (d ? { ...d, account: { ...d.account, ...updated } } : d));
-      notify(next === "suspended" ? "Account suspended" : "Account activated");
-    } catch (e) {
-      notify(e instanceof Error ? e.message : String(e), "error");
-    } finally {
-      setStatusSaving(false);
-    }
-  }, [account, accountId, notify]);
+    setConfirmReason("");
+    setConfirm({ kind: "status", next });
+  }, [account]);
 
   // The merchant route *sells* a plan; this puts one in force with no invoice, which
   // is how a comp or an off-platform settlement is recorded. The plan list is fetched
@@ -427,14 +428,61 @@ export default function AdminAccountDetailPage({
 
   // Killing one credential is the point: before this route existed the only way to
   // stop a leaked key was suspending the merchant, which took their store offline.
-  const revokeKey = useCallback(
-    async (key: AccountKey) => {
-      const confirmed = window.confirm(
-        `Revoke the API key "${key.name}" (${key.key_prefix}…)?\n\n` +
-          "Requests using it stop immediately. This cannot be undone — the merchant " +
-          "has to create a new key.",
-      );
-      if (!confirmed) return;
+  const openRevokeConfirm = useCallback((key: AccountKey) => {
+    setConfirmReason("");
+    setConfirm({ kind: "revoke-key", key });
+  }, []);
+
+  const openDisableStoreConfirm = useCallback((store: AccountStore) => {
+    setConfirmReason("");
+    setConfirm({ kind: "disable-store", store });
+  }, []);
+
+  const openEnableStoreConfirm = useCallback((store: AccountStore) => {
+    setConfirmReason("");
+    setConfirm({ kind: "enable-store", store });
+  }, []);
+
+  // One handler for every confirm-modal action, so the busy/notify/refresh shape is
+  // identical to the plan and invoice modals above.
+  const runConfirm = useCallback(async () => {
+    if (!confirm) return;
+
+    if (confirm.kind === "status") {
+      const reason = confirmReason.trim();
+      if (confirm.next === "suspended" && reason.length < 3) {
+        notify("A reason is required to suspend an account.", "error");
+        return;
+      }
+      setStatusSaving(true);
+      try {
+        const res = await apiFetch(`/v1/admin/accounts/${accountId}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            status: confirm.next,
+            reason: reason || undefined,
+          }),
+        });
+        if (!res.ok) throw new Error(await readApiError(res));
+        const updated = (await res.json()) as AccountProfile;
+        setDetail((d) => (d ? { ...d, account: { ...d.account, ...updated } } : d));
+        notify(
+          confirm.next === "suspended" ? "Account suspended" : "Account activated",
+        );
+        setConfirm(null);
+        setConfirmReason("");
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setStatusSaving(false);
+      }
+      return;
+    }
+
+    if (confirm.kind === "revoke-key") {
+      const key = confirm.key;
       setBusy(`key-${key.id}`);
       try {
         const res = await apiFetch(`/v1/admin/keys/${key.id}/revoke`, {
@@ -443,47 +491,43 @@ export default function AdminAccountDetailPage({
         });
         if (!res.ok) throw new Error(await readApiError(res));
         const data = (await res.json()) as { revoked: boolean };
-        notify(
-          data.revoked ? "Key revoked." : "That key was already revoked.",
-        );
+        notify(data.revoked ? "Key revoked." : "That key was already revoked.");
+        setConfirm(null);
         await load();
       } catch (e) {
         notify(e instanceof Error ? e.message : String(e), "error");
       } finally {
         setBusy(null);
       }
-    },
-    [notify, load],
-  );
+      return;
+    }
 
-  const disableStore = useCallback(
-    async (store: AccountStore) => {
-      const confirmed = window.confirm(
-        `Disable the store "${store.name}"?\n\n` +
-          "It stops accepting new payments immediately. Codes already issued stay " +
-          "payable, and the account's other stores are unaffected.",
+    const store = confirm.store;
+    const enabling = confirm.kind === "enable-store";
+    setBusy(`store-${store.id}`);
+    try {
+      const res = await apiFetch(
+        `/v1/admin/stores/${store.id}/${enabling ? "enable" : "disable"}`,
+        { method: "POST", credentials: "include" },
       );
-      if (!confirmed) return;
-      setBusy(`store-${store.id}`);
-      try {
-        const res = await apiFetch(`/v1/admin/stores/${store.id}/disable`, {
-          method: "POST",
-          credentials: "include",
-        });
-        if (!res.ok) throw new Error(await readApiError(res));
+      if (!res.ok) throw new Error(await readApiError(res));
+      if (enabling) {
+        const data = (await res.json()) as { enabled: boolean };
+        notify(data.enabled ? "Store enabled." : "That store was already enabled.");
+      } else {
         const data = (await res.json()) as { disabled: boolean };
         notify(
           data.disabled ? "Store disabled." : "That store was already disabled.",
         );
-        await load();
-      } catch (e) {
-        notify(e instanceof Error ? e.message : String(e), "error");
-      } finally {
-        setBusy(null);
       }
-    },
-    [notify, load],
-  );
+      setConfirm(null);
+      await load();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setBusy(null);
+    }
+  }, [confirm, confirmReason, accountId, notify, load]);
 
   const standing = accountStatusPill(account?.status);
   const limits = detail?.limits ?? null;
@@ -522,6 +566,14 @@ export default function AdminAccountDetailPage({
 
       {loading ? (
         <div className="dash-info">Loading account…</div>
+      ) : errorMsg && !detail ? (
+        <div className="dash-empty">
+          Could not load this account.
+          <div className="dash-empty-desc">
+            The request failed, so this is not a missing account. Use Retry above,
+            or reload the page.
+          </div>
+        </div>
       ) : notFound || !account || !detail ? (
         <div className="dash-empty">
           Account not found.
@@ -660,7 +712,7 @@ export default function AdminAccountDetailPage({
                       <button
                         type="button"
                         className="dash-btn dash-btn-secondary dash-btn-sm"
-                        onClick={() => void changeStatus()}
+                        onClick={openStatusConfirm}
                         disabled={statusSaving}
                       >
                         {statusSaving
@@ -773,7 +825,7 @@ export default function AdminAccountDetailPage({
                           <button
                             type="button"
                             className="dash-btn dash-btn-danger dash-btn-sm"
-                            onClick={() => void revokeKey(key)}
+                            onClick={() => openRevokeConfirm(key)}
                             disabled={busy !== null || !active}
                             title={
                               active
@@ -817,6 +869,7 @@ export default function AdminAccountDetailPage({
                   {detail.stores.map((store) => {
                     const pill = storePill(store.status);
                     const active = store.status.toLowerCase() === "active";
+                    const disabled = store.status.toLowerCase() === "disabled";
                     return (
                       <tr key={store.id}>
                         <td>{store.name}</td>
@@ -830,21 +883,31 @@ export default function AdminAccountDetailPage({
                           <span className={pill.className}>{pill.label}</span>
                         </td>
                         <td>
-                          <button
-                            type="button"
-                            className="dash-btn dash-btn-danger dash-btn-sm"
-                            onClick={() => void disableStore(store)}
-                            disabled={busy !== null || !active}
-                            title={
-                              active
-                                ? undefined
-                                : "Only an active store can be disabled."
-                            }
-                          >
-                            {busy === `store-${store.id}`
-                              ? "Disabling…"
-                              : "Disable"}
-                          </button>
+                          {active && (
+                            <button
+                              type="button"
+                              className="dash-btn dash-btn-danger dash-btn-sm"
+                              onClick={() => openDisableStoreConfirm(store)}
+                              disabled={busy !== null}
+                            >
+                              {busy === `store-${store.id}`
+                                ? "Disabling…"
+                                : "Disable"}
+                            </button>
+                          )}
+                          {disabled && (
+                            <button
+                              type="button"
+                              className="dash-btn dash-btn-secondary dash-btn-sm"
+                              onClick={() => openEnableStoreConfirm(store)}
+                              disabled={busy !== null}
+                              title="Stop blocking this store's new payments and webhooks."
+                            >
+                              {busy === `store-${store.id}`
+                                ? "Enabling…"
+                                : "Enable"}
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -918,6 +981,137 @@ export default function AdminAccountDetailPage({
         </>
       )}
 
+      {confirm && (
+        <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="dash-modal">
+            <div className="dash-modal-head">
+              <h2 className="dash-modal-title">
+                {confirm.kind === "status"
+                  ? confirm.next === "suspended"
+                    ? "Suspend account"
+                    : "Activate account"
+                  : confirm.kind === "revoke-key"
+                    ? "Revoke API key"
+                    : confirm.kind === "disable-store"
+                      ? "Disable store"
+                      : "Enable store"}
+              </h2>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => setConfirm(null)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="dash-modal-body">
+              {confirm.kind === "status" ? (
+                <>
+                  <div className="dash-hint">
+                    {confirm.next === "suspended"
+                      ? "This signs the account out of every session, refuses every API key, stops new payment codes and pauses webhooks. QR codes already issued stay payable. Use Disable on a single store when only that store is the problem."
+                      : "This clears the suspension: the account can sign in again, its keys work, and new payment codes and webhooks resume."}
+                  </div>
+                  {confirm.next === "suspended" &&
+                    selfId !== null &&
+                    account?.id === selfId && (
+                      <div className="dash-warn">
+                        This is your own account. Suspending it signs you out
+                        immediately, and you will not be able to undo it from here —
+                        another active admin would have to reactivate you.
+                      </div>
+                    )}
+                  <div className="dash-field">
+                    <label htmlFor="status-reason">
+                      Reason
+                      {confirm.next === "suspended" ? "" : " (optional)"}
+                    </label>
+                    <textarea
+                      id="status-reason"
+                      className="dash-textarea"
+                      value={confirmReason}
+                      onChange={(e) => setConfirmReason(e.target.value)}
+                      placeholder={
+                        confirm.next === "suspended"
+                          ? "e.g. Payment-destination abuse reported by three customers."
+                          : "e.g. Abuse report was a false positive; cleared."
+                      }
+                      rows={4}
+                      maxLength={500}
+                    />
+                  </div>
+                </>
+              ) : confirm.kind === "revoke-key" ? (
+                <div className="dash-hint">
+                  Requests using <strong>{confirm.key.name}</strong> (
+                  {confirm.key.key_prefix}…) stop immediately. This cannot be
+                  undone — the merchant has to create a new key.
+                </div>
+              ) : confirm.kind === "disable-store" ? (
+                <div className="dash-hint">
+                  <strong>{confirm.store.name}</strong> stops accepting new payments
+                  immediately. Codes already issued stay payable, and the account&rsquo;s
+                  other stores are unaffected.
+                </div>
+              ) : (
+                <div className="dash-hint">
+                  <strong>{confirm.store.name}</strong> starts accepting new payments
+                  and webhooks again. It returns to <strong>active</strong> only when it
+                  still has a payment link; otherwise it stays a draft until a
+                  destination is set.
+                </div>
+              )}
+              <div className="dash-modal-foot">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={() => setConfirm(null)}
+                  disabled={busy !== null || statusSaving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className={
+                    confirm.kind === "enable-store" ||
+                    (confirm.kind === "status" && confirm.next === "active")
+                      ? "dash-btn dash-btn-primary"
+                      : "dash-btn dash-btn-danger"
+                  }
+                  onClick={() => void runConfirm()}
+                  disabled={
+                    busy !== null ||
+                    statusSaving ||
+                    (confirm.kind === "status" &&
+                      confirm.next === "suspended" &&
+                      confirmReason.trim().length < 3)
+                  }
+                >
+                  {confirm.kind === "status"
+                    ? statusSaving
+                      ? "Saving…"
+                      : confirm.next === "suspended"
+                        ? "Suspend"
+                        : "Activate"
+                    : confirm.kind === "revoke-key"
+                      ? busy === `key-${confirm.key.id}`
+                        ? "Revoking…"
+                        : "Revoke key"
+                      : confirm.kind === "disable-store"
+                        ? busy === `store-${confirm.store.id}`
+                          ? "Disabling…"
+                          : "Disable store"
+                        : busy === `store-${confirm.store.id}`
+                          ? "Enabling…"
+                          : "Enable store"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {planOpen && (
         <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
           <div className="dash-modal">
@@ -989,7 +1183,8 @@ export default function AdminAccountDetailPage({
                   disabled={
                     busy !== null ||
                     !planCode ||
-                    planReason.trim().length < 3
+                    planReason.trim().length < 3 ||
+                    detail?.plan.code === planCode
                   }
                 >
                   {busy === "plan" ? "Assigning…" : "Assign plan"}

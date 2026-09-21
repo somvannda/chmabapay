@@ -168,10 +168,12 @@ function HeroSection() {
                       <div className="landing-panel-title">Payment volume</div>
                       <div className="landing-panel-subtitle">Last 7 days</div>
                       <div className="landing-chart-bars">
-                        {[34, 54, 44, 68, 78, 64, 86].map((height, index) => (
-                          <div key={index} className="landing-chart-bar-wrap">
+                        {[34, 54, 44, 68, 78, 64, 86].map((height) => (
+                          <div key={height} className="landing-chart-bar-wrap">
                             <div className="landing-chart-bar-track">
-                              <div className="landing-chart-bar-fill" style={{ height: `${height}%` }} />
+                              <div
+                                className={`landing-chart-bar-fill landing-chart-bar-h${height}`}
+                              />
                             </div>
                           </div>
                         ))}

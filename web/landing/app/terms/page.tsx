@@ -28,6 +28,26 @@ export const metadata: Metadata = {
   title: "Terms of Service — ChmabaPay",
   description:
     "The terms governing use of the ChmabaPay payment status platform.",
+  // Without these the page inherits the landing page's card, so a link to the
+  // merchant agreement shared with a lawyer or a customer previewed as the
+  // marketing home page. Same shape as /api/docs.
+  alternates: { canonical: "/terms" },
+  openGraph: {
+    type: "article",
+    title: "Terms of Service — ChmabaPay",
+    description:
+      "What ChmabaPay is and is not, what a merchant is responsible for, and how plan fees work.",
+    url: "/terms",
+    siteName: "ChmabaPay",
+    images: [{ url: "/og-image.png", width: 1024, height: 1024, alt: "ChmabaPay" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Terms of Service — ChmabaPay",
+    description:
+      "What ChmabaPay is and is not, what a merchant is responsible for, and how plan fees work.",
+    images: ["/og-image.png"],
+  },
 };
 
 export default function TermsPage() {
@@ -147,8 +167,10 @@ export default function TermsPage() {
               </ul>
               <p>
                 We may suspend or terminate an account we reasonably believe is
-                being used for any of the above. This list is a starting point and
-                is subject to change following legal review.
+                being used for any of the above. This list is not exhaustive, and we
+                may add to it under section 9. If you are unsure whether your
+                business falls under one of these categories, ask us before you
+                start.
               </p>
             </section>
 
@@ -191,11 +213,23 @@ export default function TermsPage() {
             <section className="legal-section">
               <h2>6. Plans and fees</h2>
               <p>
-                Plan prices, limits and features are shown on the pricing section
-                of our website and may change. Changes to a paid plan take effect
-                at your next billing period. We do not charge a fee per
-                transaction: ChmabaPay is a subscription service, and your
-                customers&apos; payments never pass through us to be deducted from.
+                Plan prices, limits and features are shown in the pricing section of
+                our website, are billed in United States dollars, and may change.
+              </p>
+              <p>
+                Moving onto a paid plan is a purchase rather than an immediate
+                switch. When you choose a paid plan we raise an invoice for its
+                period and leave your current plan in place; the new plan takes
+                effect once that invoice is paid. Until then the new plan grants
+                nothing. Moving to the free plan takes effect immediately, because
+                there is nothing to collect. Each period is invoiced when it begins.
+              </p>
+              <p>
+                An invoice is issued once per account per calendar month, so a second
+                move to a paid plan in the same month cannot be billed and is
+                refused. We do not charge a fee per transaction: ChmabaPay is a
+                subscription service, and your customers&apos; payments never pass
+                through us to be deducted from.
               </p>
             </section>
 

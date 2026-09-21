@@ -5,8 +5,9 @@ Base URL `https://pay.chmaba.com/v1` — the API is served from the same origin 
 so there is no separate `api.` host. JSON in/out. Auth: `Authorization: Bearer ck_live_…`.
 
 Only `ck_live_` keys are issued: `POST /v1/keys` always mints live mode, and there is no
-`ck_test_` issuance path. A few endpoints are session-cookie only (`/v1/me`, `/v1/billing/*`)
-and an API key is not accepted there; those are marked below.
+`ck_test_` issuance path. Most `/v1/me` and `/v1/billing/*` endpoints are session-cookie
+only and an API key is not accepted there; the one exception is `GET /v1/billing/plans`,
+which is public. Those are marked below.
 
 ## Endpoints
 
@@ -15,15 +16,26 @@ and an API key is not accepted there; those are marked below.
 | POST | `/v1/payments` | Create a payment (KHQR + hosted checkout) |
 | GET | `/v1/payments/:id` | Fetch current state |
 | GET | `/v1/payments` | List payments (newest first); whole account, or scoped by `store`/`merchant` |
-| POST | `/v1/payments/:id/reissue` | Replace a dead code (expired/failed/superseded) |
+| POST | `/v1/payments/:id/reissue` | Replace a dead code (expired/failed only; a still-live code answers `409 payment_not_expired`) |
 | POST | `/v1/payments/:id/reverse` | Record a refund of a settled payment |
 | GET | `/pay/:id` | **Public** hosted checkout page (no auth) |
 | GET | `/pay/:id/qr.svg` | **Public** QR image; `410` once the code is dead |
 | GET | `/v1/khqr/render.svg` | KHQR SVG renderer (no auth), `ecc`/`scale` params |
+| PUT | `/v1/stores/:id` | Update a store (alias of `PATCH /v1/stores/:id`) |
+| PATCH | `/v1/account` | Update the account name (alias of `PATCH /v1/me`) |
+| POST | `/v1/me/password` | Rotate the account password (session only) |
+| DELETE | `/v1/me` | Close and anonymise the account (session only) |
+| POST | `/v1/transactions/token/renew` | Request a fresh short-lived Bakong JWT |
 
 Keys, stores, webhooks, billing, reports and the account profile are all real HTTP endpoints on
 this same API (`/v1/keys`, `/v1/stores`, `/v1/webhooks`, `/v1/billing`, `/v1/reports`, `/v1/me`);
-they are documented on the public API page rather than repeated here. The platform-admin routes
+they are documented on the public API page rather than repeated here. The five operations added
+to the table above are the ones that page had omitted: `PUT /v1/stores/:id` and `PATCH /v1/account`
+are write aliases, `POST /v1/me/password` rotates the password (`401 invalid_password` when the
+current one is wrong, `400 password_unchanged`, `409 no_password_set`), `DELETE /v1/me` closes and
+anonymises the account (`400 confirm_email_does_not_match`, `401 invalid_password`,
+`409 platform_admin_cannot_self_delete`), and `POST /v1/transactions/token/renew` asks NBC for a
+Bakong JWT (`400 email_required`, `400 bakong_error`). The platform-admin routes
 (`/v1/admin/*`) and the dev rail (`/_dev/*`, mounted only when `ENABLE_DEV_GATEWAY=true`) are
 internal and are not part of the public surface.
 
@@ -77,7 +89,9 @@ QR library (render at ECC H so the centre medallion survives). Generated server-
 
 `GET /v1/payments` lists newest first. Scoped by `store` (a store's public id) or `merchant`
 (its `external_id`) when either is given; with neither it lists **every** store on the account.
-Also accepts `status` (filter) and `limit` (default 20, max 100), and returns under `data`.
+Also accepts `status` (filter), `limit` (default 20, max 100) and `offset` (default 0, the
+newest-first index to start at, so a merchant can page past the first page; a negative offset is
+a `422` and an absurd one is clamped), and returns under `data`.
 
 Each row carries `store` — which store took the payment — and `paid_at`. It does *not* carry
 `metadata`, `qr_string` or `checkout_url`; `metadata` and `qr_string` are on `GET /v1/payments/:id`.
@@ -121,8 +135,8 @@ Statuses, by what they mean for money:
   no callback for a refund.
 - `expired` — the code stopped being served. **Not terminal:** still reconcilable, and
   it becomes `paid` if the money arrives.
-- `superseded` — a newer code replaced this one (the merchant reissued, and the
-  original then settled). Its QR is withdrawn (`410`) so one sale cannot be paid twice.
+- `superseded` — this is the **replacement** code, withdrawn because the original it
+  replaced then settled. Its QR is withdrawn (`410`) so one sale cannot be paid twice.
 - `failed` — nothing moved.
 - `detection_closed_at` — set once, when the detection window closes. Until then we
   are still looking. After it, the outcome is as final as it gets; if we could not get
@@ -219,8 +233,8 @@ Attributes the two ends of the money's journey separately:
 - `data.payment.reversed_at` — set on `payment.reversed`, which is the negative of a
   completion: book it against `paid_at`, not instead of it.
 
-`payment.superseded` is operational: a replacement code took this one's place because
-the payment it replaced settled. Stop offering the old code; recognise nothing.
+`payment.superseded` is operational: a replacement code was withdrawn because the
+payment it replaced then settled. Stop offering that replacement code; recognise nothing.
 
 At most one `payment.completed` and one `payment.reversed` exist per payment id, so a
 ledger keyed on `data.payment.id` cannot double-count a sale.
@@ -272,6 +286,12 @@ Codes returned in `detail` (verified against `src/`):
 | `email_already_taken` | 400 | Profile email in use |
 | `terms_version_superseded` | 409 | Accepted a terms version we no longer publish |
 | `bakong_not_configured` | 503 | Bakong ledger endpoints without platform credentials |
+| `billing_not_open` | 503 | `GET /v1/billing/invoices/{id}/khqr`: the platform's own payment destination is not configured |
+| `invalid_password` | 401 | Password proof failed (`POST /v1/me/email`, `POST /v1/me/password`, `DELETE /v1/me`) |
+| `no_password_set` / `password_unchanged` | 409 / 400 | `POST /v1/me/password` preconditions |
+| `confirm_email_does_not_match` | 400 | `DELETE /v1/me` typed confirmation did not match |
+| `platform_admin_cannot_self_delete` | 409 | `DELETE /v1/me` on the console's own account |
+| `email_required` / `bakong_error` | 400 | `POST /v1/transactions/token/renew` |
 | `rate_limited: <rule>` | 429 | Rate limit hit; the value is prefixed, e.g. `rate_limited: auth` |
 
 ## Quota

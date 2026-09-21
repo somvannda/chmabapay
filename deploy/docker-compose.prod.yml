@@ -324,6 +324,12 @@ services:
     volumes:
       - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/api-locations.inc:/etc/nginx/api-locations.inc:ro
+      # Security headers, included by `nginx.prod.conf` at every level that sets a
+      # header of its own. Mounted explicitly rather than copied into the image so
+      # the running edge and the repository cannot drift; forget this line and the
+      # proxy refuses to start, which is the correct failure — an edge that has
+      # lost its security headers should not quietly serve traffic.
+      - ./nginx/security-headers.inc:/etc/nginx/security-headers.inc:ro
       # Cloudflare Origin CA certificate covering pay.chmaba.com **and**
       # admin-pay.chmaba.com, as fullchain.pem + privkey.pem. Read-only, and
       # deploy/certs/ is gitignored so a private key cannot be committed by accident.

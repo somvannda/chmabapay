@@ -75,7 +75,6 @@ from .payway_parser import (
 
 Status = Literal["PAID", "PENDING", "FAILED", "UNKNOWN"]
 
-STATUS_SOURCE_ABA_PAGE = "aba_payway_link_page"
 STATUS_SOURCE_BAKONG_OPEN_API = "bakong_open_api"
 STATUS_SOURCE_PAYWAY_HOSTED = "payway_hosted_checkout"
 

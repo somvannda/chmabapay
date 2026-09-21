@@ -112,6 +112,69 @@ function RevealSecretModal({
   );
 }
 
+/**
+ * Confirmation for the two actions that destroy a live credential: rotating the
+ * signing secret (the deployed one stops verifying immediately) and deleting an
+ * endpoint (which also removes its delivery log). Neither had a confirmation or an
+ * in-flight guard, so a stray click — or a second click on a slow request — could
+ * rotate twice and lose the first secret, or delete a row that had already gone.
+ */
+function ConfirmActionModal({
+  title,
+  body,
+  confirmLabel,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="dash-modal-backdrop" onClick={busy ? undefined : onCancel}>
+      <div className="dash-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="dash-modal-head">
+          <h3 className="dash-modal-title">{title}</h3>
+          <button
+            type="button"
+            className="dash-modal-close"
+            onClick={onCancel}
+            aria-label="Close"
+            disabled={busy}
+          >
+            ×
+          </button>
+        </div>
+        <div className="dash-modal-body">
+          <div className="dash-warn">{body}</div>
+          <div className="dash-toolbar">
+            <button
+              type="button"
+              className="dash-btn dash-btn-secondary"
+              onClick={onCancel}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="dash-btn dash-btn-danger"
+              onClick={onConfirm}
+              disabled={busy}
+            >
+              {busy ? "Working…" : confirmLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function hostOf(url: string): string {
   try {
     return new URL(url).host;
@@ -654,6 +717,7 @@ function EditEndpointModal({
 export default function DashboardWebhooksPage() {
   const [loading, setLoading] = useState(true);
   const [endpoints, setEndpoints] = useState<WebhookEndpoint[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<WebhookEndpoint | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -662,23 +726,31 @@ export default function DashboardWebhooksPage() {
   const [viewingDeliveries, setViewingDeliveries] =
     useState<WebhookEndpoint | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<{
+    kind: "rotate" | "delete";
+    endpoint: WebhookEndpoint;
+  } | null>(null);
 
   const fetchEndpoints = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetch("/v1/webhooks", { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        const items: WebhookEndpoint[] = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.items)
-            ? data.items
-            : Array.isArray(data?.data)
-              ? data.data
-              : [];
-        setEndpoints(items);
-      }
-    } catch {
+      // A failed read used to leave `endpoints` empty, which the page then rendered as
+      // "No webhook endpoints yet." — the same screen as a fresh account.
+      if (!res.ok) throw new Error(await readApiError(res));
+      const data = await res.json().catch(() => ({}));
+      const items: WebhookEndpoint[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.items)
+          ? data.items
+          : Array.isArray(data?.data)
+            ? data.data
+            : [];
+      setEndpoints(items);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -703,6 +775,7 @@ export default function DashboardWebhooksPage() {
   const handleDelete = useCallback(
     async (id: string | number) => {
       setActionError(null);
+      setBusyId(String(id));
       try {
         const res = await fetch(`/v1/webhooks/${id}`, {
           method: "DELETE",
@@ -712,6 +785,8 @@ export default function DashboardWebhooksPage() {
         void fetchEndpoints();
       } catch (err) {
         setActionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusyId(null);
       }
     },
     [fetchEndpoints],
@@ -740,6 +815,7 @@ export default function DashboardWebhooksPage() {
   const handleRotateSecret = useCallback(
     async (id: string | number) => {
       setActionError(null);
+      setBusyId(String(id));
       try {
         const res = await fetch(`/v1/webhooks/${id}/rotate-secret`, {
           method: "POST",
@@ -753,6 +829,8 @@ export default function DashboardWebhooksPage() {
         void fetchEndpoints();
       } catch (err) {
         setActionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusyId(null);
       }
     },
     [fetchEndpoints],
@@ -795,6 +873,21 @@ export default function DashboardWebhooksPage() {
 
         {loading ? (
           <div className="dash-info">Loading webhooks…</div>
+        ) : loadError ? (
+          <div className="dash-warn">
+            Your webhook endpoints could not be loaded, so this list is unknown
+            rather than empty. Every endpoint you already created is still
+            delivering.
+            <div className="dash-empty-cta-row">
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary dash-btn-sm"
+                onClick={() => void fetchEndpoints()}
+              >
+                Retry
+              </button>
+            </div>
+          </div>
         ) : sortedEndpoints.length === 0 ? (
           <div className="dash-empty">
             No webhook endpoints yet.
@@ -825,6 +918,7 @@ export default function DashboardWebhooksPage() {
             <tbody>
               {sortedEndpoints.map((ep) => {
                 const isActive = ep.status === "active";
+                const rowBusy = busyId === String(ep.id);
                 return (
                   <tr key={String(ep.id)}>
                     <td>
@@ -873,9 +967,10 @@ export default function DashboardWebhooksPage() {
                         <button
                           type="button"
                           className="dash-btn dash-btn-secondary dash-btn-sm"
-                          onClick={() => handleRotateSecret(ep.id)}
+                          onClick={() => setPendingAction({ kind: "rotate", endpoint: ep })}
+                          disabled={rowBusy}
                         >
-                          Rotate secret
+                          {rowBusy ? "…" : "Rotate secret"}
                         </button>
                         <button
                           type="button"
@@ -887,9 +982,10 @@ export default function DashboardWebhooksPage() {
                         <button
                           type="button"
                           className="dash-btn dash-btn-danger dash-btn-sm"
-                          onClick={() => handleDelete(ep.id)}
+                          onClick={() => setPendingAction({ kind: "delete", endpoint: ep })}
+                          disabled={rowBusy}
                         >
-                          Delete
+                          {rowBusy ? "…" : "Delete"}
                         </button>
                       </div>
                     </td>
@@ -916,6 +1012,34 @@ export default function DashboardWebhooksPage() {
         <RevealSecretModal
           secret={revealSecret}
           onClose={() => setRevealSecret(null)}
+        />
+      )}
+
+      {pendingAction !== null && (
+        <ConfirmActionModal
+          title={
+            pendingAction.kind === "rotate"
+              ? "Rotate signing secret?"
+              : "Delete this endpoint?"
+          }
+          body={
+            pendingAction.kind === "rotate"
+              ? "Rotating invalidates the secret this endpoint signs deliveries with. Every webhook will fail signature verification until you deploy the new secret to your server."
+              : "Deleting this endpoint stops its deliveries and removes its delivery log. This cannot be undone."
+          }
+          confirmLabel={
+            pendingAction.kind === "rotate" ? "Rotate secret" : "Delete endpoint"
+          }
+          busy={busyId === String(pendingAction.endpoint.id)}
+          onCancel={() => setPendingAction(null)}
+          onConfirm={async () => {
+            if (pendingAction.kind === "rotate") {
+              await handleRotateSecret(pendingAction.endpoint.id);
+            } else {
+              await handleDelete(pendingAction.endpoint.id);
+            }
+            setPendingAction(null);
+          }}
         />
       )}
 

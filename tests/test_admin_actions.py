@@ -363,6 +363,62 @@ async def test_disabling_a_store_stops_new_payments(client):
     assert len(await rows("store.disabled")) == 1
 
 
+async def test_enabling_a_store_reverses_disable_and_is_quiet_on_a_repeat(client):
+    """Disabling had no admin counterpart, so it was a one-way door.
+
+    The only route back was the merchant-authenticated `POST /v1/stores/{id}/enable`,
+    which meant an operator who disabled the wrong store had to ask the merchant to
+    undo it. This is the same reversal, on the operator's authority.
+    """
+    operator = await make_operator()
+    merchant = await make_merchant()
+    store = await make_store(merchant, name="Sokha Cafe")
+    raw_key, _ = await make_key(merchant)
+
+    async with signed_in(operator) as admin:
+        assert (
+            await admin.post(f"/v1/admin/stores/{store.public_id}/disable")
+        ).json()["disabled"] is True
+
+        # While disabled, new payments are refused.
+        refused = await client.post(
+            "/v1/payments",
+            json={"amount": 1.0, "store": store.public_id, "hosted_qr": False},
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+        assert refused.status_code == 400
+        assert refused.json()["detail"] == "store_disabled"
+
+        restored = await admin.post(f"/v1/admin/stores/{store.public_id}/enable")
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["enabled"] is True
+        # A store with a payment link comes back active, not draft.
+        assert restored.json()["status"] == models.STORE_ACTIVE
+
+        # Already live, so a second enable changes nothing and records nothing.
+        again = await admin.post(f"/v1/admin/stores/{store.public_id}/enable")
+        assert again.status_code == 200
+        assert again.json()["enabled"] is False
+        assert (
+            await admin.post("/v1/admin/stores/st_nope/enable")
+        ).status_code == 404
+
+    # Payments are accepted again, which is the point of the reversal.
+    accepted = await client.post(
+        "/v1/payments",
+        json={"amount": 1.0, "store": store.public_id, "hosted_qr": False},
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+    assert accepted.status_code < 300, accepted.text
+
+    entries = await rows("store.enabled")
+    assert len(entries) == 1
+    assert entries[0].actor_account_id == operator.id
+    assert entries[0].target_type == "Store"
+    assert entries[0].details["status"] == models.STORE_ACTIVE
+    assert entries[0].details["account_id"] == merchant.id
+
+
 # --------------------------------------------------------------------------- #
 # Webhook delivery retry
 # --------------------------------------------------------------------------- #

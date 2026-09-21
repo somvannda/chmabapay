@@ -19,6 +19,16 @@ from .payway_parser import PayWayHostedError, create_hosted_checkout
 
 logger = logging.getLogger(__name__)
 
+# The list endpoints page with `limit`/`offset`. `offset` is a caller-supplied
+# integer and an unbounded one would ask the database to walk an arbitrary number
+# of rows, so it is clamped rather than refused: a client that paged far past the
+# end is answered with an empty page, not an error it cannot act on.
+_MAX_OFFSET = 1_000_000
+
+
+def _clamp_offset(offset: int) -> int:
+    return max(0, min(offset, _MAX_OFFSET))
+
 
 def gen_public_id(prefix: str = "") -> str:
     return f"{prefix}{secrets.token_urlsafe(18)}"
@@ -304,12 +314,14 @@ async def list_payments(
     store_id: int,
     status: str | None = None,
     limit: int = 20,
+    offset: int = 0,
 ) -> list[models.Payment]:
     stmt = (
         select(models.Payment)
         .where(models.Payment.store_id == store_id)
         .order_by(models.Payment.id.desc())
         .limit(max(1, min(limit, 100)))
+        .offset(_clamp_offset(offset))
     )
     if status:
         stmt = stmt.where(models.Payment.status == status)
@@ -322,6 +334,7 @@ async def list_payments_for_account(
     account_id: int,
     status: str | None = None,
     limit: int = 20,
+    offset: int = 0,
 ) -> list[tuple[models.Payment, models.Store]]:
     """Every payment on the account, newest first, across all of its stores.
 
@@ -338,6 +351,7 @@ async def list_payments_for_account(
         .where(models.Store.account_id == account_id)
         .order_by(models.Payment.id.desc())
         .limit(max(1, min(limit, 100)))
+        .offset(_clamp_offset(offset))
     )
     if status:
         stmt = stmt.where(models.Payment.status == status)

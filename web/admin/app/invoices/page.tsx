@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
+import { useToast } from "@/components/Toast";
 import { readApiError } from "@/lib/apiError";
 import { apiFetch } from "@/lib/apiFetch";
 
@@ -35,6 +36,26 @@ const STATUS_OPTIONS = [
   { value: "paid", label: "Paid" },
   { value: "waived", label: "Waived" },
   { value: "credited", label: "Credited" },
+];
+
+type InvoiceAction = "mark-paid" | "waive" | "credit";
+
+const INVOICE_ACTIONS: { value: InvoiceAction; label: string; help: string }[] = [
+  {
+    value: "mark-paid",
+    label: "Mark paid",
+    help: "Settles it as income and puts the plan in force. Use it when the money arrived outside the platform.",
+  },
+  {
+    value: "waive",
+    label: "Waive",
+    help: "Closes it with no income and puts the plan in force. Use it for goodwill.",
+  },
+  {
+    value: "credit",
+    label: "Credit",
+    help: "Closes it as credited and puts the plan in force. The amount below is what was forgiven.",
+  },
 ];
 
 function formatDate(iso: string | null | undefined): string {
@@ -74,6 +95,7 @@ function invoicePill(status: string | null | undefined): {
 }
 
 export default function AdminInvoicesPage() {
+  const { notify } = useToast();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<AdminInvoice[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
@@ -83,6 +105,14 @@ export default function AdminInvoicesPage() {
   const [appliedPeriod, setAppliedPeriod] = useState("");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
+  // Bumped after a resolution so the list refetches without a full reload.
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const [invoice, setInvoice] = useState<AdminInvoice | null>(null);
+  const [invoiceAction, setInvoiceAction] = useState<InvoiceAction>("mark-paid");
+  const [invoiceReason, setInvoiceReason] = useState("");
+  const [invoiceAmount, setInvoiceAmount] = useState("");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -112,7 +142,7 @@ export default function AdminInvoicesPage() {
     return () => {
       alive = false;
     };
-  }, [appliedPeriod, status, page]);
+  }, [appliedPeriod, status, page, reloadKey]);
 
   const onSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -122,6 +152,54 @@ export default function AdminInvoicesPage() {
     },
     [period],
   );
+
+  const openInvoiceModal = useCallback((row: AdminInvoice) => {
+    setInvoice(row);
+    setInvoiceAction("mark-paid");
+    setInvoiceReason("");
+    setInvoiceAmount("");
+  }, []);
+
+  // The same resolution the account detail page offers, reachable from the
+  // platform-wide list: finding the stuck invoice and settling it should not require
+  // a detour through the account first.
+  const resolveInvoice = useCallback(async () => {
+    if (!invoice) return;
+    const reason = invoiceReason.trim();
+    if (reason.length < 3) {
+      notify("A reason is required to resolve an invoice.", "error");
+      return;
+    }
+    const body: Record<string, unknown> = {
+      action: invoiceAction,
+      reason,
+    };
+    if (invoiceAction === "credit" && invoiceAmount.trim()) {
+      const cents = Math.round(Number(invoiceAmount) * 100);
+      if (!Number.isFinite(cents) || cents < 0) {
+        notify("The credited amount must be a positive number.", "error");
+        return;
+      }
+      body.amount_cents = cents;
+    }
+    setBusy(true);
+    try {
+      const res = await apiFetch(`/v1/admin/invoices/${invoice.id}/resolve`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await readApiError(res));
+      setInvoice(null);
+      notify("Invoice resolved. Recorded in the audit trail.");
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  }, [invoice, invoiceAction, invoiceReason, invoiceAmount, notify]);
 
   const showPagination = pagination !== null && pagination.total_pages > 1;
 
@@ -172,6 +250,14 @@ export default function AdminInvoicesPage() {
       <div className="dash-panel">
         {loading ? (
           <div className="dash-info">Loading invoices…</div>
+        ) : errorMsg ? (
+          <div className="dash-empty">
+            Could not load the invoices.
+            <div className="dash-empty-desc">
+              The request failed, so this is not an empty result. Reload the page
+              to try again.
+            </div>
+          </div>
         ) : rows.length === 0 ? (
           <div className="dash-empty">
             No invoices found.
@@ -191,11 +277,17 @@ export default function AdminInvoicesPage() {
                 <th>Overage</th>
                 <th>Total due</th>
                 <th>Paid at</th>
+                <th />
               </tr>
             </thead>
             <tbody>
               {rows.map((inv) => {
                 const pill = invoicePill(inv.status);
+                // Resolving an already-resolved invoice is a 409, so the console does
+                // not offer it: an action that can only fail is not an action.
+                const open = !["paid", "waived", "credited"].includes(
+                  inv.status.toLowerCase(),
+                );
                 return (
                   <tr key={inv.id}>
                     <td>
@@ -215,6 +307,18 @@ export default function AdminInvoicesPage() {
                     <td>{formatCents(inv.overage_fee_cents)}</td>
                     <td>{formatCents(inv.total_due_cents)}</td>
                     <td>{formatDate(inv.paid_at)}</td>
+                    <td>
+                      {open && (
+                        <button
+                          type="button"
+                          className="dash-btn dash-btn-secondary dash-btn-sm"
+                          onClick={() => openInvoiceModal(inv)}
+                          disabled={busy}
+                        >
+                          Resolve
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -246,6 +350,103 @@ export default function AdminInvoicesPage() {
             >
               Next
             </button>
+          </div>
+        </div>
+      )}
+
+      {invoice && (
+        <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="dash-modal">
+            <div className="dash-modal-head">
+              <h2 className="dash-modal-title">
+                Resolve invoice {invoice.period_month}
+              </h2>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => setInvoice(null)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="dash-modal-body">
+              <div className="dash-hint">
+                {formatCents(invoice.total_due_cents)} due for{" "}
+                {invoice.account_email || `account #${invoice.account_id}`}. Whichever
+                you pick puts the pending subscription in force, so the merchant is
+                not left on their old plan waiting for an invoice nobody will pay.
+              </div>
+              <div className="dash-field">
+                <label htmlFor="invoice-action">Action</label>
+                <select
+                  id="invoice-action"
+                  className="dash-select"
+                  value={invoiceAction}
+                  onChange={(e) =>
+                    setInvoiceAction(e.target.value as InvoiceAction)
+                  }
+                >
+                  {INVOICE_ACTIONS.map((a) => (
+                    <option key={a.value} value={a.value}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="dash-hint">
+                  {INVOICE_ACTIONS.find((a) => a.value === invoiceAction)?.help}
+                </div>
+              </div>
+              {invoiceAction === "credit" && (
+                <div className="dash-field">
+                  <label htmlFor="invoice-amount">Amount credited (USD)</label>
+                  <input
+                    id="invoice-amount"
+                    className="dash-input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={invoiceAmount}
+                    onChange={(e) => setInvoiceAmount(e.target.value)}
+                    placeholder={(invoice.total_due_cents / 100).toFixed(2)}
+                  />
+                  <div className="dash-hint">
+                    Leave blank to credit the full invoice. The invoice keeps saying
+                    what was billed; the audit row records what was forgiven.
+                  </div>
+                </div>
+              )}
+              <div className="dash-field">
+                <label htmlFor="invoice-reason">Reason</label>
+                <textarea
+                  id="invoice-reason"
+                  className="dash-textarea"
+                  value={invoiceReason}
+                  onChange={(e) => setInvoiceReason(e.target.value)}
+                  placeholder="e.g. Bank transfer received; ABA ref 12345678."
+                  rows={4}
+                  maxLength={500}
+                />
+              </div>
+              <div className="dash-modal-foot">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={() => setInvoice(null)}
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-danger"
+                  onClick={() => void resolveInvoice()}
+                  disabled={busy || invoiceReason.trim().length < 3}
+                >
+                  {busy ? "Resolving…" : "Resolve"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
