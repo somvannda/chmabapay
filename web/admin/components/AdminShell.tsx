@@ -351,6 +351,9 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   <span className="cp-menu-avatar" aria-hidden="true">
                     {initials}
                   </span>
+                  <span className="cp-menu-name" title={email || displayName}>
+                    {displayName}
+                  </span>
                   <span className="cp-menu-chevron" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
                       <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />

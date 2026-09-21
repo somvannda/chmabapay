@@ -10,6 +10,11 @@
      than a dark *scheme*, so the repaint matches nothing. */
   color-scheme: only light;
 
+  /* `accent-color` is inherited, so pinning it here covers every native control —
+     checkboxes and radios included — and keeps them brand violet rather than
+     whatever accent the user chose in Windows. */
+  accent-color: var(--violet);
+
   --font-inter: "Inter", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --surface: #f7f7fa;
@@ -77,6 +82,17 @@
   --app-container: 1200px;
   --app-gutter: 24px;
   --app-sidebar: 256px;
+}
+
+/* Same baseline as web/admin/app/globals.css: the platform appearance is what let
+   Chrome on Windows paint buttons with the system accent colour and the system UI
+   font, so a violet button could arrive green and oversized while Firefox drew it
+   correctly. `accent-color` keeps the genuinely native controls (checkboxes, radios)
+   on the brand violet instead of the user's Windows accent. */
+button,
+select {
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 

@@ -19,6 +19,15 @@
      app/layout.tsx, so the browser knows before the stylesheet arrives. */
   color-scheme: only light;
 
+  /* Chrome on Windows fills a `<button>` it still renders itself with the *system
+     accent colour*, and sizes its label from the system UI font. On a machine whose
+     accent is green that is how a violet primary button came back green and
+     oversized, while Firefox — which does not consult the OS accent for page
+     controls — drew the identical CSS correctly. Pinning the accent to the brand
+     violet covers the controls that are legitimately native (the checkboxes on
+     Plans, Payments and Deliveries); `appearance: none` below covers the rest. */
+  accent-color: var(--violet);
+
   --font-inter: "Inter", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --surface: #f7f7fa;
@@ -88,6 +97,22 @@
   --app-sidebar: 256px;
 }
 
+/* Buttons and selects are drawn entirely by this stylesheet. Removing the platform
+   appearance is what stops the browser substituting its own rendering — which is
+   where the system accent colour and the system UI font entered, and the whole
+   reason a violet button could come back green and oversized. The `-webkit-` line is
+   not redundant: Tailwind's Preflight sets `-webkit-appearance: button` on these
+   elements, and the two spellings are aliases of one property, so both have to be
+   cleared for the platform look to actually be gone. Every `<select>` in the console
+   already carries `.dash-select`, which draws its own arrow, so dropping the platform
+   arrow changes nothing.
+   Deliberately not applied to `input`: the checkboxes on Plans, Payments and
+   Deliveries are real checkboxes, and `appearance: none` would erase the tick. */
+button,
+select {
+  -webkit-appearance: none;
+  appearance: none;
+}
 
 html {
   scroll-behavior: smooth;
@@ -3643,6 +3668,23 @@ body.dash-path-dashboard > .landing-footer {
   color: var(--subtle);
   display: block;
 }
+/* The header used to show an avatar and a chevron and nothing else, so the only way
+   to tell which of several admin accounts you were signed in as was to open the menu.
+   The name is the answer to "who am I logged in as", so it belongs on the button.
+   It is dropped on narrow screens, where the avatar alone has to do. */
+.cp-menu-name {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--ink);
+  max-width: 160px;
+  padding-right: var(--sp-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .cp-menu-name { display: none; }
+}
 .cp-menu-pop {
   position: absolute;
   right: 0;
@@ -4070,7 +4112,10 @@ body.dash-path-dashboard > .landing-footer {
   min-height: 40px;
   padding: 0 var(--sp-4);
   border-radius: var(--r-md);
-  font-size: var(--fs-14);
+  /* 13px, not 14px: this is the console's control type size, and it is what the
+     inputs and selects next to these buttons use. At 14px the button labels were the
+     largest text in any form row and read as oversized against their own fields. */
+  font-size: var(--fs-13);
   font-weight: 600;
 }
 .dash-btn-sm {
