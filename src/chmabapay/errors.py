@@ -120,10 +120,29 @@ def _notifier() -> TelegramNotifier:
 
 
 async def _send(text: str) -> None:
-    try:
-        await _notifier().send(text)
-    except Exception as exc:  # noqa: BLE001 - reporting must never break the reporter
-        log.error("error report delivery raised (%s)", exc)
+    """Deliver one error report to every configured operator channel.
+
+    Both the single-operator ops chat and the team's activity group, because an
+    unhandled exception is the one thing that should not depend on somebody having the
+    console open. The ids are deduped: pointing both settings at the same chat is a
+    reasonable configuration, and it should not post twice.
+    """
+    # Resolved inside the call for the reason `_notifier` documents: `alerts` imports
+    # `chmabapay.workers`, and `workers.base` imports this module. The annotation at
+    # module scope is a `TYPE_CHECKING` import, so it is not a runtime name.
+    from .alerts import TelegramNotifier
+
+    settings = get_settings()
+    delivered: set[str] = set()
+    for raw in (settings.ops_telegram_chat_id, settings.activity_telegram_chat_id):
+        chat_id = (raw or "").strip()
+        if not chat_id or chat_id in delivered:
+            continue
+        delivered.add(chat_id)
+        try:
+            await TelegramNotifier(chat_id).send(text)
+        except Exception as exc:  # noqa: BLE001 - reporting must never break the reporter
+            log.error("error report delivery raised (%s)", exc)
 
 
 def warn_if_unconfigured() -> None:
@@ -132,11 +151,18 @@ def warn_if_unconfigured() -> None:
     The same honesty `AlertWatcher` applies to conditions, and for the same reason:
     an operator should learn about the gap now, not while debugging an incident.
     """
-    if not _notifier().configured:
-        log.warning(
-            "error tracking will log unhandled exceptions but cannot send them "
-            "(set OPS_TELEGRAM_CHAT_ID and TELEGRAM_BOT_TOKEN)"
-        )
+    # Imported locally: `services` pulls in a package that is otherwise irrelevant to
+    # capture, and this module is imported by `workers.base` while the package is
+    # still initialising.
+    from .services import notifications
+
+    if _notifier().configured or notifications.configured():
+        return
+    log.warning(
+        "error tracking will log unhandled exceptions but cannot send them "
+        "(set OPS_TELEGRAM_CHAT_ID or ACTIVITY_TELEGRAM_CHAT_ID, plus "
+        "TELEGRAM_BOT_TOKEN)"
+    )
 
 
 async def report_exception(

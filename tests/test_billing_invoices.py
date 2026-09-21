@@ -484,3 +484,65 @@ async def test_invoice_payment_is_refused_with_an_answer_a_merchant_can_use(clie
     assert res.status_code == 503
     assert res.json()["detail"].startswith("billing_not_open")
     assert "CHMABAPAY" not in res.json()["detail"]
+
+
+async def test_a_lapsed_code_is_replaced_rather_than_handed_back_dead(client):
+    """The safety that stops a double charge must not hand back a corpse.
+
+    Reopening the billing page deliberately returns the *same* payment, so a merchant
+    cannot be given two payable codes for one month. ABA owns a 180s window and
+    nothing extends it, though, so a merchant who closed the tab came back to a QR
+    their wallet refuses — payable exactly once, for three minutes. A dead code now
+    gets an ABA-reissued successor instead, and the invoice follows it.
+    """
+    await _plans()
+    account = await _signed_in(client, with_subscription_for="free")
+    admin = await make_account(email="operator2@billing.test", name="Operator")
+    store = await make_store(admin, name="ChmabaPay HQ", external_id="hq-2")
+    async with session_factory() as session:
+        row = await session.get(models.Account, admin.id)
+        assert row is not None
+        row.is_platform_admin = True
+        await session.commit()
+
+    settings = get_settings()
+    original = settings.chmabapay_hq_store_id
+    settings.chmabapay_hq_store_id = store.public_id
+    try:
+        await client.post("/v1/billing/change-plan", json={"plan_code": "starter"})
+        invoice = await _invoice(account.id)
+        assert invoice is not None
+
+        first = await client.get(f"/v1/billing/invoices/{invoice.id}/khqr")
+        assert first.status_code == 201, first.text
+
+        # What the expiry sweeper does once ABA's window closes.
+        async with session_factory() as session:
+            attached = await session.get(models.PlanInvoice, invoice.id)
+            assert attached is not None and attached.chmabapay_payment_id is not None
+            payment = await session.get(models.Payment, attached.chmabapay_payment_id)
+            assert payment is not None
+            payment.status = models.PAYMENT_EXPIRED
+            await session.commit()
+
+        second = await client.get(f"/v1/billing/invoices/{invoice.id}/khqr")
+        assert second.status_code == 201, second.text
+        assert second.json()["payment_id"] != first.json()["payment_id"]
+        assert second.json()["amount_cents"] == first.json()["amount_cents"]
+
+        # And the invoice now points at the code that can actually be paid.
+        moved = await _invoice(account.id)
+        assert moved is not None
+        assert moved.chmabapay_payment_id is not None
+        async with session_factory() as session:
+            successor = await session.get(models.Payment, moved.chmabapay_payment_id)
+            assert successor is not None
+            assert successor.reissued_from_id is not None
+
+        # A live successor is reused, not replaced again: the same window that caused
+        # the problem must not mint a third code.
+        third = await client.get(f"/v1/billing/invoices/{invoice.id}/khqr")
+        assert third.status_code == 201, third.text
+        assert third.json()["payment_id"] == second.json()["payment_id"]
+    finally:
+        settings.chmabapay_hq_store_id = original

@@ -19,6 +19,7 @@ from ..openapi import (
     merged,
 )
 from ..services import billing as billing_svc
+from ..services import notifications
 from ..services import payments as svc
 from .auth import get_current_session_account
 
@@ -241,7 +242,10 @@ async def change_plan(
     session.add(pending)
     await session.flush()
 
-    invoice = await billing_svc.issue_invoice(
+    # `issue_invoice` returns `(invoice, created)`. Unpacking it matters: a tuple is
+    # never `None`, so treating the result as a single invoice skipped the guard below
+    # and then raised on `invoice.id`, turning every paid-plan change into a 500.
+    invoice, _created = await billing_svc.issue_invoice(
         session, pending, new_plan, period_month=period, now=now
     )
     if invoice is None:
@@ -265,6 +269,14 @@ async def change_plan(
     await session.commit()
     await session.refresh(pending)
     await session.refresh(invoice)
+
+    # A self-serve upgrade is platform revenue the moment the invoice exists, so the
+    # group hears about it now rather than only if it is ever settled.
+    await notifications.notify_activity(
+        notifications.format_invoice_issued(
+            invoice, plan_name=new_plan.name, account_label=account.email
+        )
+    )
 
     return ChangePlanOut(
         subscription=_subscription_out(pending, new_plan),
@@ -342,6 +354,44 @@ async def list_invoices(
     }
 
 
+async def _invoice_payment(
+    session: AsyncSession,
+    invoice: models.PlanInvoice,
+    store: models.Store,
+    *,
+    reference_id: str,
+    metadata: dict[str, Any],
+) -> models.Payment:
+    """The payable code for this invoice: reuse it while live, replace it when dead.
+
+    `create_payment` is idempotent on the invoice, which is what stops a merchant being
+    handed a second payable code for a month they may already have paid — paying both
+    would charge them twice against one invoice. The cost of that safety is that a
+    *dead* code gets handed back too, and ABA's window is 180s with nothing to extend
+    it, so a merchant who closed the tab returned to a QR their wallet refuses. The
+    only way back to a payable code is a new ABA session, and it has to be minted here:
+    this payment sits on the platform's own HQ store, so the merchant cannot reach the
+    merchant-facing reissue route for it.
+    """
+    if invoice.chmabapay_payment_id is not None:
+        stored = await session.get(models.Payment, invoice.chmabapay_payment_id)
+        if stored is not None:
+            if stored.status in (models.PAYMENT_EXPIRED, models.PAYMENT_FAILED):
+                successor, _created = await svc.reissue_payment(session, stored)
+                return successor
+            return stored
+
+    payment, _created = await svc.create_payment(
+        session,
+        store=store,
+        amount_cents=invoice.total_due_cents,
+        reference_id=reference_id,
+        metadata=metadata,
+        idempotency_key=reference_id,
+    )
+    return payment
+
+
 @router.get(
     "/invoices/{invoice_id:int}/khqr",
     status_code=201,
@@ -371,20 +421,12 @@ async def get_invoice_khqr(
     reference_id = f"INV-{invoice.id}-{invoice.period_month}"
     metadata = {"source": "billing_invoice", "invoice_id": invoice.id}
 
-    payment, created = await svc.create_payment(
+    payment = await _invoice_payment(
         session,
-        store=hq_store,
-        amount_cents=invoice.total_due_cents,
+        invoice,
+        hq_store,
         reference_id=reference_id,
         metadata=metadata,
-        # Keyed on the invoice, so asking twice for the same invoice's QR returns
-        # the same payment instead of minting a second one. Without it, a merchant
-        # who reopened the billing page got a fresh payable code every time and
-        # could pay the same invoice twice — the platform would have taken double
-        # for one month, with two payments and one invoice to reconcile. If the
-        # code has since died, `POST /v1/payments/{id}/reissue` is the intended
-        # path, not a second payment.
-        idempotency_key=reference_id,
     )
 
     invoice.chmabapay_payment_id = payment.id

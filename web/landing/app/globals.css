@@ -4666,6 +4666,36 @@ body.dash-path-dashboard > .landing-footer {
   font-size: var(--fs-13);
   color: var(--muted);
 }
+/* Plan-payment modal. The code is the point, so the amount sits above it and the live
+   status below — the same reading order as the payment-detail panel a merchant
+   already knows. */
+.bill-pay-amount {
+  font-size: var(--fs-20);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  text-align: center;
+  color: var(--ink);
+}
+.bill-pay-period {
+  text-align: center;
+  font-size: var(--fs-13);
+  color: var(--muted);
+}
+.bill-pay-status-row {
+  display: flex;
+  justify-content: center;
+}
+.bill-pay-status {
+  text-align: center;
+  font-size: var(--fs-13);
+  color: var(--muted);
+}
+.bill-pay-countdown {
+  text-align: center;
+  font-size: var(--fs-13);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .bill-usage {
   flex: 1;
   min-width: 240px;

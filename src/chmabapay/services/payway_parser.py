@@ -39,7 +39,73 @@ from typing import Any, Literal
 
 import httpx
 
+from ..config import get_settings
+
 PAYWAY_BASE = "https://link.payway.com.kh"
+
+# A browser-shaped request. ABA's edge answers 403 Forbidden to some client
+# fingerprints while serving a byte-identical request from a browser, so this header
+# set is part of *reaching the page at all* rather than politeness. It mirrors what
+# the PayWay SPA itself sends; `Accept-Encoding` is left to httpx, which handles
+# gzip/br and adds it per request.
+BROWSER_HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9,km;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Sec-Ch-Ua": '"Chromium";v="128", "Not(A:Brand";v="24", "Google Chrome";v="128"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+
+def _client(timeout: float) -> httpx.AsyncClient:
+    """An ABA-facing HTTP client: browser headers are passed per call, egress here.
+
+    Proxying is deliberately narrow. ABA refuses some datacenter ranges outright, so a
+    deployment that is otherwise healthy can be unable to mint a QR or verify a link.
+    Pointing *only* these requests at an allowed egress is the fix, and keeping it on
+    this one helper stops it silently becoming a platform-wide proxy. See
+    ``Settings.payway_proxy_url``.
+    """
+    proxy = (get_settings().payway_proxy_url or "").strip() or None
+    kwargs: dict[str, Any] = {"timeout": timeout, "follow_redirects": True}
+    if proxy:
+        kwargs["proxy"] = proxy
+    return httpx.AsyncClient(**kwargs)
+
+
+def _refusal_message(step: str, status: int) -> str:
+    """Explain an ABA HTTP refusal in terms of what the operator can do about it.
+
+    A 403 on this fetch is the one failure this module cannot fix by itself: ABA is
+    refusing *the platform host's* request while the same URL answers 200 from an
+    ordinary connection. Naming that, and the escape hatch, is the difference between
+    a five-minute fix and an afternoon spent re-reading the QR code path. It is also
+    what stops the refusal arriving as a bare `Client error '403 Forbidden'` — an
+    `httpx.HTTPStatusError` used to escape this module unhandled, so the merchant saw
+    a 500 and the operator got paged about a traceback instead of a configuration gap.
+    """
+    if status in (401, 403, 406, 429):
+        return (
+            f"{step}_http_{status}: ABA refused this request from the platform's own "
+            "network, so no QR can be issued against it. Set PAYWAY_PROXY_URL to route "
+            "ABA requests through an allowed address, or ask ABA to allowlist this "
+            "host's IP."
+        )
+    return f"{step}_http_{status}: ABA answered {status} for the link page."
 
 
 # --------------------------------------------------------------------------- #
@@ -151,10 +217,24 @@ async def create_hosted_checkout(
     string ABA expects in ``additional_fields`` (e.g. ``"1.00"``) — it is the
     amount the *page* would have submitted.
     """
-    html = await fetch_link_html(
-        slug_or_url if slug_or_url.startswith("http") else f"{PAYWAY_BASE}/{slug_or_url}",
-        timeout=timeout,
-    )
+    try:
+        html = await fetch_link_html(
+            slug_or_url
+            if slug_or_url.startswith("http")
+            else f"{PAYWAY_BASE}/{slug_or_url}",
+            timeout=timeout,
+        )
+    except httpx.HTTPStatusError as exc:
+        # Converted here rather than inside `fetch_link_html`, because `verify_link`
+        # needs the raw status to tell "ABA has no such link" (404) from "ABA refused
+        # us" (403). Callers of *this* function only ever want a mintable QR, and an
+        # unwrapped HTTPStatusError used to escape all the way to the API's exception
+        # handler as a 500.
+        raise PayWayHostedError(
+            _refusal_message("link_page", exc.response.status_code)
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise PayWayHostedError(f"link_page_unreachable: {exc}") from exc
     aba_data, request_time = extract_link_state(html)
     if not aba_data or not request_time:
         raise PayWayHostedError(
@@ -169,11 +249,17 @@ async def create_hosted_checkout(
         "aba_data": aba_data,
         "hash": _sha512_hex(request_time + aba_data + additional_fields),
     }
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with _client(timeout) as client:
         res = await client.post(
             HOSTED_API_BASE + HOSTED_LIST_PAYMENT_OPTIONS,
             json=body,
-            headers={"language": "en"},
+            # The page's own XHR sends these; ABA's edge treats a bare POST to this
+            # endpoint as not-from-the-page.
+            headers={
+                "language": "en",
+                "Origin": PAYWAY_BASE,
+                "Referer": f"{PAYWAY_BASE}/",
+            },
         )
     payload = _hosted_json(res, "list_payment_options")
     qr_string = payload.get("qr_string") or ""
@@ -221,11 +307,16 @@ async def fetch_hosted_status(
         "client_id": client_id,
         "hash": _sha512_hex(client_id + device + request_time),
     }
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with _client(timeout) as client:
         res = await client.post(
             HOSTED_API_BASE + HOSTED_CHECK_PAYMENT_STATUS,
             json=body,
-            headers={"language": "en", "token": token},
+            headers={
+                "language": "en",
+                "token": token,
+                "Origin": PAYWAY_BASE,
+                "Referer": f"{PAYWAY_BASE}/",
+            },
         )
     payload = _hosted_json(res, "check_payment_status")
     data = payload.get("data") or {}
@@ -240,8 +331,12 @@ async def fetch_hosted_status(
 
 
 def _hosted_json(res: httpx.Response, label: str) -> dict[str, Any]:
-    if res.status_code >= 500:
-        raise PayWayHostedError(f"{label}_http_{res.status_code}: {res.text[:200]}")
+    if res.status_code >= 400:
+        # A 4xx here is an edge refusal, not ABA's JSON protocol — its body is usually
+        # an HTML error page, and parsing it would report a confusing `not_json`.
+        raise PayWayHostedError(
+            f"{label}_http_{res.status_code}: {res.text[:200]}"
+        )
     try:
         payload = res.json()
     except ValueError as exc:
@@ -685,17 +780,8 @@ async def fetch_link_html(slug_or_url: str, *, timeout: float = 8.0) -> str:
         url = slug_or_url
     else:
         url = f"{PAYWAY_BASE}/{slug_or_url.lstrip('/')}"
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/126.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "en",
-        }
-        resp = await client.get(url, headers=headers)
+    async with _client(timeout) as client:
+        resp = await client.get(url, headers=BROWSER_HEADERS)
         resp.raise_for_status()
         return resp.text
 
@@ -892,9 +978,13 @@ async def verify_link(raw_link: str, *, timeout: float = 6.0) -> PayWayLinkCheck
         html = await fetch_link_html(raw_link, timeout=timeout)
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
-        if 400 <= status < 500:
+        if status in (404, 410):
             # PayWay's own verdict on the slug: this link is not there.
             return PayWayLinkCheck("not_found", slug, None, f"payway answered {status}")
+        # Every other status is *our* problem, not the merchant's typo. A 403 is ABA
+        # refusing this host's egress (observed from datacenter ranges) and a 429 is
+        # rate limiting — neither says anything about whether the link exists, and
+        # treating them as `not_found` told a merchant their correct link was wrong.
         return PayWayLinkCheck("inconclusive", slug, None, f"payway answered {status}")
     except Exception as exc:  # noqa: BLE001 - DNS, TLS, timeout, a parser crash
         return PayWayLinkCheck("inconclusive", slug, None, str(exc)[:200] or "unreachable")
@@ -1004,18 +1094,9 @@ async def fetch_payment_status(
     """
     slug = _extract_slug(slug_or_url)
     url = f"{PAYWAY_BASE}/{slug}"
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/128.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "en-US,en;q=0.9,km;q=0.8",
-    }
     try:
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
-            resp = await c.get(url, headers=headers)
+        async with _client(timeout) as c:
+            resp = await c.get(url, headers=BROWSER_HEADERS)
             resp.raise_for_status()
             html = resp.text
     except Exception as exc:

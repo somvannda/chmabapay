@@ -15,6 +15,7 @@ from .. import models, observability, webhooks
 from ..config import get_settings
 from ..khqr import build_khqr_payload
 from . import billing as billing_svc
+from . import notifications
 from .payway_parser import PayWayHostedError, create_hosted_checkout
 
 logger = logging.getLogger(__name__)
@@ -649,7 +650,7 @@ async def mark_paid(
     # the plan it buys cannot activate against an invoice that failed to persist —
     # and an invoice cannot read `paid` while the merchant still has the old plan.
     # A no-op for every merchant payment that is not an invoice.
-    await billing_svc.settle_invoice_for_payment(
+    settled_invoice = await billing_svc.settle_invoice_for_payment(
         session, payment, paid_at=payment.paid_at or _now()
     )
     # Before the completion event, so a consumer that reacts to `payment.completed`
@@ -661,6 +662,12 @@ async def mark_paid(
     await session.commit()
     observability.PAYMENT_EVENTS.labels(event="paid").inc()
     observability.observe_settlement(payment.created_at, payment.paid_at)
+    # After the commit, so the feed can only ever describe money that is durably
+    # recorded — and `notify_activity` swallows its own failures, so a Telegram
+    # outage cannot hand a failure back to a caller whose payment already settled.
+    await notifications.notify_activity(
+        notifications.format_payment_paid(payment, store, invoice=settled_invoice)
+    )
     # After the commit: the settlement is durable before anything tries to talk to
     # an operator about it.
     await _alert_if_double_charged(session, payment, store)

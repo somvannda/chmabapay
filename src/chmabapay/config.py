@@ -112,6 +112,23 @@ class Settings(BaseSettings):
     # Alerts reuse the Telegram channel P0-5 built. Without a chat id there is no
     # page, only a log line, and the watcher says so at startup.
     ops_telegram_chat_id: str | None = None
+
+    # The activity feed: settled payments, plan invoices and error reports posted to
+    # a Telegram group so an operator can watch the platform without opening the
+    # console. A *group* id (negative, e.g. -1001234567890), separate from
+    # `ops_telegram_chat_id` because a group carries the team while the ops chat is
+    # one person's inbox. `python -m chmabapay.cli telegram-chat-id` prints the ids
+    # the bot can see. Unset means the feed is off and activity is only logged.
+    activity_telegram_chat_id: str | None = None
+
+    # Outbound proxy for the ABA PayWay fetches only (e.g. "http://user:pass@host:3128").
+    #
+    # ABA answers 403 Forbidden to some host egress ranges while serving the same
+    # page 200 to a home connection, which breaks QR minting and link verification
+    # behind an otherwise healthy deployment. Routing just the ABA hop lets an
+    # operator point it at an allowed egress without moving the whole application.
+    # Unset means a direct connection, which is correct wherever ABA is reachable.
+    payway_proxy_url: str | None = None
     alert_interval_seconds: float = 30.0
     # A healthy drain loop asks for work every ~0.05s, so anything near a minute
     # means the loop is gone rather than busy.

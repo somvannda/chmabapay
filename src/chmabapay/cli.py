@@ -3,6 +3,7 @@
 Run:  uv run python -m chmabapay.cli bootstrap
       uv run python -m chmabapay.cli set-password <email>
       uv run python -m chmabapay.cli grant-admin <email> [--password <pw>] [--name <name>]
+      uv run python -m chmabapay.cli telegram-chat-id
 Env:  WEBHOOK_SINK_URL=http://localhost:9000/hook   (optional, bootstrap)
       CHMABAPAY_PASSWORD=...                       (optional, non-interactive set-password
                                                     and grant-admin)
@@ -147,6 +148,70 @@ async def _bootstrap() -> None:
     print("  POST /_dev/payments/<id>/pay  -> simulate the customer paying")
 
 
+def _chats_in_updates(updates: list[dict]) -> list[tuple[str, str, str]]:
+    """(chat id, type, label) for every distinct chat in a getUpdates payload.
+
+    Distinct because one busy group produces many updates and the answer an operator
+    wants is the short list of places the bot can deliver to. `my_chat_member` is
+    included alongside messages: it is the update Telegram sends when the bot is added
+    to a group, which is exactly the moment the id becomes discoverable.
+    """
+    found: dict[str, tuple[str, str, str]] = {}
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+        for key in ("message", "edited_message", "channel_post", "my_chat_member"):
+            item = update.get(key)
+            chat = item.get("chat") if isinstance(item, dict) else None
+            if not isinstance(chat, dict) or chat.get("id") is None:
+                continue
+            chat_id = str(chat["id"])
+            label = (
+                chat.get("title")
+                or " ".join(
+                    part
+                    for part in (chat.get("first_name"), chat.get("last_name"))
+                    if part
+                )
+                or chat.get("username")
+                or "(no name)"
+            )
+            found.setdefault(chat_id, (chat_id, str(chat.get("type") or "unknown"), label))
+    return sorted(found.values(), key=lambda row: row[0])
+
+
+async def _telegram_chat_id() -> None:
+    """Print the chat ids the bot can deliver to.
+
+    Why this exists: `ACTIVITY_TELEGRAM_CHAT_ID` is a numeric id, a bot cannot be
+    added to a group by invite link and cannot open a conversation, and Telegram has no
+    API that turns `t.me/+…` into an id. So the operator invites the bot, says
+    something in the group, and runs this. The alternative is guessing against
+    `{"ok": false}`, which arrives with HTTP 200 and looks like success.
+    """
+    from .services import telegram
+
+    try:
+        updates = await telegram.get_updates()
+    except telegram.TelegramError as exc:
+        raise SystemExit(f"could not read Telegram updates: {exc}") from exc
+
+    chats = _chats_in_updates(updates)
+    if not chats:
+        print("Telegram has no chats to report yet.")
+        print("  A group only appears here once the bot is a member AND a message has")
+        print("  been sent in it (a bot cannot open a conversation, and cannot join")
+        print("  from an invite link on its own). Add the bot, post something in the")
+        print("  group, then run this again.")
+        return
+
+    print("Chats this bot can deliver to:\n")
+    for chat_id, kind, label in chats:
+        print(f"  {chat_id:<22} {kind:<12} {label}")
+    print("\nPut the group's id in the deployment's environment as:")
+    print("  ACTIVITY_TELEGRAM_CHAT_ID=<id>")
+
+
 async def _set_password() -> None:
     """Set or reset an account's password for email + password sign-in."""
     if len(sys.argv) < 3:
@@ -263,8 +328,12 @@ def main() -> None:
     if command == "grant-admin":
         asyncio.run(_grant_admin())
         return
+    if command == "telegram-chat-id":
+        asyncio.run(_telegram_chat_id())
+        return
     raise SystemExit(
-        f"unknown command {command!r} — expected 'bootstrap', 'set-password' or 'grant-admin'"
+        f"unknown command {command!r} — expected 'bootstrap', 'set-password', "
+        "'grant-admin' or 'telegram-chat-id'"
     )
 
 

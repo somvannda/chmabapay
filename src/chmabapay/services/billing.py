@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
 from ..config import get_settings
+from . import notifications
 
 # The credit period a subscription buys. Used for `next_billing_at` on every path, so
 # it lives here rather than being spelled `timedelta(days=30)` in three files.
@@ -184,12 +185,17 @@ async def issue_invoice(
     *,
     period_month: str,
     now: datetime | None = None,
-) -> models.PlanInvoice | None:
+) -> tuple[models.PlanInvoice | None, bool]:
     """Raise the invoice for one subscription-period, or return the existing one.
 
-    Returns None when there is nothing to collect. A free plan bills nothing, and a
-    monthly $0 invoice is noise on a merchant's billing page rather than
-    information — the quota still applies, it just has no price attached.
+    Returns ``(invoice, created)``, and ``(None, False)`` when there is nothing to
+    collect. A free plan bills nothing, and a monthly $0 invoice is noise on a
+    merchant's billing page rather than information — the quota still applies, it just
+    has no price attached.
+
+    ``created`` is what lets a caller announce a *new* invoice without re-announcing
+    one a retry found already there: the second element is False on every path that
+    returned a row rather than wrote one.
 
     Overage is counted and recorded, never charged. There is no overage price on
     `Plan` to charge at, and the product enforces a quota (`402 quota_exceeded`)
@@ -201,11 +207,11 @@ async def issue_invoice(
     retry must not restamp an invoice that may already have been sent.
     """
     if plan.monthly_fee_cents <= 0:
-        return None
+        return None, False
 
     existing = await find_period_invoice(session, subscription.account_id, period_month)
     if existing is not None:
-        return existing
+        return existing, False
 
     counted, _volume = await period_usage(session, subscription.account_id, period_month)
     included = plan.base_payments_included or 0
@@ -224,7 +230,7 @@ async def issue_invoice(
     )
     session.add(invoice)
     await session.flush()
-    return invoice
+    return invoice, True
 
 
 async def issue_due_invoices(
@@ -264,6 +270,7 @@ async def issue_due_invoices(
     invoiced = 0
     nothing_to_bill = 0
     advanced = 0
+    raised: list[tuple[models.PlanInvoice, models.Plan]] = []
     for subscription, plan in due:
         steps = 0
         while subscription.next_billing_at <= moment:
@@ -273,7 +280,7 @@ async def issue_due_invoices(
                 # pick up where this one stopped.
                 break
             due_period = period_month_for(subscription.next_billing_at)
-            invoice = await issue_invoice(
+            invoice, created = await issue_invoice(
                 session,
                 subscription,
                 plan,
@@ -284,18 +291,56 @@ async def issue_due_invoices(
                 nothing_to_bill += 1
             else:
                 invoiced += 1
+                if created:
+                    raised.append((invoice, plan))
             subscription.next_billing_at = subscription.next_billing_at + CREDIT_PERIOD
             steps += 1
         subscription.updated_at = moment
         advanced += steps
 
     await session.commit()
+    # After the commit, never before: an announcement is a claim that the invoice
+    # exists, and the row is only real once it is durable. A delivery failure here
+    # cannot fail the sweep — `notify_activity` swallows its own errors — so a
+    # Telegram outage never costs the billing run.
+    await _announce_raised_invoices(session, raised)
     return {
         "subscriptions_due": len(due),
         "periods_advanced": advanced,
         "invoices": invoiced,
         "nothing_to_bill": nothing_to_bill,
     }
+
+
+async def _announce_raised_invoices(
+    session: AsyncSession,
+    raised: list[tuple[models.PlanInvoice, models.Plan]],
+) -> None:
+    """Post each newly raised invoice to the activity feed.
+
+    Batched on purpose: one lookup names every account in the sweep, rather than a
+    query per invoice. An account with no email row is labelled by id rather than
+    dropped — the invoice still happened.
+    """
+    if not raised:
+        return
+    account_ids = {invoice.account_id for invoice, _plan in raised}
+    rows = await session.execute(
+        select(models.Account.id, models.Account.email).where(
+            models.Account.id.in_(account_ids)
+        )
+    )
+    labels = {row.id: row.email for row in rows}
+    for invoice, plan in raised:
+        await notifications.notify_activity(
+            notifications.format_invoice_issued(
+                invoice,
+                plan_name=plan.name,
+                account_label=labels.get(
+                    invoice.account_id, f"account {invoice.account_id}"
+                ),
+            )
+        )
 
 
 async def settle_invoice_for_payment(

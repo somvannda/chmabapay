@@ -61,3 +61,36 @@ def _description(response: httpx.Response) -> str:
     except ValueError:
         detail = None
     return detail or f"HTTP {response.status_code}"
+
+
+async def get_updates() -> list[dict]:
+    """Every update the bot has not consumed yet, for discovering a chat id.
+
+    Telegram reports a group only once the bot is a *member* of it and something has
+    been said there: a bot cannot be added by invite link, cannot open a conversation,
+    and there is no API that turns ``t.me/+…`` into a numeric id. This is how an
+    operator turns "I invited the bot" into the id a deployment needs.
+
+    Raises `TelegramError` rather than returning a partial answer. A bot with a webhook
+    set is refused here (Telegram answers 409, because the two delivery modes are
+    exclusive) and the operator needs to hear that, not see an empty list.
+    """
+    token = get_settings().telegram_bot_token
+    if not token:
+        raise TelegramError("telegram_bot_token is not configured — set TELEGRAM_BOT_TOKEN")
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=get_settings().telegram_timeout_seconds
+        ) as client:
+            response = await client.get(f"{API_BASE}/bot{token}/getUpdates")
+    except httpx.HTTPError as exc:
+        raise TelegramError(f"could not reach Telegram: {exc}") from exc
+
+    if response.status_code != 200:
+        raise TelegramError(_description(response))
+    body = response.json()
+    if not body.get("ok"):
+        raise TelegramError(body.get("description") or "Telegram refused the request")
+    result = body.get("result")
+    return result if isinstance(result, list) else []

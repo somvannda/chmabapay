@@ -61,6 +61,45 @@ type ChangePlanResponse = {
   error?: string;
 };
 
+/** The payable code the API mints for one invoice. */
+type KhqrResponse = {
+  payment_id: string;
+  qr_string: string;
+  checkout_url: string;
+  expires_at: string;
+  amount_cents: number;
+  amount_formatted: string;
+};
+
+/** What `/pay/{id}/status` reports, polled until the code is terminal. */
+type PayStatusResponse = {
+  status?: string;
+  amount?: string;
+  currency?: string;
+};
+
+// Payment states that mean "this code will not take money any more", so polling can
+// stop. Mirrors the backend's PAYMENT_DEAD_STATUSES, plus `failed`.
+const PAY_TERMINAL = new Set(["paid", "expired", "failed", "superseded", "reversed"]);
+
+function payStatusCopy(status: string): string {
+  switch (status) {
+    case "scanned":
+      return "QR scanned — confirm the payment in your banking app.";
+    case "paid":
+      return "Payment received. Your plan is being activated.";
+    case "expired":
+      return "This code has expired. Close this and try again to get a fresh one.";
+    case "failed":
+      return "That payment did not go through. Close this and try again.";
+    case "superseded":
+    case "reversed":
+      return "This code is no longer payable. Close this and try again.";
+    default:
+      return "Waiting for you to scan and pay…";
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Formatting helpers
  * ------------------------------------------------------------------ */
@@ -173,6 +212,145 @@ function featuresFor(plan: PlanOut): Feature[] {
 }
 
 /* ------------------------------------------------------------------ *
+ * Pay-an-invoice modal
+ * ------------------------------------------------------------------ */
+
+/**
+ * The code a merchant scans to buy a plan.
+ *
+ * A paid plan is *bought*, so the click that asks for it has to end somewhere the
+ * merchant can actually pay — the previous flow only raised the invoice and pointed at
+ * a table row, and the row's button opened `/pay/{id}`, a page that carries no QR at
+ * all. The code lives on `/pay/{id}/qr.svg`, the same route the payment detail page
+ * uses, so what is rendered here is the code ABA issued rather than a redrawn one.
+ */
+function InvoicePaymentModal({
+  invoice,
+  khqr,
+  loading,
+  error,
+  status,
+  secondsLeft,
+  onClose,
+  onRetry,
+}: {
+  invoice: Invoice;
+  khqr: KhqrResponse | null;
+  loading: boolean;
+  error: string | null;
+  status: string;
+  secondsLeft: number | null;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  const paid = status === "paid";
+  const pill =
+    status === "paid"
+      ? { className: "dash-pill dash-pill-paid", label: "Paid" }
+      : status === "scanned"
+        ? { className: "dash-pill dash-pill-scanned", label: "Scanned" }
+        : PAY_TERMINAL.has(status)
+          ? { className: "dash-pill dash-pill-failed", label: status }
+          : { className: "dash-pill dash-pill-pending", label: "Awaiting payment" };
+
+  return (
+    <div className="dash-modal-backdrop" onClick={onClose}>
+      <div className="dash-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="dash-modal-head">
+          <h3 className="dash-modal-title">
+            {paid ? "Payment received" : "Pay with KHQR"}
+          </h3>
+          <button
+            type="button"
+            className="dash-modal-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="dash-modal-body">
+          {loading ? (
+            <div className="dash-info">Preparing your payment code…</div>
+          ) : error ? (
+            <>
+              <div className="dash-warn">{error}</div>
+              <div className="dash-toolbar">
+                <div />
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={onRetry}
+                >
+                  Try again
+                </button>
+              </div>
+            </>
+          ) : khqr ? (
+            <>
+              <div className="bill-pay-amount">{khqr.amount_formatted}</div>
+              <div className="bill-pay-period">
+                Invoice {invoice.period_month || invoice.period || "—"}
+              </div>
+
+              {paid ? (
+                <div className="dash-note">
+                  Your plan is active as soon as the invoice settles, which happens on
+                  confirmation from the bank. Nothing else to do.
+                </div>
+              ) : (
+                <>
+                  <img
+                    className="dash-qr-img"
+                    src={`/pay/${khqr.payment_id}/qr.svg`}
+                    alt="KHQR code for this invoice"
+                  />
+                  <div className="bill-pay-status-row">
+                    <span className={pill.className}>{pill.label}</span>
+                  </div>
+                  <div className="bill-pay-status">{payStatusCopy(status)}</div>
+                  {secondsLeft !== null && !PAY_TERMINAL.has(status) && (
+                    <div className="bill-pay-countdown">
+                      Expires in {Math.floor(secondsLeft / 60)}:
+                      {String(secondsLeft % 60).padStart(2, "0")}
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div className="dash-toolbar">
+                {!paid && khqr.checkout_url ? (
+                  <a
+                    className="dash-btn dash-btn-secondary"
+                    href={khqr.checkout_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open checkout page ↗
+                  </a>
+                ) : (
+                  <div />
+                )}
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-primary"
+                  onClick={onClose}
+                >
+                  {paid ? "Done" : "Close"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="dash-info">No payment code was returned.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * Page
  * ------------------------------------------------------------------ */
 
@@ -194,6 +372,13 @@ export default function BillingPage() {
   const [plansError, setPlansError] = useState<string | null>(null);
   const [subError, setSubError] = useState<string | null>(null);
   const [invoicesError, setInvoicesError] = useState<string | null>(null);
+  // The invoice being paid. Non-null means the KHQR modal is open.
+  const [payInvoice, setPayInvoice] = useState<Invoice | null>(null);
+  const [khqr, setKhqr] = useState<KhqrResponse | null>(null);
+  const [khqrLoading, setKhqrLoading] = useState(false);
+  const [khqrError, setKhqrError] = useState<string | null>(null);
+  const [payStatus, setPayStatus] = useState("pending");
+  const [paySecondsLeft, setPaySecondsLeft] = useState<number | null>(null);
 
   const loadPlans = useCallback(async () => {
     setPlansLoading(true);
@@ -300,15 +485,19 @@ export default function BillingPage() {
       if (data.payment_required) {
         // The plan is parked until the invoice is settled, so "you are now on Pro"
         // would be a claim the API contradicts on the very next load. Say what
-        // actually happened, and surface the invoice so it can be paid.
+        // actually happened, and open the code that settles it — the click has to end
+        // somewhere the merchant can pay, and a toast pointing at a table row does not.
         await loadInvoices();
         const planName = data.subscription?.plan_name ?? planCode;
         const amount = data.invoice?.total_due_formatted;
         notify(
           amount
-            ? `Invoice for ${amount} raised — pay it to move to ${planName}.`
-            : `Invoice raised — pay it to move to ${planName}.`,
+            ? `Invoice for ${amount} raised — scan the code to move to ${planName}.`
+            : `Invoice raised — scan the code to move to ${planName}.`,
         );
+        if (data.invoice) {
+          await openInvoicePayment(data.invoice);
+        }
         return;
       }
 
@@ -322,22 +511,89 @@ export default function BillingPage() {
     }
   }
 
-  async function handlePayInvoice(invoiceId: string | number) {
+  /**
+   * Open the invoice's payable code, minting it on the first ask.
+   *
+   * The route is idempotent per invoice, so reopening returns the code the merchant
+   * already has rather than minting a second payable one — paying both would charge
+   * them twice for one month against a single invoice.
+   */
+  const openInvoicePayment = useCallback(async (invoice: Invoice) => {
+    setPayInvoice(invoice);
+    setKhqr(null);
+    setKhqrError(null);
+    setPayStatus("pending");
+    setPaySecondsLeft(null);
+    setKhqrLoading(true);
     try {
-      const res = await fetch(`/v1/billing/invoices/${invoiceId}/khqr`, {
+      const res = await fetch(`/v1/billing/invoices/${invoice.id}/khqr`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(await readApiError(res));
-      const data = (await res.json()) as { checkout_url?: string };
-      if (data.checkout_url) {
-        window.open(data.checkout_url, "_blank", "noopener,noreferrer");
-      } else {
-        notify("No checkout link was returned for this invoice.", "error");
-      }
+      setKhqr((await res.json()) as KhqrResponse);
     } catch (e) {
-      notify(e instanceof Error ? e.message : String(e), "error");
+      setKhqrError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setKhqrLoading(false);
     }
-  }
+  }, []);
+
+  const closePayment = useCallback(() => {
+    setPayInvoice(null);
+    setKhqr(null);
+    setKhqrError(null);
+    setPayStatus("pending");
+    setPaySecondsLeft(null);
+  }, []);
+
+  // Primitive, so the countdown's once-a-second render cannot restart the poll loop
+  // below: an unstable dependency there would tear the interval down and rebuild it
+  // every second, and the 2.5s fetch would never fire.
+  const payIsTerminal = PAY_TERMINAL.has(payStatus);
+
+  // Poll the payment while the modal is open. This is what makes the invoice read
+  // Paid without the merchant reloading: the backend flips the invoice and the plan in
+  // the same transaction as the settlement, so once this reports paid the subscription
+  // and the invoice list are stale by exactly one refetch.
+  useEffect(() => {
+    if (!khqr || payIsTerminal) return;
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`/pay/${khqr.payment_id}/status`, {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as PayStatusResponse;
+        const next = (data.status || "").toLowerCase();
+        if (!next) return;
+        setPayStatus(next);
+        if (next === "paid") {
+          notify("Payment received — your plan is now active.");
+          await loadSubscription();
+          await loadInvoices();
+          // Keep the sidebar plan card in sync (it is owned by the dashboard layout).
+          window.dispatchEvent(new Event("chmabapay:plan-changed"));
+        }
+      } catch {
+        // Transient. A failed poll is not a failed payment, so it is never shown as
+        // one — the next tick retries.
+      }
+    }, 2500);
+    return () => clearInterval(id);
+  }, [khqr, payIsTerminal, notify, loadSubscription, loadInvoices]);
+
+  // ABA's window is short (180s observed, and nothing extends it), so showing how much
+  // is left is the difference between scanning now and coming back to a dead code.
+  useEffect(() => {
+    if (!khqr || payStatus === "paid") return;
+    const deadline = new Date(khqr.expires_at).getTime();
+    if (Number.isNaN(deadline)) return;
+    const tick = () =>
+      setPaySecondsLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [khqr, payStatus]);
 
   const orderedPlans = useMemo(
     () => [...plans].sort((a, b) => a.monthly_fee_cents - b.monthly_fee_cents),
@@ -597,7 +853,7 @@ export default function BillingPage() {
                         <button
                           type="button"
                           className="dash-btn dash-btn-secondary dash-btn-sm"
-                          onClick={() => handlePayInvoice(inv.id)}
+                          onClick={() => void openInvoicePayment(inv)}
                         >
                           Pay with KHQR
                         </button>
@@ -614,6 +870,19 @@ export default function BillingPage() {
           </table>
         )}
       </section>
+
+      {payInvoice && (
+        <InvoicePaymentModal
+          invoice={payInvoice}
+          khqr={khqr}
+          loading={khqrLoading}
+          error={khqrError}
+          status={payStatus}
+          secondsLeft={paySecondsLeft}
+          onClose={closePayment}
+          onRetry={() => void openInvoicePayment(payInvoice)}
+        />
+      )}
     </>
   );
 }

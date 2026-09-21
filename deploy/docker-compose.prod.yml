@@ -160,6 +160,12 @@ x-api-env: &api-env
   # Telegram answers HTTP 200 with `ok: false` when it is asked to. See docs/deploy.md §5.
   TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
   OPS_TELEGRAM_CHAT_ID: ${OPS_TELEGRAM_CHAT_ID:-}
+  # The team feed: settled payments, raised plan invoices, unhandled exceptions. A
+  # group id, and separate from the operator chat above. See deploy/.env.example.
+  ACTIVITY_TELEGRAM_CHAT_ID: ${ACTIVITY_TELEGRAM_CHAT_ID:-}
+  # Routes only the ABA PayWay fetches through a proxy, for a host ABA refuses with
+  # 403 while an ordinary connection gets 200. Empty means direct.
+  PAYWAY_PROXY_URL: ${PAYWAY_PROXY_URL:-}
   # Set a token or /metrics is served unauthenticated. It is not routed at the edge
   # (deploy/nginx/api-locations.inc has no location for it), so this is the second
   # line of defence rather than the only one.
