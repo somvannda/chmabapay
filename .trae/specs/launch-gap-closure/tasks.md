@@ -1003,6 +1003,16 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 > source rather than rendered, because no merchant or admin credentials were used — every
 > claim about them is code-verified, not browser-verified, and the two items that need a
 > human are named in the Launch gate below.
+>
+> **Progress: 9 of 10 closed and deployed.** T-37…T-42 and T-44…T-46 are done; the
+> evidence is in `docs/production-readiness.md` §P1-6, and the per-task statuses below
+> are flipped in the closing bookkeeping pass, which waits on **T-43's last item (L5)** —
+> the registered entity's name, number and address, which only the operator can supply.
+> Shipped as `f51add1` on 2026-09-21 and verified against production: schema still at
+> Alembic `0010` (no migration in this wave), security headers and `no-store` live
+> through Cloudflare on both hostnames, every public page 200, the money routes still
+> 401 to an anonymous caller, `/v1/admin/overview` 401 and `/_dev` 404, and the
+> neighbouring POS stack untouched at 11–12 days up.
 
 ### T-37 — Correct the API docs where they contradict the code
 - **Status**: `pending` · **Priority**: S2 · **Gaps**: D1–D9 · **Depends on**: none

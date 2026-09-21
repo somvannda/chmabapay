@@ -1099,6 +1099,78 @@ lawyer. This section exists to record what the code closed, not to move that ite
 
 ---
 
+### P1-6 Second production audit
+
+P1-5 closed the gaps the first audit found. This section records the **second** audit,
+run the same day against production at `02fd387`, because re-running the same four tracks
+against a deployed stack is the only way to know the first pass actually landed — and it
+found another forty-odd, several of them in surfaces the first audit had already
+"fixed". The register for this pass is Wave 8 of
+`.trae/specs/launch-gap-closure/tasks.md` (T-37…T-46).
+
+**Method, and its one limitation.** Same as P1-5 — read-only probes of both hostnames
+plus a source cross-check of every page against the router that serves it — with extra
+probes this time for page metadata, the legal text as rendered, security and cache
+headers, `robots.txt`/`sitemap.xml`, a full internal-link crawl from the landing page,
+and the unauthenticated status of every money route. The limitation is worth stating
+plainly: **the merchant portal and the admin console were audited from source, not
+rendered**, because no merchant or admin credentials were used. Everything asserted
+about them is code-verified. Interactive behaviour — the new confirmation dialogs, the
+failure-vs-empty states — was checked by reading the code and by the type and lint checks
+in the Docker builds, not by clicking them.
+
+**What it found, and what closed.** Six themes:
+
+| Theme | The finding that mattered | Closed by |
+| --- | --- | --- |
+| Docs vs code | `check-status` advertised a `source` value that is never assigned and omitted the one that is emitted for every ABA-hosted payment; `verify-payment` was documented to 404 when it returns `200 {found:false}`; `superseded` was described backwards; five published endpoints appeared in neither document | T-37 |
+| Schema accuracy | `POST /v1/payments` returns 201 and the published OpenAPI declared only 200, so a generated client was wrong at runtime | T-38 |
+| Edge hardening | **Neither hostname sent any security header at all** — no HSTS, no `X-Frame-Options`, no `nosniff` — on two session-authenticated consoles; and every app page carried Next's `s-maxage=31536000`, a year of shared caching on HTML belonging to one merchant | T-42 |
+| Merchant friction | Five pages reported a *failed fetch* as "no records yet", so a merchant with live stores saw an empty workspace; four buttons that destroy a live credential had no confirmation and no in-flight guard; payment history could not be paged past 50 | T-39, T-40, T-41 |
+| Legal text | The Terms still said the restricted-business list "is subject to change following legal review" — the last visible trace of the draft state; and the plan-fee clause described a billing flow the code does not implement | T-43 |
+| Operator dead ends | A store could be disabled but only the *merchant* could re-enable it; the HQ-store panel rerouted all plan-fee revenue with no confirmation | T-44, T-45 |
+
+Two judgement calls worth recording as decisions rather than omissions. The CSP added at
+the edge is `frame-ancestors 'none'` **and nothing else**: a `script-src` would have to
+accommodate Next's inline bootstrap, and getting that wrong breaks both applications
+instead of tightening them. And HSTS is sent **without `includeSubDomains`**, because
+`chmaba.com` and the rest of its subdomains belong to the neighbouring POS stack — one
+project's header must not reach into another's domain.
+
+**The deploy.** `f51add1`, committed and pushed to `main`, then fast-forwarded on the
+VPS and rebuilt. **No migration was involved** — the schema stayed at Alembic `0010` — so
+no `pg_dump` was taken, unlike P1-5's. One new file, `deploy/nginx/security-headers.inc`,
+is mounted into the proxy; it is mounted explicitly rather than copied into the image so
+that a missing mount makes the proxy refuse to start rather than quietly serve traffic
+without the headers.
+
+Verified after the deploy, from outside: `strict-transport-security`,
+`x-frame-options: DENY`, `content-security-policy: frame-ancestors 'none'`,
+`x-content-type-options: nosniff`, `referrer-policy` and `permissions-policy` all present
+on both hostnames **through Cloudflare** (which passes the origin's HSTS through, so the
+zone toggle is belt-and-braces rather than required); `/dashboard` and the whole console
+answer `Cache-Control: no-store` while public pages answer `s-maxage=300`; hashed static
+assets keep `max-age=31536000, immutable`; `/terms`, `/privacy` and `/contact` each have
+their own canonical and `og:title`; every public page 200; `POST /v1/khqr/from-link` and
+`/v1/khqr/payway/checkout` 401 to an anonymous caller; `/v1/admin/overview` 401 and
+`/_dev/integration-test` 404; `offset` and the `201`s are in the live OpenAPI; and the
+POS stack was up 11–12 days throughout. In the repository: `ruff check` clean and **274
+passed, 2 deselected** against Postgres, with landing and admin built in Docker with
+their type and lint checks.
+
+**Still open, and not closeable here.** Three items, each stated rather than implied:
+
+1. **P1-4's lawyer review.** T-43 removed the last code-visible trace of the draft state
+   from the terms; it cannot substitute for the review. Unchanged.
+2. **The registered entity's name, registration number and registered address.** The
+   Terms identify the counterparty only as "ChmabaPay Technologies", and §8 excludes
+   indirect loss but caps nothing. Both need a lawyer and a company number; neither can
+   be read out of this repository, and inventing either was not an option.
+3. **The HQ PayWay link** from P1-5's operator action. Until it is set, a paid plan
+   change correctly answers `503 billing_not_open`.
+
+---
+
 ## P2 — Scale and polish
 
 ### P2-1 Unify the duplicated dashboard routes
