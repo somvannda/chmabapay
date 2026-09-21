@@ -1021,6 +1021,82 @@ accepted as a risk for now**, because it must be recoverable to sign with.
   `BUSINESS_REQUIREMENTS.md` and the `.trae/specs/` files still describe the concept;
   they are left as records of intent rather than rewritten.
 
+### P1-5 Launch gap closure
+
+A full A-to-Z audit was run against the **deployed** production stack (not the working
+tree), and its findings were registered as **50 gaps, `G-01`…`G-50`**, alongside the
+decisions that settled them, in `.trae/specs/launch-gap-closure/`. `tasks.md` is the
+authoritative record: 36 tasks in 7 waves, each with the reason it was needed and what
+shipped. **34 closed; the two that remain are this deploy's own bookkeeping** (T-35) and
+this section (T-36).
+
+What the register changed, and why it was worth doing:
+
+| Area | The gap that mattered |
+|---|---|
+| Access | Four KHQR routes drove an outbound ABA fetch — one of them spends a real ABA checkout session — and answered **422, not 401**, to an anonymous caller. The docs presented a single Bearer surface; the code had a hole in it |
+| Money | A self-serve plan change to Pro ($59.99/mo) applied immediately, collected nothing and prorated nothing. Since P1-5 a paid tier is *bought*: the upgrade parks a `pending` subscription, raises an invoice for the period, and activation waits on that invoice being paid |
+| Legal | Terms acceptance was collected but **nothing required it**. It is now the chokepoint for a new API key, which is where a merchant starts acting programmatically |
+| Portal | Account erasure and key rotation were reachable but not honest about what they did; webhook secrets could not be recovered; the delivery log could not be retried |
+| Console | An operator could not resolve a paid-but-expired dispute in-product, could not assign a plan, and could suspend an account without being told it revokes every session and API key at once. All of that is now in the console, each action with an audit row and its blast radius stated |
+| Docs | The published `openapi.json` advertised neither credential and hid nothing, the docs page described endpoints that behave differently, the landing page named Bakong as a payment destination while `/api/docs` said ABA PayWay was the only one, and the advertised event list included two events nothing emits |
+
+Decisions that closed a gap by **removing** a claim rather than building behind it —
+recorded here because each one is a deliberate reduction in scope:
+
+- **The CSV export gate is deleted, not enforced.** Every plan carried
+  `csv_export_enabled = true` (Free included), so the `403` in `routers/reports.py` was
+  unreachable — while the admin console let an operator switch it off and watch CSV keep
+  working. Migration `0010` drops the column. A gate nobody can trip is worse than no
+  gate: it teaches the operator that the toggle does something.
+- **The nine Bakong ledger endpoints are documented as unavailable** and their group is
+  rendered as such, because Bakong Open API credentials are deliberately not configured.
+  The two reconciliation endpoints that *do* work without them
+  (`GET /v1/transactions/check-status/{id}`, `POST /v1/transactions/verify-payment/{id}`)
+  are now documented separately, which is what an integrator actually needs.
+- **Contact stays email-only, with no status page and no response-time commitment.** The
+  terms already offered no SLA (section 7); `/contact` now says so out loud instead of
+  leaving it to be inferred. Revisit when there is a support rota to publish behind it.
+
+**Deployed to `0010`** (2026-09-21), from `4c4bffa`. This carried the second destructive
+migration group — `0009` runs `DELETE FROM plan_invoices` before adding
+`uq_plan_invoice_period`, and `0010` drops `plans.csv_export_enabled` — so a snapshot was
+verified first, per §12:
+
+```bash
+pg_dump -Fc > /root/chmabapay-pre-0010.dump   # 51,254 bytes, PGDMP magic
+docker run --rm -v /root:/backup:ro postgres:16-alpine \
+  pg_restore -l /backup/chmabapay-pre-0010.dump | grep -c 'TABLE DATA'   # 14
+```
+
+`0009`'s `DELETE` was checked to be the no-op it claims to be **before** running it, not
+after: `plan_invoices` held 0 rows. Verified afterwards, on the host and from the public
+internet:
+
+- schema `0010`; `plans` still holds 3 rows and `accounts` 1; **14 public tables**, and the
+  dropped `csv_export_enabled` column is the only one missing from `plans` — the migration
+  removed a column, not a table;
+- `uq_plan_invoice_period` exists, and `plan_subscriptions` still holds its 1 row;
+- `migrate` exited **0**; `db`, `api`, `landing`, `admin` healthy; `proxy` was not recreated
+  (no nginx change), so the edge never restarted;
+- the **POS stack is untouched**: `deploy-front-1`, `deploy-api-1`, `deploy-db-1` all up 11
+  days;
+- publicly: `/health` ok, landing/docs/contact/terms/privacy **200**, `admin-pay` **200**
+  and not serving the landing page, `/no-such-page` **404** with its own
+  `<title>Page not found — ChmabaPay</title>` and `noindex`;
+- `/openapi.json` declares `ApiKey` and `SessionCookie` and contains **no** `/v1/admin` or
+  `/_dev` path;
+- enforced: all four KHQR routes, `/v1/payments`, `/v1/stores`,
+  `/v1/reports/payments.csv` and `/v1/transactions/check-status/…` answer **401** without a
+  credential; `/v1/billing/plans` answers **200** (public by design);
+- refused twice: `/auth/_dev/login`, `/_dev/integration-test` and `/metrics` are **404**
+  from the internet — the edge does not route them — and `/metrics` answers **401** from
+  inside the network, where `METRICS_TOKEN` is the only thing stopping a scrape.
+
+The one thing P1-5 did **not** close, and did not touch: **P1-4's lawyer item.** The
+merchant agreement is still a draft, still marked unreviewed in place, and still needs a
+lawyer. This section exists to record what the code closed, not to move that item.
+
 ---
 
 ## P2 — Scale and polish

@@ -738,20 +738,76 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 ## Wave 7 — Verification and release
 
+> **Status: COMPLETE (2026-09-21).** T-35 and T-36 closed. Local verification, the
+> production redeploy to Alembic `0010`, the post-deploy probes and the readiness doc are
+> all done. The single item this project did **not** close is P1-4's lawyer review of the
+> merchant agreement — that is a legal task, not a code one, and it is deliberately left
+> open.
+
 ### T-35 — Full verification pass
-- **Status**: `pending` · **Priority**: S1 · **Depends on**: all
+- **Status**: `complete` · **Priority**: S1 · **Depends on**: all
 - **Description**: `docker compose build api`, run the pytest suite against Postgres
   using the documented invocation, build both frontends in Docker
   (`--build-arg APP=landing|admin`), then redeploy production and re-probe every route
   touched in Waves 1–6. Re-run the acceptance criteria in `spec.md`.
 - **Test**: the acceptance criteria list in `spec.md`.
+- **Shipped** (2026-09-21). Local, in Docker: `docker compose build api`; pytest against
+  Postgres **265 passed, 2 deselected**; `ruff check src/chmabapay tests` clean;
+  `next build` for **both** `web/landing` and `web/admin` (each runs its own type and lint
+  checks inside the image). Deploy: committed as `4c4bffa` (96 files) and pushed, then
+  fast-forwarded `main` — the VPS tracks `main`, and `1d2826c..4c4bffa` is a
+  fast-forward, not a force. Production was at **`0008`**, so this deploy applied two
+  migration groups, `0009` and `0010`, the second of which is destructive: a
+  `pg_dump -Fc` was taken and **verified** (PGDMP magic, 14 `TABLE DATA` entries) before
+  anything was pulled, and `0009`'s `DELETE FROM plan_invoices` was checked to be the
+  no-op it claims to be *before* running it (`plan_invoices` held 0 rows) rather than
+  after. Results: schema `0010`, `migrate` exit 0, all app containers healthy, `proxy`
+  not recreated, 14 public tables with `plans` at 3 rows and `accounts` at 1, and the
+  neighbouring POS stack (`deploy-front-1`, `deploy-api-1`, `deploy-db-1`) up 11 days
+  throughout. Acceptance criteria, re-run against production: **AC-1** no S1 open except
+  by decision; **AC-3** all four KHQR routes answer 401 without a credential from the
+  public hostname; **AC-4** the operator actions exist and are admin-gated (covered by
+  `test_admin_actions.py`/`test_admin_overview.py` and the admin image build);
+  **AC-5** the suite and both frontend builds pass and the redeploy is verified. AC-2's
+  merchant journey is proven by the suite rather than by hand in production — see the
+  note below. Full probe output and the deploy record are in
+  `docs/production-readiness.md` §P1-5.
+  <br>**One approved item could not be carried out as written.** The user chose "probes
+  plus one real test payment", described as driving a payment to paid through the dev
+  rail. That premise does not hold in production: `ENABLE_DEV_GATEWAY` is hardcoded
+  `"false"` in `deploy/docker-compose.prod.yml` (deliberately — it is the same flag that
+  arms `/_dev/payments/{id}/pay`), so there is no rail to drive and `/_dev/integration-test`
+  answers 404, confirmed by probe. Reaching *paid* therefore needs a human scanning a real
+  QR with a real wallet, and creating the payment itself needs a `ck_live_` key, which
+  needs a session — i.e. the platform admin's credentials. What was verified instead:
+  every money-path endpoint exists, is routed, and refuses an unauthenticated caller with
+  401 (`/v1/payments`, `/v1/stores`, `/v1/reports/payments.csv`,
+  `/v1/transactions/check-status/…`), and `/pay/{id}` answers 404 for an unknown id while
+  `/v1/billing/plans` answers 200. The end-to-end checkout is covered by the suite. Left
+  for the operator, with the exact commands, rather than performed with credentials that
+  are not this task's to spend.
 
 ### T-36 — Update the readiness doc
-- **Status**: `pending` · **Priority**: S3 · **Depends on**: T-35
+- **Status**: `complete` · **Priority**: S3 · **Depends on**: T-35
 - **Description**: record the closure in `docs/production-readiness.md` — a new
   `P1-5 Launch gap closure` subsection referencing this spec — and leave `P1-4`'s
   lawyer item open with its current status. Do not mark the legal item closed.
 - **Test**: doc review.
+- **Shipped** (2026-09-21): added `### P1-5 Launch gap closure` to
+  `docs/production-readiness.md`, immediately after P1-4 so the two read together. It
+  records the audit being run against the deployed stack rather than the working tree, the
+  50-gap register and where it lives, a table of the six gaps that actually mattered
+  (access, money, legal, portal, console, docs), and the three decisions that closed a gap
+  by *removing* a claim instead of building behind it (the CSV gate deleted, the Bakong
+  ledger group marked unavailable, contact left email-only with the posture stated) — each
+  recorded as a deliberate reduction in scope rather than a silent omission. Then the
+  deploy: commit, the verified `pg_dump`, `0009`'s `DELETE` checked to be a no-op before it
+  ran, `0010`, and the full post-deploy probe list including the POS stack staying up 11
+  days. **P1-4's lawyer item is explicitly left open and said so in the closing paragraph**
+  — the merchant agreement is still a draft and still needs a lawyer; this section records
+  what the code closed and does not touch that item. Also verified while there: the
+  deploy.md §12 caveats still hold (the `curl -f` footnote about an expected 404, and the
+  `/metrics` token gate), so no correction was needed to them.
 
 ---
 
@@ -767,6 +823,12 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 | 6 Docs and copy | T-25…T-34 | 0 | 5 | 5 |
 | 7 Verification | T-35…T-36 | 1 | 0 | 1 |
 
-Waves 2 and 3 are gated on decisions D2 and D1 and cannot start until those are
-answered. Waves 1, 4, 5 and 6 can start immediately; the tasks that depend on D5, D6 and
-D8 assume the low-risk default until told otherwise.
+Waves 2 and 3 were gated on decisions D2 and D1 and could not start until those were
+answered. Waves 1, 4, 5 and 6 could start immediately; the tasks that depended on D5, D6
+and D8 took the low-risk default, and each default is recorded in the task's `Shipped:`
+block so the choice is visible rather than implied.
+
+**Closing state (2026-09-21):** all 36 tasks are `complete`. Production runs `4c4bffa` at
+Alembic `0010`. The one item no code can close — P1-4's lawyer review of the merchant
+agreement — remains open, by design, and is flagged as such in
+`docs/production-readiness.md`.
