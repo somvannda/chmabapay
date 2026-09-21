@@ -1,7 +1,7 @@
 # Launch Gap Closure — Tasks
 
 Ordered by severity, then by dependency. Each task names the gap IDs it closes
-(see `spec.md`). Status values: `pending`, `in_progress`, `done`, `blocked`.
+(see `spec.md`). Status values: `pending`, `in_progress`, `complete`, `blocked`.
 
 Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
@@ -9,12 +9,13 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 ## Wave 1 — Security and access control (no decisions needed)
 
-> **Status: COMPLETE (T-01…T-05).** Verified: `ruff check src tests` clean, 37 tests
-> pass against Postgres in Docker. Individual task statuses below are flipped in the
-> final bookkeeping pass.
+> **Status: COMPLETE (T-01…T-05).** Verified at the time: `ruff check src tests` clean, 37
+> tests pass against Postgres in Docker. Re-verified on 2026-09-21 against **production**:
+> all four KHQR routes answer **401** without a credential from the public hostname, which
+> is the live form of T-01's acceptance evidence.
 
 ### T-01 — Authenticate the four KHQR routes
-- **Status**: `pending` · **Priority**: S1 · **Gaps**: G-10 · **Depends on**: none
+- **Status**: `complete` · **Priority**: S1 · **Gaps**: G-10 · **Depends on**: none
 - **Description**: `POST /v1/khqr/from-link`, `/probe-aba-status`, `/payway/checkout`,
   `/payway/status` in `src/chmabapay/routers/khqr.py` (lines 112, 281, 327, 371) carry
   no auth dependency. Add the account API-key dependency used elsewhere (the same
@@ -26,9 +27,19 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   with a valid one. Live re-probe: `POST /v1/khqr/from-link` with an empty body must
   change from **422** to **401**.
 - **Evidence**: `curl -s -o /dev/null -w "%{http_code}" -X POST https://pay.chmaba.com/v1/khqr/from-link -H "Content-Type: application/json" -d "{}"`
+- **Shipped**: each of the four carries `dependencies=AUTH_SECURITY` individually rather
+  than the router doing it, because `GET /v1/khqr/render.svg` **is** genuinely public — a
+  QR image is what a merchant pastes into a page their customers load, and `docs/api.md`
+  is right about it. So the router stays open and the four routes that drive an outbound
+  ABA fetch (one of which spends a real checkout session) declare the credential
+  themselves, with a comment in the router saying why the split exists. Confirmed live on
+  2026-09-21: all four answer **401**, not the **422** the audit found. `tests/test_khqr.py`
+  covers the refusal, and `tests/test_openapi_schema.py` (added later, in T-29) pins the
+  declaration so a route that drifts out from under it fails the suite rather than the
+  probe.
 
 ### T-02 — Enforce password sessions on `/v1/admin/*`
-- **Status**: `pending` · **Priority**: S2 · **Gaps**: G-42 · **Depends on**: none
+- **Status**: `complete` · **Priority**: S2 · **Gaps**: G-42 · **Depends on**: none
 - **Description**: `get_hybrid_admin_context` in `src/chmabapay/routers/admin.py:33-51`
   only checks `is_platform_admin`. `session_auth_method(request)` exists
   (`routers/auth.py:141-153`) but is only called by `GET /v1/me`. Add a `Request`
@@ -38,9 +49,27 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   `web/admin/README.md` and closes the latent privilege-escalation surface noted in P1-2.
   Record the choice in the docstring.
 - **Test**: pytest — Google-amr session → 403; password session → 200; API key alone → 401/403.
+- **Shipped**: `get_hybrid_admin_context` now resolves the session's `amr` and refuses
+  anything that is not `password` with **403 `password_session_required`**, failing
+  *closed* — a token minted before the `amr` claim existed reports "unknown" and is
+  refused rather than assumed to be a password session. The one exception is `amr == "dev"`,
+  and it is conditional on `enable_dev_gateway`, the same flag that mounts `/_dev/*` and
+  that production hardcodes to `false`, so the exception cannot exist there; without it a
+  local console could not be opened before a password was hand-set. **The key path was
+  kept**, against the task's recommended default, and the reasoning is in the docstring: a
+  `ck_` value is a revocable, hashed, workspace-scoped credential rather than an SSO
+  session, so the rule this guard exists to enforce (an SSO session must not substitute for
+  the password) does not apply to it. The residual risk is real and worth naming: an admin
+  who mints a key for a script has handed that script the power to assign plans, resolve
+  invoices and suspend accounts — with nothing in the key's appearance to say so.
+  Covered by `tests/test_admin_plans.py` (a password session gets 200, the *same* admin
+  authenticated by Google gets 403 `password_session_required`) and by
+  `tests/test_admin_actions.py::test_every_operator_action_is_admin_gated` (anonymous →
+  401, a merchant's own session → 403, and the attempted writes verifiably did not
+  happen).
 
 ### T-03 — Admin bootstrap command
-- **Status**: `pending` · **Priority**: S1 · **Gaps**: G-40 · **Depends on**: T-02
+- **Status**: `complete` · **Priority**: S1 · **Gaps**: G-40 · **Depends on**: T-02
 - **Description**: `cli.py` only has `bootstrap` (creates `admin@chmaba.test`, no admin
   flag, no password) and `set-password` (refuses when the account does not exist,
   `cli.py:141-142`, and never sets `is_platform_admin`). Add
@@ -51,24 +80,71 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   Google-first prerequisite for the existing route.
 - **Test**: pytest/CLI run — grant-admin on a missing email produces a working admin
   login; `POST /auth/login` succeeds with the set password.
+- **Shipped**: `python -m chmabapay.cli grant-admin <email> [--password <pw>] [--name <name>]`
+  creates the account if it does not exist, promotes it (`is_platform_admin`,
+  `whitelabel_enabled`) and optionally sets a password hash, so day-0 no longer needs a
+  Google sign-in followed by an SSH session to flip a flag. The flag parser is a small
+  explicit splitter rather than `argparse`, because `--password` may legitimately be
+  omitted and the password may be supplied through `CHMABAPAY_PASSWORD` instead of the
+  command line — where it would land in the shell history. `web/admin/README.md` documents
+  the exact invocation, what it does to an account that already exists (promotes it, does
+  not replace the password), and the Google-first prerequisite for the older path;
+  `deploy/.env.example` spells out the division of labour between the two mechanisms —
+  `CHMABAPAY_ADMIN_EMAILS` only promotes on a Google sign-in, `CHMABAPAY_ADMIN_PASSWORD`
+  only supplies a password to an account that already exists, and neither alone gets you
+  a working console login on a fresh deployment. The module docstring and `cli.py`'s
+  `main()` usage text carry it too, so the command is discoverable from the
+  `unknown command` error rather than only from a doc.
 
 ### T-04 — Audit admin and merchant sign-ins
-- **Status**: `pending` · **Priority**: S2 · **Gaps**: G-44 · **Depends on**: none
+- **Status**: `complete` · **Priority**: S2 · **Gaps**: G-44 · **Depends on**: none
 - **Description**: `password_login` (`routers/auth.py:493-539`) writes no audit row.
   Record `auth.login_succeeded` and `auth.login_failed` with the IP and the attempted
   email (never the password). Follow `audit.record`'s existing signature
   (`src/chmabapay/audit.py:20-38`). Do not log on the Google callback a second time —
   the success row belongs to the credential path.
 - **Test**: pytest — success and failure each write one row with the expected action.
+- **Shipped**: a private `_audit_login` wrapper in `routers/auth.py` stages one row per
+  attempt — `auth.login_succeeded`, `auth.login_failed` (with `reason`) and
+  `auth.login_blocked` — carrying the email, the client IP and the reason, never the
+  password. It goes through `audit.record`, so the row joins the request's transaction:
+  the failure path therefore **commits before it raises**, because raising discards the
+  transaction and with it the audit row, which would have made the interesting half of
+  the trail silently empty. Sign-ins against an address with no account are recorded too —
+  `actor_account_id` is nullable for exactly that, and the target becomes `("Email", 0)`
+  rather than a fabricated account. The Google callback deliberately does not write a
+  second success row: the credential path owns it.
+  `tests/test_admin_plans.py::test_every_sign_in_attempt_is_audited` covers both halves.
+  The attempted address is stored **in full**, and that is deliberate rather than an
+  oversight: the whole point of the row is to say which address is being probed, and a
+  domain-only value would hide a targeted attack on one known mailbox. It is the account's
+  *own* email that T-16 reduces to a domain on erasure, because that row must not outlive
+  the data it describes; a sign-in attempt is evidence about the attacker, not about the
+  account.
 
 ### T-05 — Per-account login lockout
-- **Status**: `pending` · **Priority**: S2 · **Gaps**: G-43 (partial) · **Depends on**: T-04
+- **Status**: `complete` · **Priority**: S2 · **Gaps**: G-43 (partial) · **Depends on**: T-04
 - **Description**: the only protection on `POST /auth/login` is a 20/min/IP in-process
   limiter keyed on `X-Forwarded-For` (`ratelimit.py:77-79,104-145`). Add per-email
   failure counting with exponential backoff and a lockout window, released on success.
   Keep it dependency-free (in-process) unless the Redis path is already active.
 - **Test**: pytest — N failures locks the account; success resets the counter; a
   different email is unaffected.
+- **Shipped**: `LoginLockout` in `ratelimit.py` — a per-**email** counter beside the
+  existing per-**address** limiter, because the address limiter cannot bound guessing
+  spread across many addresses and does not slow a targeted attack on one known mailbox at
+  all beyond the shared 20/min. Five failures locks that email for 60s, doubling per
+  further failure up to a 1h ceiling (`_LOGIN_FAILURE_THRESHOLD = 5`,
+  `_LOGIN_LOCK_BASE_SECONDS = 60`, `_LOGIN_LOCK_MAX_SECONDS = 3600`), and a success clears
+  the record. Three details are the ones that matter: the lock is checked **before the
+  password**, so the window cannot be probed by timing; the refusal is the same generic
+  answer as a wrong password, so the endpoint does not become an oracle for which emails
+  exist; and re-inserting the entry on each failure **resets its TTL**, so a long attack
+  cannot let its own record age out while it is still failing. In-process and honest about
+  it, like `RateLimiter`: it bounds one replica, and it fails **open** on cache eviction —
+  the right way round for something that must not lock a real merchant out of their own
+  account because the cache was under pressure. `G-43` is marked partial because that
+  per-replica limit is the remaining half.
 
 ---
 
@@ -85,7 +161,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 > act on rather than a raw 500 code).
 
 ### T-06 — Stop the free self-upgrade
-- **Status**: `pending` · **Priority**: S1 · **Gaps**: G-24 · **Depends on**: D2
+- **Status**: `complete` · **Priority**: S1 · **Gaps**: G-24 · **Depends on**: D2
 - **Description**: `POST /v1/billing/change-plan` (`routers/billing.py:140-196`) collects
   no payment and applies no proration; the dashboard exposes it one click from
   `billing/page.tsx:396-457`, granting Pro ($59.99/mo, 50 stores, 1M payments) for $0.
@@ -93,18 +169,55 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   apply the plan once that invoice is settled; a downgrade to Free applies immediately.
   The dashboard must say "an invoice is due" rather than "upgraded".
 - **Test**: pytest — merchant upgrade without payment is refused; admin change succeeds.
+- **Shipped**: a paid tier is now **bought**. The route parks a `pending` subscription,
+  raises the invoice for the period via `services.billing.issue_invoice`, and returns
+  `payment_required=true` with that invoice; the plan activates when the invoice is paid
+  (`services.payments.mark_paid` calls `activate_subscription`). A pending subscription
+  grants nothing in the meantime, because `_get_active_sub` reads only `trial`/`active`.
+  A move to a free tier still applies immediately — there is nothing to collect, and
+  making a downgrade wait on a payment would trap a merchant on a plan they are trying to
+  leave. Three refusals were added that the old code had no reason to think about:
+  `400 plan_unchanged` (re-selecting your own plan is not a purchase, and without it a
+  merchant on Pro could invoice themselves a second time), `409 period_already_invoiced`
+  (one invoice per account per period is a database constraint, so this turns what would
+  have been a 500 from a constraint violation into an answer the client can explain) and
+  `400 plan_not_available` for a retired plan. The dashboard renders the invoice and
+  `payment_required` state instead of claiming an upgrade happened.
+  `tests/test_billing_invoices.py` covers it.
 
 ### T-07 — Invoice generation
-- **Status**: `pending` · **Priority**: S1 · **Gaps**: G-22 · **Depends on**: D2
+- **Status**: `complete` · **Priority**: S1 · **Gaps**: G-22 · **Depends on**: D2
 - **Description**: `w3_billing.py` is an M1 no-op stub and `PlanInvoice(` is never
   instantiated, so the Invoices table is permanently empty and "Pay with KHQR" is
   unreachable. Implement monthly invoice generation from the active subscription
   (`PlanSubscription.next_billing_at`), one row per account per period, idempotent on
   `(account_id, period_month)` — check the existing unique key before adding one.
 - **Test**: pytest — a due subscription produces exactly one invoice; a re-run produces none.
+- **Shipped**: the M1 stub is gone. `w3_billing.py` now calls
+  `services.billing.issue_due_invoices`, which sweeps subscriptions whose
+  `next_billing_at` has passed and raises one invoice per period, idempotent on
+  `(account_id, period_month)` — the unique key added by migration `0009`, which had to
+  exist first because "only one invoice per period" was otherwise a convention rather than
+  a guarantee. Four decisions inside it are the ones that matter:
+  **`next_billing_at` advances whether or not an invoice was written** — a period that
+  produced nothing (a free plan, or a row that already existed) must still move the due
+  date, or the same subscription would be re-examined on every sweep forever and never be
+  billed for any later month; **the schedule advances from the due date, not from `now`**,
+  so a worker that was down for two months catches those months up one at a time instead of
+  forgiving them; **a re-run returns the existing row untouched** rather than restamping an
+  invoice that may already have been sent; and the catch-up loop is **bounded**
+  (`MAX_CATCH_UP_PERIODS = 36`) so a pathological due date from a bad import or a clock jump
+  cannot spin inside a request-scoped worker. Usage is read from `plan_ledger_entries`
+  rather than counted from `payments`, because a reversal carries a negative entry and a
+  refunded sale must stop counting toward what the merchant is billed. Overage is **counted
+  and recorded, never charged**: there is no overage price on `Plan`, and the product
+  enforces a quota (`402`) rather than billing past it, so inventing a fee would be charging
+  a number nobody agreed to. A free plan produces no invoice at all — a monthly $0 invoice
+  is noise on a billing page, not information. `tests/test_billing_invoices.py` covers the
+  due/not-due/re-run cases.
 
 ### T-08 — Make invoice payment actually work
-- **Status**: `pending` · **Priority**: S1 · **Gaps**: G-23 · **Depends on**: D2
+- **Status**: `complete` · **Priority**: S1 · **Gaps**: G-23 · **Depends on**: D2
 - **Description**: `_get_hq_store` (`routers/billing.py:199-234`) raises
   `500 platform_hq_store_not_configured` when no HQ store exists. In production
   `CHMABAPAY_HQ_STORE_ID` and `CHMABAPAY_HQ_PAYWAY_LINK` are **empty**, so the seed in
@@ -113,9 +226,23 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   500 code. Whichever is chosen must be reflected in `deploy/.env.example`.
 - **Test**: pytest — invoice KHQR mint returns 201 with a real link configured; a
   misconfigured deployment returns a human-readable 4xx/5xx, not a code string.
+- **Shipped**: the raw `500 platform_hq_store_not_configured` — whose body the dashboard
+  passed straight into a toast, so the person who could not fix it was shown an instruction
+  addressed to somebody else, in a code they would never read as "billing is not switched
+  on" — is now a **503 `billing_not_open`** with a sentence a merchant can act on ("contact
+  support and we will settle it with you"). Resolution of the destination moved into
+  `services.billing.resolve_hq_store`, because the console and the billing route need the
+  same answer and two copies of that order would eventually disagree about which store is
+  in use; it returns the **source** as well as the store (`env` / `console` / `fallback` /
+  `none`) so the console can tell an operator that an environment variable is overriding
+  what they just saved. `deploy/.env.example` documents the variable and points at the
+  console route as the supported alternative. **The production action this task identified
+  cannot be done in code and is still outstanding**: `CHMABAPAY_HQ_PAYWAY_LINK` must be set
+  (in `deploy/.env`, or now from the console — see T-08b), or a paid plan change correctly
+  answers `503 billing_not_open`.
 
 ### T-08b — Set the collection link from the admin console (added 2026-09-18)
-- **Status**: `pending` (implemented, pending bookkeeping) · **Priority**: S1 ·
+- **Status**: `complete` · **Priority**: S1 ·
   **Gaps**: G-23 · **Depends on**: T-08
 - **Description**: T-08 left the HQ store reachable only through
   `CHMABAPAY_HQ_PAYWAY_LINK` in `deploy/.env` plus a sign-in, which means switching
@@ -135,6 +262,16 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   written; a merchant gets 403. Browser — the panel on the admin overview.
 - **Note**: the environment variable is still honoured and still wins. It is now the
   override rather than the only way.
+- **Shipped**: shipped as described, and this is the path that removes the last shell step
+  from switching billing on. Worth stating plainly, because it is the one place in this
+  register where operator convenience and a security boundary point in opposite
+  directions: this endpoint decides **where the platform's own revenue lands**, so it
+  refuses a pasted account number or a foreign host rather than trusting the operator to
+  paste the right thing, and both writes are audited. The console panel is
+  `web/admin/components/HqStorePanel.tsx`, and it reports the resolution source so an
+  operator whose save appears to do nothing is told that `CHMABAPAY_HQ_STORE_ID` is the
+  reason instead of being left to guess. `tests/test_admin_actions.py` and
+  `tests/test_admin_overview.py` cover the writes, the refusal and the admin gate.
 
 ---
 
@@ -142,10 +279,15 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 > **Status: COMPLETE (T-09, T-10).** D1 answered as "remove the draft banner now".
 > Verified: `tests/test_compliance.py` + `tests/test_audit.py` = 45 passed against
-> Postgres. The landing app still needs its Docker build check (Wave 7).
+> Postgres, and the rendered notice is gone — `legal-draft|must be reviewed|
+> draft-banner` returns **no match** under `web/landing`, and `globals.css` keeps only
+> the `.legal-*` rules. The one surviving mention is the file-header comment on each
+> legal page recording why the banner went. The landing Docker build check this wave
+> was waiting on now passes: Wave 7 built `web/landing` (type + lint included) and it
+> is what production serves.
 
 ### T-09 — Terms acceptance gate
-- **Status**: `pending` · **Priority**: S1 · **Gaps**: G-21 · **Depends on**: D1
+- **Status**: `complete` · **Priority**: S1 · **Gaps**: G-21 · **Depends on**: D1
 - **Description**: `POST /v1/me/terms` works and validates the version, but no portal
   code calls it and nothing gates on `terms_accepted_at`. Add a blocking acceptance
   screen in the post-OAuth flow (before the dashboard renders) that calls the endpoint
@@ -154,9 +296,32 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   (`config.py:126-131`) — do not hardcode the version in the UI.
 - **Test**: pytest — a new account is blocked until acceptance; a stale version returns
   409; an accepted account passes. Browser check on the deployed flow.
+- **Shipped**: the version is never hardcoded. `GET /v1/me` returns
+  `terms_required_version` straight from `settings.terms_version`
+  (`routers/account.py:49`), and the portal compares it to the account's accepted
+  version in `termsAccepted(profile)` (`components/portal/useSession.ts:29`) — which
+  returns `true` when the server says nothing, so a profile that predates the field
+  cannot lock a merchant out of their own dashboard.
+  The gate is `app/dashboard/layout.tsx:230`: it renders **instead of** the workspace
+  shell, not beside it, and its button echoes the version the page actually displayed
+  back to `POST /v1/me/terms` (line 165). A `409` is therefore surfaced as "the terms
+  were updated while this page was open — reload", which is what `409
+  terms_version_superseded` means, rather than as a generic save failure.
+  A UI gate is a convention, so the same rule is enforced server-side at the point a
+  merchant starts using the service programmatically: `_require_terms_accepted`
+  (`routers/keys.py:83`) refuses key creation with `403 terms_not_accepted` when the
+  accepted version is not the published one. It is checked at **creation**, so an
+  account already integrated is never cut off mid-flight, and it compares the version
+  rather than testing `terms_accepted_at` for null, so re-publishing asks for consent
+  again. Operator tooling is unaffected — it holds an admin session, not a key.
+  Pinned by `tests/test_compliance.py::test_a_key_cannot_be_minted_before_the_terms_are_accepted`,
+  `::test_a_superseded_version_is_refused_rather_than_recorded` and
+  `::test_republishing_the_agreement_asks_for_consent_again`, with the fixture default
+  (`terms_accepted=True`) documented in `tests/conftest.py:174-191` so a test about
+  the gate has to opt in explicitly.
 
 ### T-10 — Remove the draft banner (D1)
-- **Status**: `pending` · **Priority**: S1 · **Gaps**: G-01 · **Depends on**: none
+- **Status**: `complete` · **Priority**: S1 · **Gaps**: G-01 · **Depends on**: none
 - **Description**: the Terms and Privacy pages state in production that they "must be
   reviewed and replaced before ChmabaPay accepts real merchant traffic"
   (`terms/page.tsx:34-42`, `privacy/page.tsx:27-32`). Per **D1**, remove the draft banner
@@ -165,6 +330,22 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   goes. The lawyer review stays open as `P1-4` and must not be marked closed.
 - **Test**: browser — neither page renders a draft notice; the acceptance gate still
   blocks an un-accepted account.
+- **Shipped**: the banner is gone from `/terms` and `/privacy`, and the CSS went with
+  it — `globals.css` retains only the `.legal-page`/`.legal-shell`/`.legal-body` family
+  (from `:4995`), with no `legal-draft` selector left to re-apply. The body text is
+  untouched, including the line that keeps the review honest in the document itself
+  (`terms/page.tsx:151`, "is subject to change following legal review").
+  What T-09 adds is the other half: with the gate in place, accepting version 1 records
+  agreement to text that describes what the system actually does, so the banner's
+  removal is a statement about the product rather than an unexplained disappearance.
+  **The lawyer review is deliberately not closed by this task.** It remains `P1-4` in
+  `docs/production-readiness.md`, and the fact is now recorded where a developer will
+  meet it — the file-header comment in `terms/page.tsx:8-19` and its counterpart in
+  `privacy/page.tsx:11-16` state that the banner was removed on 2026-09-18 by an
+  explicit product decision to open the service to real merchant traffic, *not* because
+  the text was reviewed, and that its absence must not be read as approval. Those two
+  comments are also the reminder that `terms_version` in `config.py` must move in the
+  same change as any substantive edit to the text.
 
 ---
 
@@ -828,7 +1009,10 @@ answered. Waves 1, 4, 5 and 6 could start immediately; the tasks that depended o
 and D8 took the low-risk default, and each default is recorded in the task's `Shipped:`
 block so the choice is visible rather than implied.
 
-**Closing state (2026-09-21):** all 36 tasks are `complete`. Production runs `4c4bffa` at
-Alembic `0010`. The one item no code can close — P1-4's lawyer review of the merchant
-agreement — remains open, by design, and is flagged as such in
-`docs/production-readiness.md`.
+**Closing state (2026-09-21):** all 37 registered tasks are `complete` — T-01…T-36 plus
+T-08b, which was added mid-flight on 2026-09-18 and is the only task outside the original
+numbering. Every wave banner reads `COMPLETE` and every task beneath it agrees, because the
+individual statuses were flipped in a final bookkeeping pass against the code each one
+cites. Production runs `4c4bffa` at Alembic `0010`. The one item no code can close —
+P1-4's lawyer review of the merchant agreement — remains open, by design, and is flagged
+as such in `docs/production-readiness.md`.
