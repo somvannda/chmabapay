@@ -1163,6 +1163,21 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 >    with the operator's real values, not before.
 > 3. **The HQ PayWay link** (Wave 2's operator action). Without it a paid plan change
 >    correctly answers `503 billing_not_open`.
+> 4. **Console access.** Found while answering "what is the admin username and password?":
+>    there was **no platform-admin account at all**, so `admin-pay.chmaba.com` could not be
+>    opened by anyone, and the whole of T-44/T-45 plus the HQ-store panel was unreachable
+>    in production. The second audit missed it because the console was audited from source
+>    without credentials and "the console is password-only" was verified as a *code* claim,
+>    never as "an operator can actually get in". Fixed on 2026-09-21 by
+>    `uv run python -m chmabapay.cli grant-admin duke@chmaba.com --name Duke` on the VPS
+>    (`CHMABAPAY_PASSWORD` supplied through `docker compose run -e` so it never entered
+>    shell history), which created account id=2 with `is_platform_admin`, white-label and a
+>    free subscription, then verified end to end: `POST /auth/login` returns 200 with
+>    `is_platform_admin: true`, the session JWT carries `amr: "password"`, and
+>    `GET /v1/admin/overview` answers **200** with that cookie and **401** without it.
+>    `CHMABAPAY_ADMIN_EMAILS` is `duke@chmaba.com`, so the env and the account now agree;
+>    `CHMABAPAY_ADMIN_PASSWORD` is deliberately left empty, and the account's password
+>    lives only as a hash.
 > Everything else the second audit found is closed here. That is what makes this the last
 > wave before the launch announcement.
 

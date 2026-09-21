@@ -1158,6 +1158,28 @@ POS stack was up 11–12 days throughout. In the repository: `ruff check` clean 
 passed, 2 deselected** against Postgres, with landing and admin built in Docker with
 their type and lint checks.
 
+**The finding the method itself could not see.** The audit's stated limitation — the
+portal and console were read as source, not rendered, because no credentials were used —
+had a consequence worth recording: the review confirmed that the console is
+*password-only* as a property of the code, and never asked whether an operator could
+actually get in. It could not. Asked plainly, "what is the admin username and password?",
+the answer was that **no platform-admin account existed**: `CHMABAPAY_ADMIN_EMAILS` named
+`duke@chmaba.com` but no account row for it existed, `CHMABAPAY_ADMIN_PASSWORD` was empty,
+the only account in the database was a non-admin merchant with no password, and the audit
+log held zero sign-ins. `admin-pay.chmaba.com` was therefore unopenable by anyone, which
+made all of T-44 and T-45 and the HQ-store panel unreachable in production.
+
+Closed the same day with `uv run python -m chmabapay.cli grant-admin duke@chmaba.com
+--name Duke` on the VPS, the password supplied through `CHMABAPAY_PASSWORD` on
+`docker compose run -e` so it never entered the shell history or the process list of an
+interactive shell. That created account id=2 with `is_platform_admin`, white-label and a
+free subscription (the console's own account needs a billing row, because the HQ store
+that self-pay charges against lives on it). Verified end to end rather than assumed:
+`POST /auth/login` returns 200 with `is_platform_admin: true`, the session JWT carries
+`amr: "password"` — the exact claim the admin gate inspects — and `GET
+/v1/admin/overview` answers **200** with that cookie and **401** without it. The env
+bootstrap password is deliberately left empty; the credential exists only as a hash.
+
 **Still open, and not closeable here.** Three items, each stated rather than implied:
 
 1. **P1-4's lawyer review.** T-43 removed the last code-visible trace of the draft state
