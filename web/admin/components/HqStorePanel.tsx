@@ -275,7 +275,11 @@ export function HqStorePanel() {
                   onClick={() => void applySave()}
                   disabled={saving}
                 >
-                  {saving ? "Saving…" : "Save link"}
+                  {/* Not "Save link": the form button above carries that label, and
+                      an operator who clicked it and stopped at this dialog — reading
+                      the reason field as a required prompt — left without saving
+                      anything. This is the button that writes, so it says so. */}
+                  {saving ? "Saving…" : "Confirm and save"}
                 </button>
               </div>
             </div>

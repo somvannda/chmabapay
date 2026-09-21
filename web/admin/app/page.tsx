@@ -226,21 +226,6 @@ export default function AdminOverviewPage() {
         </>
       )}
 
-      {/* The control itself now lives on /settings, where the nav points at it. This
-          pointer stays rather than disappearing: the first operator to go looking for
-          the PayWay link landed on the overview and found nothing, so the page people
-          arrive on has to name where it went. */}
-      <div className="dash-panel">
-        <h2 className="dash-panel-title">Plan fee collection</h2>
-        <p className="dash-hint">
-          The ABA PayWay link that ChmabaPay&apos;s own plan-fee invoices are raised
-          against is configured in Settings. Setting it there also creates the
-          platform&apos;s own store if one does not exist yet.
-        </p>
-        <Link className="dash-btn dash-btn-primary dash-btn-sm" href="/settings">
-          Open settings
-        </Link>
-      </div>
     </>
   );
 }
