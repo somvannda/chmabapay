@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { HqStorePanel } from "@/components/HqStorePanel";
 import { readApiError } from "@/lib/apiError";
 import { apiFetch } from "@/lib/apiFetch";
 
@@ -227,9 +226,21 @@ export default function AdminOverviewPage() {
         </>
       )}
 
-      {/* Outside the metrics branch on purpose: the store the platform collects into
-          is setup, not a statistic, and a failed metric load must not hide it. */}
-      <HqStorePanel />
+      {/* The control itself now lives on /settings, where the nav points at it. This
+          pointer stays rather than disappearing: the first operator to go looking for
+          the PayWay link landed on the overview and found nothing, so the page people
+          arrive on has to name where it went. */}
+      <div className="dash-panel">
+        <h2 className="dash-panel-title">Plan fee collection</h2>
+        <p className="dash-hint">
+          The ABA PayWay link that ChmabaPay&apos;s own plan-fee invoices are raised
+          against is configured in Settings. Setting it there also creates the
+          platform&apos;s own store if one does not exist yet.
+        </p>
+        <Link className="dash-btn dash-btn-primary dash-btn-sm" href="/settings">
+          Open settings
+        </Link>
+      </div>
     </>
   );
 }

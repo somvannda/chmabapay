@@ -69,6 +69,12 @@ const I = {
       <path d="m9 12 2 2 4-4" />
     </>
   ),
+  settings: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.7 8.9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+    </>
+  ),
 } as const;
 
 const NAV_GROUP: { label: string; items: NavItem[] } = {
@@ -86,6 +92,7 @@ const NAV_GROUP: { label: string; items: NavItem[] } = {
     { key: "plans", href: "/plans", label: "Plans", icon: I.plans },
     { key: "invoices", href: "/invoices", label: "Invoices", icon: I.invoices },
     { key: "audit", href: "/audit", label: "Audit trail", icon: I.audit },
+    { key: "settings", href: "/settings", label: "Settings", icon: I.settings },
   ],
 };
 
@@ -97,6 +104,7 @@ const SECTION_LABELS: Record<string, string> = {
   plans: "Plans",
   invoices: "Invoices",
   audit: "Audit trail",
+  settings: "Settings",
 };
 
 export function activeNavFromPath(pathname: string): string {

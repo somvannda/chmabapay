@@ -58,7 +58,8 @@ only" gate. `grant-admin` sets `is_platform_admin` directly; listing an address 
 | Route | What it does |
 |-------|--------------|
 | `/login` | Email + password sign-in. The only way into the console |
-| `/` | Platform totals: accounts, stores (total + active), payments paid (all-time + this month), merchant volume paid today, platform revenue (today + this month), MRR. Below the stats, **Plan fee collection** — where ChmabaPay's own subscription fees are received, with the ABA PayWay link editable in place |
+| `/` | Platform totals: accounts, stores (total + active), payments paid (all-time + this month), merchant volume paid today, platform revenue (today + this month), MRR. Below the stats, a pointer to **Settings**, because the one control that switches billing on is not a statistic |
+| `/settings` | Platform configuration. **Plan fee collection** — the ABA PayWay link ChmabaPay's own subscription invoices are raised against. Saving it creates the platform's own store if none exists and marks that store internal, so it is never metered as a merchant tenant |
 | `/accounts` | Every account with plan, subscription status, store/payment counts. Search by email or name; 25 per page |
 | `/accounts/[account_id]` | One account: plan & usage, profile, stores, last 24 invoices. The Profile panel's Whitelabel row toggles the white-label checkout entitlement. The Payments count links to `/payments?account_id=` |
 | `/payments` | Every payment on the platform, newest first, with the account and store that took it. Search by payment id or the merchant's reference, filter by status or account. The "Settled" column carries the reconciliation story — paid, refunded, or the point at which we stopped watching |
