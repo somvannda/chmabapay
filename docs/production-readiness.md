@@ -1180,6 +1180,26 @@ that self-pay charges against lives on it). Verified end to end rather than assu
 /v1/admin/overview` answers **200** with that cookie and **401** without it. The env
 bootstrap password is deliberately left empty; the credential exists only as a hash.
 
+**The platform was its own tenant, and metered itself.** The most consequential finding
+came from a product question rather than a probe: "should we subscribe ourselves to our
+own plan?" Checking, the platform already was — and worse. `check_plan_quota` had no
+exemption and counted every paid payment on the account's stores, so plan fees paid *by
+merchants* counted against the platform's own monthly quota; `_record_plan_ledger_entry`
+is called with the paying store's owning account, so every fee wrote a usage and volume
+row against the platform's own account; and the console's merchant volume summed paid
+payments platform-wide, so platform revenue would have been reported as platform GMV from
+the first paying customer. The books would have been wrong from customer #1.
+
+Closed in T-47 by modelling the platform as a separate kind rather than a discount: a
+store belonging to the platform is an **internal store** (`stores.is_internal`, migration
+`0011`), a first-class category instead of an identity check inside the money path. Quota
+enforcement, the usage ledger, month counting and merchant volume all skip an internal
+store; the console reports **platform revenue** as its own figure instead of adding it to
+merchant GMV; setting the HQ collection link marks the store internal, and an operator can
+toggle the flag explicitly through an audited admin route. Verified: 278 tests pass, the
+migration applied, downgraded and re-applied with `alembic check` reporting no drift, and
+the production deploy proved the row counts unchanged across it.
+
 **Still open, and not closeable here.** Three items, each stated rather than implied:
 
 1. **P1-4's lawyer review.** T-43 removed the last code-visible trace of the draft state

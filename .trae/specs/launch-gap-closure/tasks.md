@@ -1004,15 +1004,19 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 > claim about them is code-verified, not browser-verified, and the two items that need a
 > human are named in the Launch gate below.
 >
-> **Progress: 9 of 10 closed and deployed.** T-37…T-42 and T-44…T-46 are done; the
+> **Progress: 10 of 11 closed and deployed.** T-37…T-42 and T-44…T-47 are done; the
 > evidence is in `docs/production-readiness.md` §P1-6, and the per-task statuses below
 > are flipped in the closing bookkeeping pass, which waits on **T-43's last item (L5)** —
 > the registered entity's name, number and address, which only the operator can supply.
-> Shipped as `f51add1` on 2026-09-21 and verified against production: schema still at
-> Alembic `0010` (no migration in this wave), security headers and `no-store` live
-> through Cloudflare on both hostnames, every public page 200, the money routes still
-> 401 to an anonymous caller, `/v1/admin/overview` 401 and `/_dev` 404, and the
-> neighbouring POS stack untouched at 11–12 days up.
+> Shipped in two deploys on 2026-09-21, both verified against production. `f51add1`
+> carried the first ten tasks and left the schema at Alembic `0010`; `b390ca7` carried
+> T-47 and migrated to `0011` (taking a verified `pg_dump -Fc` first — 51,844 bytes,
+> `PGDMP`, 14 `TABLE DATA` entries — and proving the row counts unchanged at 2 accounts,
+> 0 stores, 0 payments across the migration). After both: every public page 200, the
+> security headers and `no-store` still live through Cloudflare on both hostnames, the
+> money routes still 401 to an anonymous caller, `/v1/admin/overview` 401 and `/_dev` 404,
+> `is_internal` published in the live OpenAPI, and the neighbouring POS stack untouched
+> at 11–12 days up.
 
 ### T-37 — Correct the API docs where they contradict the code
 - **Status**: `pending` · **Priority**: S2 · **Gaps**: D1–D9 · **Depends on**: none
@@ -1185,8 +1189,15 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 > 2. **The registered entity's name, number and address** (L5), which the Terms must
 >    state and which no amount of reading the repository can produce. The clause ships
 >    with the operator's real values, not before.
-> 3. **The HQ PayWay link** (Wave 2's operator action). Without it a paid plan change
->    correctly answers `503 billing_not_open`.
+> 3. **The platform's own collection store and link** (Wave 2's operator action, made
+>    concrete by T-47). Nothing has been collected and nothing *can* be yet: production
+>    has **zero stores**, `CHMABAPAY_HQ_PAYWAY_LINK` is empty, and `resolve_hq_store` has
+>    nothing to return, so a paid plan change correctly answers `503 billing_not_open`.
+>    The order matters — create a store for `duke@chmaba.com` named **`ChmabaPay HQ`**
+>    (the name the resolver looks for), then set the ABA PayWay link in the console's
+>    "Plan fee collection" panel, which also marks that store internal. Setting
+>    `CHMABAPAY_HQ_PAYWAY_LINK` in `deploy/.env` is the alternative if the panel is
+>    unreachable.
 > 4. **Console access.** Found while answering "what is the admin username and password?":
 >    there was **no platform-admin account at all**, so `admin-pay.chmaba.com` could not be
 >    opened by anyone, and the whole of T-44/T-45 plus the HQ-store panel was unreachable
