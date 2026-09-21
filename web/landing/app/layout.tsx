@@ -63,10 +63,11 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: brandColors.surfaceLight,
-  // Emits `<meta name="color-scheme" content="light">`, paired with the same
-  // declaration in globals.css. Both surfaces are light-only; without this a browser
-  // is free to auto-darken them.
-  colorScheme: "light",
+  // Emits `<meta name="color-scheme" content="only light">`, paired with the same
+  // declaration in globals.css. `only light` is the opt-out from Chromium's automatic
+  // dark theme; plain `light` is not enough, and the repaint it permits inverts the
+  // violet brand colour to a green at paint time.
+  colorScheme: "only light",
   width: "device-width",
   initialScale: 1,
 };

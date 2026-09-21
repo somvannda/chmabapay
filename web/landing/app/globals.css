@@ -4,9 +4,11 @@
 
 :root {
   /* Light-only design, same reasoning as the long note in web/admin/app/globals.css:
-     an undeclared page is one the browser may auto-darken, and this design has dark
-     *sections* rather than a dark *scheme*, so that repaint matches nothing. */
-  color-scheme: light;
+     `only light` is the opt-out from Chromium's automatic dark theme, which inverts at
+     paint time and turns the violet #6957f5 into an olive green. Plain `light` declares
+     a scheme but does not stop that pass, and this design has dark *sections* rather
+     than a dark *scheme*, so the repaint matches nothing. */
+  color-scheme: only light;
 
   --font-inter: "Inter", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
