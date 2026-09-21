@@ -1004,10 +1004,10 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 > claim about them is code-verified, not browser-verified, and the two items that need a
 > human are named in the Launch gate below.
 >
-> **Progress: 10 of 11 closed and deployed.** T-37…T-42 and T-44…T-47 are done; the
-> evidence is in `docs/production-readiness.md` §P1-6, and the per-task statuses below
-> are flipped in the closing bookkeeping pass, which waits on **T-43's last item (L5)** —
-> the registered entity's name, number and address, which only the operator can supply.
+> **Progress: 11 of 11 closed and deployed.** The last task, T-43, closed on 2026-09-21
+> once the operator supplied the registered entity's details; its per-task status and the
+> one clause deliberately left to the lawyer are recorded under it. The evidence for the
+> wave is in `docs/production-readiness.md` §P1-6.
 > Shipped in two deploys on 2026-09-21, both verified against production. `f51add1`
 > carried the first ten tasks and left the schema at Alembic `0010`; `b390ca7` carried
 > T-47 and migrated to `0011` (taking a verified `pg_dump -Fc` first — 51,844 bytes,
@@ -1019,7 +1019,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 > at 11–12 days up.
 
 ### T-37 — Correct the API docs where they contradict the code
-- **Status**: `pending` · **Priority**: S2 · **Gaps**: D1–D9 · **Depends on**: none
+- **Status**: `complete` · **Priority**: S2 · **Gaps**: D1–D9 · **Depends on**: none
 - **Description**: the second audit re-ran the docs-vs-code comparison and the first
   wave's fixes did not reach these. `check-status`'s documented `source` enum advertises
   `aba_payway_link_page`, which is **never assigned anywhere**, and omits
@@ -1040,7 +1040,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   as internal. Manual: re-read each corrected claim against the router.
 
 ### T-38 — Make the published OpenAPI match the runtime
-- **Status**: `pending` · **Priority**: S3 · **Gaps**: D10 · **Depends on**: none
+- **Status**: `complete` · **Priority**: S3 · **Gaps**: D10 · **Depends on**: none
 - **Description**: `POST /v1/payments` returns 201 and `POST .../reissue` returns 201 or
   200 depending on whether a code was minted, but neither decorator declares
   `status_code`, so the published schema advertises only 200 and omits reachable 400/404/502.
@@ -1050,7 +1050,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   both operations includes what the handler can actually return.
 
 ### T-39 — Reach a merchant's older payments (pagination)
-- **Status**: `pending` · **Priority**: S2 · **Gaps**: P3 · **Depends on**: none
+- **Status**: `complete` · **Priority**: S2 · **Gaps**: P3 · **Depends on**: none
 - **Description**: `GET /v1/payments` accepts `limit` (default 20, clamped to 100) and no
   offset, and the portal asks for 50. In the first weeks a merchant crosses 50 payments
   and can no longer reach an older one anywhere in the portal — the only workaround is
@@ -1060,7 +1060,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   value; the first page is unchanged for an existing caller.
 
 ### T-40 — Never render "empty" for a failure
-- **Status**: `pending` · **Priority**: S2 · **Gaps**: P1, P4, P5, P6, P7 · **Depends on**: none
+- **Status**: `complete` · **Priority**: S2 · **Gaps**: P1, P4, P5, P6, P7 · **Depends on**: none
 - **Description**: five pages act only on `res.ok`, swallow the error and then assert the
   absence of data: the stores list, the payments list, the store-scoped payments list,
   the webhooks list, and the store overview — which renders a fully zeroed dashboard. A
@@ -1077,7 +1077,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   by reading each page against its fetch, plus the landing Docker build (type + lint).
 
 ### T-41 — Confirm, and guard, the actions that destroy a live credential
-- **Status**: `pending` · **Priority**: S2 · **Gaps**: P2, P9 · **Depends on**: none
+- **Status**: `complete` · **Priority**: S2 · **Gaps**: P2, P9 · **Depends on**: none
 - **Description**: Revoke/Rotate on an API key and Rotate-secret/Delete on a webhook
   endpoint have no confirmation and no in-flight disabled state. One mis-click revokes
   the secret a merchant has already deployed; a double-click on Rotate mints two keys and
@@ -1089,7 +1089,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   double-submitted.
 
 ### T-42 — Security headers, cache policy and per-page metadata
-- **Status**: `pending` · **Priority**: S2 · **Gaps**: L1, L2, L3 · **Depends on**: none
+- **Status**: `complete` · **Priority**: S2 · **Gaps**: L1, L2, L3 · **Depends on**: none
 - **Description**: neither hostname sends `Strict-Transport-Security`,
   `Content-Security-Policy`, `X-Frame-Options`, `X-Content-Type-Options`,
   `Referrer-Policy` or `Permissions-Policy` — verified live. The dashboard and the console
@@ -1105,7 +1105,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   canonical and its own `og:title`; app routes answer `no-store`.
 
 ### T-43 — Remove the last trace of the draft state from the legal text
-- **Status**: `pending` · **Priority**: S2 · **Gaps**: L4, L5, L6, L7, L8 · **Depends on**: operator input for L5
+- **Status**: `complete` · **Priority**: S2 · **Gaps**: L4, L5, L6, L7, L8 · **Depends on**: operator input for L5 — supplied 2026-09-21
 - **Description**: five things in the legal text itself, all found by reading it as
   rendered. (1) Terms §3 still ends "This list is a starting point and is subject to
   change following legal review" — the residue of the draft state whose banner D1 removed;
@@ -1121,9 +1121,22 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 - **Test**: read both pages as rendered; each corrected sentence checked against the code
   it describes. **L5's entity clause ships only with the operator's real details** —
   inventing a registration number is not an option this task has.
+- **Closed 2026-09-21.** L4, L6, L7 and L8 were fixed with the Wave 8 deploy. L5 landed
+  once the operator supplied the entity: the counterparty is **Chmaba**, registered at
+  #62, Street P-10D, Sangkat Veal Sbov, Khan Chmbar Ampov, Phnom Penh, Cambodia, with
+  **no company number** stated — because none was given, and this task does not invent
+  one. The placeholder "ChmabaPay Technologies" (a company that does not exist) is gone
+  from `/terms`, `/privacy`, the merchant-agreement draft, and both footers.
+  `TERMS_VERSION` moved `1` → `2` in the same change, which is the coupling the page
+  comment and `config.py` both warn about: 2 accounts hold a version-1 acceptance and
+  are now asked again.
+- **Deliberately NOT done here:** §8 excludes indirect loss but sets no ceiling. A
+  liability cap is a legal decision, so it stays open in the Launch gate under P1-4
+  rather than being drafted by us. L5 is thereby closed on the *identification* half
+  only, and the register should be read that way.
 
 ### T-44 — Make a disabled store reversible, and stop revenue moving silently
-- **Status**: `pending` · **Priority**: S2 · **Gaps**: A1, A2 · **Depends on**: none
+- **Status**: `complete` · **Priority**: S2 · **Gaps**: A1, A2 · **Depends on**: none
 - **Description**: two admin gaps with teeth. (1) There is no admin enable route: an
   operator can disable a store from the console but only the *merchant* can re-enable it
   (`POST /v1/stores/{id}/enable` is merchant-authed), so disabling during an incident is a
@@ -1136,7 +1149,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   unknown store, and writes one audit row; browser — the link change prompts first.
 
 ### T-45 — Console: distinguish failure from empty, and close the operator dead ends
-- **Status**: `pending` · **Priority**: S3 · **Gaps**: A3–A12 · **Depends on**: T-44
+- **Status**: `complete` · **Priority**: S3 · **Gaps**: A3–A12 · **Depends on**: T-44
 - **Description**: the console's remaining rough edges, all operator-facing. List pages
   render the error banner *and* the "no results" empty state together, so a failed fetch
   reads as "there are none"; detail pages report any non-404 failure as "not found"; the
@@ -1151,7 +1164,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 - **Test**: pytest for the code-side changes; browser for the failure-vs-empty states.
 
 ### T-46 — Verification, release, and the launch gate
-- **Status**: `pending` · **Priority**: S1 · **Depends on**: T-37…T-45
+- **Status**: `complete` · **Priority**: S1 · **Depends on**: T-37…T-45
 - **Description**: `ruff check`, the full suite against Postgres in Docker, `next build`
   for both apps in Docker, browser checks of the new guards and states, then mirror to the
   VPS and re-probe production. Update `docs/production-readiness.md` with a P1-6 section
@@ -1159,7 +1172,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 - **Test**: the probes, re-run against production.
 
 ### T-47 — Give the platform its own separate context, so it is not its own tenant
-- **Status**: `pending` · **Priority**: S1 · **Gaps**: new (found 2026-09-21, "should we subscribe ourselves to our own plan?") · **Depends on**: T-44
+- **Status**: `complete` · **Priority**: S1 · **Gaps**: new (found 2026-09-21, "should we subscribe ourselves to our own plan?") · **Depends on**: T-44
 - **Description**: asked whether the platform should be on its own plan, the answer
   turned out to be that the code currently makes it a tenant **and meters it**. Verified
   in source: `check_plan_quota` (`services/payments.py:380-410`) has no exemption, and
@@ -1186,9 +1199,12 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 > and each is stated rather than implied:
 > 1. **P1-4 — the lawyer review.** T-43 removes the last code-visible trace of the draft
 >    state; it cannot substitute for the review. Unchanged and still open.
-> 2. **The registered entity's name, number and address** (L5), which the Terms must
->    state and which no amount of reading the repository can produce. The clause ships
->    with the operator's real values, not before.
+> 2. **The liability cap in Terms §8.** The identification half of L5 is closed on
+>    2026-09-21: `/terms` names **Chmaba** and its registered address at #62, Street
+>    P-10D, Sangkat Veal Sbov, Khan Chmbar Ampov, Phnom Penh, Cambodia, and states no
+>    company number because none was supplied. What remains is that §8 excludes indirect
+>    loss but sets no ceiling, and a liability cap is a decision for the lawyer — it goes
+>    to P1-4 rather than being drafted here.
 > 3. **The platform's own collection store and link** (Wave 2's operator action, made
 >    concrete by T-47). Nothing has been collected and nothing *can* be yet: production
 >    has **zero stores**, `CHMABAPAY_HQ_PAYWAY_LINK` is empty, and `resolve_hq_store` has

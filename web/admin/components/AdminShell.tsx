@@ -394,7 +394,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img className="cp-foot-mark" src="/logo.svg" alt="" width={20} height={20} />
               <span className="cp-foot-copy">
-                © 2026 ChmabaPay Technologies — internal console
+                © 2026 Chmaba — internal console
               </span>
             </div>
           </div>

@@ -149,7 +149,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </span>
                 </a>
               </div>
-              <span className="landing-footer-copy">© 2026 ChmabaPay Technologies. Built with love for better days.</span>
+              <span className="landing-footer-copy">© 2026 Chmaba. Built with love for better days.</span>
               <div className="landing-footer-links">
                 <a className="landing-footer-link" href="/#plans">
                   Pricing

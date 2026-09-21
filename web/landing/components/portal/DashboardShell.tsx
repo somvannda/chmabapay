@@ -429,7 +429,7 @@ export function DashboardShell({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img className="cp-foot-mark" src="/logo.svg" alt="" width={20} height={20} />
               <span className="cp-foot-copy">
-                © 2026 ChmabaPay Technologies
+                © 2026 Chmaba
               </span>
             </div>
             <nav className="cp-foot-links" aria-label="Footer">

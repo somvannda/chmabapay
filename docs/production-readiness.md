@@ -1204,10 +1204,17 @@ the production deploy proved the row counts unchanged across it.
 
 1. **P1-4's lawyer review.** T-43 removed the last code-visible trace of the draft state
    from the terms; it cannot substitute for the review. Unchanged.
-2. **The registered entity's name, registration number and registered address.** The
-   Terms identify the counterparty only as "ChmabaPay Technologies", and §8 excludes
-   indirect loss but caps nothing. Both need a lawyer and a company number; neither can
-   be read out of this repository, and inventing either was not an option.
+2. **The registered entity's details — supplied, and now stated.** On 2026-09-21 the
+   operator gave the contracting entity as **Chmaba**, registered at #62, Street P-10D,
+   Sangkat Veal Sbov, Khan Chmbar Ampov, Phnom Penh, Cambodia, and said there is **no
+   company number** to state. `/terms`, `/privacy` and the merchant-agreement draft now
+   name that entity instead of the placeholder "ChmabaPay Technologies", which was not a
+   company at all. `TERMS_VERSION` moved to `2` for the same reason the coupling in
+   `config.py` exists: an account that accepted version 1 agreed to a text that did not
+   identify its counterparty, so it must be asked again rather than have the new text
+   attributed to its old acceptance. **What is still open is the cap:** §8 excludes
+   indirect loss but sets no ceiling, and a liability cap is a decision for the lawyer,
+   not something to be invented here.
 3. **The HQ PayWay link** from P1-5's operator action. Until it is set, a paid plan
    change correctly answers `503 billing_not_open`.
 

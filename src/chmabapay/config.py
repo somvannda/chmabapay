@@ -136,7 +136,12 @@ class Settings(BaseSettings):
     # `terms_accepted_version` can distinguish an account that agreed to the
     # current terms from one that agreed to a superseded draft — re-acceptance is
     # then a query, not a guess.
-    terms_version: str = "1"
+    #
+    # `2` (2026-09-21): the Terms now name the contracting entity and its registered
+    # address. That is the one change in this document that alters *who* the merchant
+    # is contracting with, so an account that accepted version 1 has not agreed to
+    # this text and must be asked again.
+    terms_version: str = "2"
 
     # Retention of raw gateway payloads. `payments.gateway_status_raw` holds the
     # ABA PayWay response verbatim, which includes the hosted-checkout session

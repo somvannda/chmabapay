@@ -53,18 +53,20 @@ export default function PrivacyPage() {
             the software really does rather than what a policy template assumes.
           </p>
           <div className="legal-meta">
-            Version 1 · Last updated 15 September 2026
+            Version 2 · Last updated 21 September 2026
           </div>
 
           <div className="legal-body">
             <section className="legal-section">
               <h2>1. Who we are</h2>
               <p>
-                ChmabaPay Technologies operates a payment status platform for KHQR,
-                Bakong and ABA PayWay. We are not a bank or a payment service
-                provider: money moves directly between the payer and the merchant,
-                and never through us. We therefore hold no balances, and we hold no
-                card, bank account or wallet credentials for you or your customers.
+                Chmaba operates ChmabaPay, a payment status platform for KHQR,
+                Bakong and ABA PayWay. Our registered address is #62, Street P-10D,
+                Sangkat Veal Sbov, Khan Chmbar Ampov, Phnom Penh, Cambodia. We are
+                not a bank or a payment service provider: money moves directly
+                between the payer and the merchant, and never through us. We
+                therefore hold no balances, and we hold no card, bank account or
+                wallet credentials for you or your customers.
               </p>
             </section>
 

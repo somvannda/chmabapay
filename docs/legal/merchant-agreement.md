@@ -27,7 +27,8 @@ explicit that you never hold or move funds."*
 
 ## 1. The relationship
 
-ChmabaPay Technologies ("we") provides software that generates payment codes and
+Chmaba ("we"), registered at #62, Street P-10D, Sangkat Veal Sbov, Khan Chmbar
+Ampov, Phnom Penh, Cambodia, provides software that generates payment codes and
 reports whether they were paid. The merchant ("you") uses it to collect payment
 from your own customers.
 

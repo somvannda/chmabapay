@@ -59,11 +59,12 @@ export default function TermsPage() {
           <h1 className="legal-title">Terms of Service</h1>
           <p className="legal-lede">
             These terms govern your use of ChmabaPay, a payment status platform for
-            KHQR, Bakong and ABA PayWay. They are between you and ChmabaPay
-            Technologies.
+            KHQR, Bakong and ABA PayWay. They are between you and Chmaba, whose
+            registered address is #62, Street P-10D, Sangkat Veal Sbov, Khan Chmbar
+            Ampov, Phnom Penh, Cambodia.
           </p>
           <div className="legal-meta">
-            Version 1 · Last updated 15 September 2026
+            Version 2 · Last updated 21 September 2026
           </div>
 
           <div className="legal-body">
