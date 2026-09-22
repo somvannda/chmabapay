@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { BillingNotice, type BillingNoticePayload } from "./BillingNotice";
 import { ToastProvider } from "./Toast";
 
 /* ------------------------------------------------------------------ *
@@ -185,6 +186,17 @@ export type DashboardShellProps = {
   planLoaded?: boolean;
   onSignOut: () => void;
   signoutLoading?: boolean;
+  /**
+   * The single most urgent billing notice, from `GET /v1/billing/notices`. Fetched by the layout
+   * rather than here, so the shell stays presentational and the notice refreshes on the same
+   * `chmabapay:plan-changed` event that refreshes the plan card.
+   */
+  notice?: BillingNoticePayload | null;
+  /**
+   * The account is on hold for non-payment (`status === "restricted"`). Computing it in the
+   * layout keeps the shell from having to know which account statuses mean what.
+   */
+  readOnly?: boolean;
   children: React.ReactNode;
 };
 
@@ -198,6 +210,8 @@ export function DashboardShell({
   planLoaded = false,
   onSignOut,
   signoutLoading = false,
+  notice = null,
+  readOnly = false,
   children,
 }: DashboardShellProps) {
   const pathname = usePathname() || "/dashboard";
@@ -227,6 +241,10 @@ export function DashboardShell({
     safeLimit > 0 ? Math.min(100, Math.round((used / safeLimit) * 100)) : 0;
   const nearLimit = safeLimit > 0 && used / safeLimit >= 0.8;
   const showUpgrade = planCode.toLowerCase() !== "pro";
+
+  // Billing is the one page that still accepts input while the account is on hold — it is how the
+  // hold is lifted — so it is the one page the read-only treatment is not applied to.
+  const billingIsTheWayOut = pathname.startsWith("/dashboard/billing");
 
   return (
     <div className="cp-app">
@@ -419,8 +437,29 @@ export function DashboardShell({
           </div>
         </header>
 
-        <main className="cp-main">
-          <ToastProvider>{children}</ToastProvider>
+        {/* Above `<main>`, and outside it, for two reasons: it must be on screen on every
+            /dashboard/* page without each page rendering it, and it must stay clickable while the
+            page below is read-only — its action is the way out of that state. */}
+        <BillingNotice notice={notice} />
+
+        <main
+          className={
+            readOnly && !billingIsTheWayOut ? "cp-main cp-main-readonly" : "cp-main"
+          }
+        >
+          {/* The only *native* way to disable a whole subtree at once, and the reason it is worth
+              a wrapper: CSS can stop a mouse click but not a keyboard, and a merchant who tabs
+              into a field and types would meet a 403 instead of a locked form. The class above
+              makes it look locked; this makes it be locked. A disabled `fieldset` disables every
+              form control inside it — inputs, selects, buttons — and leaves links alone, which is
+              what the read-only state wants (the banner's way out is an anchor).
+              `display: block` with the resets below keeps it out of the layout entirely. */}
+          <fieldset
+            className="cp-readonly"
+            disabled={readOnly && !billingIsTheWayOut}
+          >
+            <ToastProvider>{children}</ToastProvider>
+          </fieldset>
         </main>
 
         <footer className="cp-foot">

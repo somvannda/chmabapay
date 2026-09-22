@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import type { BillingNoticePayload } from "@/components/portal/BillingNotice";
 import { DashboardShell } from "@/components/portal/DashboardShell";
 import { termsAccepted, useSession } from "@/components/portal/useSession";
 
@@ -71,6 +72,7 @@ export default function DashboardLayout({
   const [signoutLoading, setSignoutLoading] = useState(false);
   const [acceptingTerms, setAcceptingTerms] = useState(false);
   const [termsError, setTermsError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<BillingNoticePayload | null>(null);
 
   useEffect(() => {
     document.body.classList.add("dash-hide-landing-chrome");
@@ -112,6 +114,24 @@ export default function DashboardLayout({
           const data = await repRes.json().catch(() => ({}));
           const count = data?.summary?.total_matching_paid_count;
           if (alive && typeof count === "number") setUsed(count);
+        }
+      } catch {
+      }
+
+      // The billing notice. Fetched here rather than in the shell, so it rides the same refresh
+      // event as the plan card — a merchant who pays sees the warning clear without a reload.
+      try {
+        const noticeRes = await fetch("/v1/billing/notices", {
+          credentials: "include",
+        });
+        // Silent on failure, like the reads above: a banner is an extra, and blanking the shell
+        // because one optional read failed would be a worse bug than a missing warning. The
+        // billing page still lists every invoice with its own due date.
+        if (noticeRes.ok) {
+          const data = (await noticeRes.json().catch(() => null)) as {
+            notices?: BillingNoticePayload[];
+          } | null;
+          if (alive) setNotice(data?.notices?.[0] ?? null);
         }
       } catch {
       }
@@ -270,6 +290,10 @@ export default function DashboardLayout({
       planLoaded={planLoaded}
       onSignOut={handleSignOut}
       signoutLoading={signoutLoading}
+      notice={notice}
+      // The server's own state, not a guess from the notice: `restricted` is what the API
+      // refuses writes for, and the UI should follow exactly that line.
+      readOnly={profile.status === "restricted"}
     >
       {children}
     </DashboardShell>

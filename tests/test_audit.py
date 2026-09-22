@@ -45,6 +45,9 @@ AUDITED: dict[tuple[str, str], tuple[str, ...]] = {
     ("patch", "/v1/stores/{public_id}"): ("store.updated", "store.link_set"),
     ("post", "/v1/stores/{public_id}/disable"): ("store.disabled",),
     ("post", "/v1/stores/{public_id}/enable"): ("store.enabled",),
+    # Which of a merchant's stores stay live is a change to whether money can be taken, and the
+    # row names both ids because the caller chose one store and the platform suspended another.
+    ("post", "/v1/stores/{public_id}/activate"): ("store.slot_moved",),
 }
 
 # Mutating verbs that change no state, so there is no action to attribute. Both

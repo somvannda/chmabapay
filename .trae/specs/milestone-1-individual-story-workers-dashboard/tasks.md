@@ -6,7 +6,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
 ---
 
 ## Task 1: `src/chmabapay/workers/` package scaffold — QueueTransport ABC + InProcessTransport + Worker base + W3 stub
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `src/chmabapay/workers/__init__.py` exports QueueTransport/InProcessTransport/Worker/Job/JobStatus, `workers/inprocess.py` InProcessTransport.enqueue dedups via TTLCache, and tests/test_queue_redis.py::test_a_duplicate_dedup_key_is_not_enqueued passes (redis.py is now a full RedisTransport and w3_billing.py a real BillingInvoiceWorker, i.e. past the M1 stubs).
 - **Priority**: high
 - **Depends On**: None (Milestone 1.3 — START HERE)
 - **Description**:
@@ -25,7 +26,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
 - **Notes**: M1.3 exact from EDD §15.
 
 ## Task 2: Implement W1 PaymentDetectionWorker + Refactor bakong_verify_loop → process(job)
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `workers/w1_payment_detection.py` PaymentDetectionWorker.process uses asyncio.Semaphore(20) and a 30s/2000-key TTLCache and appends to Payment.attempt_history via _append_attempt, no `bakong_verify_loop` remains in `webhooks.py`, and tests/test_payments.py::test_every_detection_attempt_is_recorded_not_only_the_first covers it.
 - **Priority**: high
 - **Depends On**: T1 (workers scaffold in place)
 - **Description**:
@@ -43,7 +45,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rule` TR-2.4: TTLCache decorator present on fetch_payment_status or wrapper; 2 calls within 10s with same payway URL → 1 HTTP call (not 2). Evidence: mock httpx count test.
 
 ## Task 3: Implement W2 WebhookSenderWorker + Refactor webhook_loop → process(job)
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `workers/w2_webhook_sender.py` WebhookSenderWorker.process signs and retries deliveries using `security.py` sign_payload/verify_signature (hmac.compare_digest) and `webhooks.py` delivery_headers, no `webhook_loop` remains in `webhooks.py`, and tests/test_payments.py asserts verify_signature on the emitted X-ChmabaPay-Signature.
 - **Priority**: high
 - **Depends On**: T1
 - **Description**:
@@ -58,7 +61,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rule` TR-3.3: Retry backoff schedule. 0 failures → next_attempt_at = None (success). 1st fail → +2s. 5th fail → +64s. 10th fail → set status=final FAILED, no more retries. Evidence: pytest assertions on next_attempt_at.
 
 ## Task 4: Implement W4 ExpirySweeperWorker + Refactor expiry_loop
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `workers/w4_expiry_sweeper.py` ExpirySweeperWorker sweeps via services/payments.py expire_due_payments, is enqueued every 60s with the minute-granularity key expiry_heartbeat_dedup_key in `workers/runtime.py` w4_tick, no `expiry_loop` remains, and tests/test_settlement_lifecycle.py asserts the EVENT_EXPIRED row.
 - **Priority**: medium
 - **Depends On**: T1
 - **Description**:
@@ -71,7 +75,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rule` TR-4.2: Insert 3 pending payments with expires in past; run W4 once → 3/3 status=expired. Events rows 3x payment.expired. Evidence: pytest DB test.
 
 ## Task 5: Wire main.py lifespan — Workers with InProcessTransport; Delete 3 raw loop lines
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `src/chmabapay/main.py` lifespan calls `workers/runtime.py` start_workers (no raw asyncio.create_task loop lines remain) and trace_header_middleware sets X-ChmabaPay-Trace; tests/test_observability.py::test_a_request_binds_its_trace_id_for_the_logs_inside_it asserts the header.
 - **Priority**: high
 - **Depends On**: T1 (scaffold), T2 (W1), T3 (W2), T4 (W4)
 - **Description**:
@@ -85,7 +90,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rule` TR-5.2: `GET /health` → response header "X-ChmabaPay-Trace" present with valid UUID4 regex (8-4-4-4-12 hex). Evidence: curl output.
 
 ## Task 6: DB Schema — Account new cols + 5 new tables (Plan 4 models + AuditLog) + migrate/create_all + seed_default_plans
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: The 5 tables Plan/PlanSubscription/PlanInvoice/PlanLedgerEntry/AuditLog and Payment.attempt_history still exist in `models.py`, but the Account account_type/KYC/saas cols were removed (alembic/versions/0008_drop_account_type.py, supabase/migrations/6-drop-kyc.sql, 4-merge-sub-merchants-into-stores.sql) and the 4-plan matrix was replaced by free/starter/pro in `db.py` seed_default_plans (supabase/migrations/7-retire-dead-plan-and-store-config.sql), with create_all replaced by `db.py` ensure_schema + alembic.
 - **Priority**: high
 - **Depends On**: None (schema independent; can run parallel to T1 if team >1; alone run after T1-T5 since workers scale first per EDD)
 - **Description**:
@@ -102,7 +108,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rule` TR-6.3: New account signup → PlanSubscription row created for plan_code=starter status=trial. Evidence: pytest auth.signup → subscription row.
 
 ## Task 7: mark_paid atomic counter + KYC gate enforcement + Plan gates
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: `services/payments.py` mark_paid records usage via _record_plan_ledger_entry (idempotent INSERT ... ON CONFLICT DO NOTHING, not the described atomic UPDATE) and `routers/stores.py` _enforce_max_stores caps stores by plan, but the KYC soft/hard gates and the Individual account-scope-key rejection no longer exist (supabase/migrations/6-drop-kyc.sql; account_type dropped by alembic/versions/0008_drop_account_type.py, so `routers/keys.py` create_key always writes KEY_ACCOUNT_SCOPE).
 - **Priority**: high
 - **Depends On**: T6 (tables exist)
 - **Description**:
@@ -117,7 +124,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rule` TR-7.3: Ind with 5 stores → create 6th → 400 upgrade message. Same for account_scope key → 400. Evidence: tests.
 
 ## Task 8a: Router Auth — Google OAuth + Session Cookie JWT + /auth/signout + `/v1/me` endpoints
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `routers/auth.py` google_login/google_callback implement the Google OAuth flow, _make_session_jwt/_verify_jwt carry the httpOnly session cookie and get_current_session_account gates routes, /auth/signout and /_dev/login exist, and `/v1/me` is served by `routers/account.py` (the account_type JWT claim is gone per alembic/versions/0008_drop_account_type.py; TTL is settings.jwt_ttl_seconds).
 - **Priority**: high
 - **Depends On**: T6 (Account cols + subscription auto-created)
 - **Description**:
@@ -133,7 +141,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rule` TR-8a.2: Manually forged JWT with other secret → 401 (verification works). Expired JWT → 401. Evidence: pytest.
 
 ## Task 8b: Routers Account + Keys + Webhooks (Session/Key Authed CRUD)
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: `routers/account.py` /v1/me GET+PATCH, `routers/keys.py` list/create/revoke/rotate and `routers/webhooks.py` CRUD + POST /{id}/test all exist, but the POST/GET /v1/kyc endpoints were removed by supabase/migrations/6-drop-kyc.sql.
 - **Priority**: high
 - **Depends On**: T8a (get_current_session_account defined), T6 (AuditLog table ready), T7 (plan gates in place)
 - **Description**:
@@ -158,7 +167,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rule` TR-8b.3: POST /v1/webhooks/1/test with httpx mock POST intercept → request header ChmabaPay-Signature matches t=<ts>,v1=<hmac> format. Verify signature locally (secret=endpoint.secret_key) → VALID. Evidence: test mock httpx transport verify locally.
 
 ## Task 8c: Router Billing CRUD (plans list + change plan) + Test mode 5s delay bypass
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: `routers/billing.py` GET /v1/billing/plans and POST /v1/billing/change-plan exist and `workers/w1_payment_detection.py` _test_mode_bypass does the 5s test-mode mark_paid (source='test-mode-fake-delay'), but the Starter→Growth account_type='business' auto-switch was removed (alembic/versions/0008_drop_account_type.py; docs/production-readiness.md records the field was hardcoded False before the drop).
 - **Priority**: high
 - **Depends On**: T6 (Plan tables + seed), T7 (plan logic), T1-T5 (W1 ready so enqueue test mode job works)
 - **Description**:
@@ -172,7 +182,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rule` TR-8c.2: Create payment with test key. At t=+1s → status pending; at t=+6s → status paid; attempt_history[0].source == 'test-mode-fake-delay'. paid_at set. Event row payment.completed 1 row. Evidence: pytest async 8s window test.
 
 ## Task 9: Enqueue-on-write triggers in create_payment(), create_event(), insert Event
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `routers/payments.py` _enqueue_detection enqueues payments.detection with dedup_key `detect:{public_id}` and `webhooks.py` enqueue_event fans out webhooks.send jobs with dedup_key `send:{event_id}:{endpoint_id}`; tests/test_queue_redis.py::test_a_duplicate_dedup_key_is_not_enqueued proves the dedup behaviour.
 - **Priority**: high
 - **Depends On**: T2 (W1), T3 (W2), T5 (transport accessible from app.state)
 - **Description**:
@@ -185,7 +196,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rule` TR-9.2: mark_paid → 2 webhook endpoints configured (account, store) → 2 jobs enqueued in 'webhooks.send'; distinct endpoint_id payload. uq_event_endpoint guarantee honored. Evidence: test.
 
 ## Task 10: Frontend — Next.js 13+ App Router scaffold + shared components library + 7 page groups
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: The App Router portal ships as `web/landing` with the dashboard/stores/payments/keys/webhooks/settings/billing page groups plus `web/shared` components (StatusBadge/DataTable/StepProgress/ModalSystem/KHQR/CopyField) and theme.ts/ux-laws.ts, but the spec's `web/user`+`web/admin` split changed (admin is a full app, not an empty placeholder), KYCUpload/the KYC settings tab are gone (supabase/migrations/6-drop-kyc.sql) and the account_type-conditional dark-toggle/Khmer rules are moot (alembic/versions/0008_drop_account_type.py).
 - **Priority**: high
 - **Depends On**: T8a (auth endpoints exist, can call API from frontend), AC-15 Khmer-first applied, AC-16 dark toggle logic, Design Tokens theme.ts from doc
 - **Description**:
@@ -212,7 +224,8 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rubric` TR-10.5: Overall UX conformance to BRD §7.2 / DESIGN_TOKENS doc. 1=missing 3+ pages; 3=all pages there but 3+ token violations; 5=all pages perfect. Threshold >= 4. Evidence: screenshot audit with checklist of pages + tokens.
 
 ## Task 11: Final — Exit Demo 5 flows run-through + Pytest Ruff full run verification
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: .github/workflows/ci.yml runs `ruff check .`, `alembic upgrade head`+`alembic check` and `pytest` on every push (docs/production-readiness.md P0-4 gate); `uv run ruff check src/chmabapay` passes locally, and the exit-demo screenshots live at .trae/specs/user-portal-m1-m2-complete/evidence/step1..step5.
 - **Priority**: high
 - **Depends On**: T1-T10 all.
 - **Description**:

@@ -46,18 +46,7 @@ async def _with_link(session: AsyncSession, store: models.Store) -> schemas.Stor
 
 
 async def _enforce_max_stores(session: AsyncSession, account: models.Account) -> None:
-    res = await session.execute(
-        select(models.Plan.max_stores)
-        .join(
-            models.PlanSubscription,
-            models.PlanSubscription.plan_id == models.Plan.id,
-        )
-        .where(
-            models.PlanSubscription.account_id == account.id,
-            models.PlanSubscription.status.in_(["trial", "active"]),
-        )
-    )
-    max_stores = res.scalar_one_or_none()
+    max_stores = await svc.plan_max_stores(session, account)
     if max_stores is None:
         return
     res = await session.execute(
@@ -159,6 +148,47 @@ async def enable_store(
     left to receive money — see `services.stores.enable_store`."""
     store = await svc.enable_store(session, ctx.account, public_id)
     return await _with_link(session, store)
+
+
+class StoreSlotOut(BaseModel):
+    """One slot swap: the store that came back, and the one that made room for it.
+
+    `moved` is what tells a no-op apart from a release that displaced nothing. A client
+    cannot read that from `displaced`, because a store brought back on a plan with room
+    answers no displaced store and did change.
+    """
+
+    store: schemas.StoreOut
+    displaced: schemas.StoreOut | None
+    moved: bool
+
+
+@router.post("/{public_id}/activate", response_model=StoreSlotOut)
+async def activate_store_slot(
+    public_id: str,
+    ctx: AuthContext = Depends(_require_store_manage),
+    session: AsyncSession = Depends(get_session),
+):
+    """Bring a billing-held store back, holding whichever store makes room for it.
+
+    The merchant's side of the store cap. A downgrade keeps the oldest stores and marks
+    the rest "suspended — plan limit" (`billing_suspended_at`), and this is how a merchant
+    whose real business is one of the others re-picks which stay live: the count is
+    preserved rather than exceeded, so the allowance is exactly as full afterwards as it
+    was before.
+
+    Distinct from `POST /{public_id}/enable`, which reverses an operator's *disable*.
+    A store an operator disabled is refused here with `409 store_disabled`; a held store
+    keeps its status, which is the whole reason the hold is a flag (§7.6).
+    """
+    result = await svc.move_store_slot(session, ctx.account, public_id)
+    return StoreSlotOut(
+        store=await _with_link(session, result.store),
+        displaced=(
+            await _with_link(session, result.displaced) if result.displaced else None
+        ),
+        moved=result.moved,
+    )
 
 
 class TelegramTestResponse(BaseModel):

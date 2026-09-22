@@ -170,12 +170,41 @@ class Settings(BaseSettings):
     # Once a day. The sweep is idempotent, so a missed day costs nothing.
     retention_sweep_interval_seconds: float = 86400.0
 
-    # Billing invoice issuance. Hourly rather than daily, because a subscription
-    # becomes due at an arbitrary moment (a signup on the 14th is due on the 14th)
-    # and the invoice should appear close to that moment rather than up to a day
-    # later. Issuance is idempotent on (account_id, period_month), so the frequency
-    # costs one indexed query per sweep and can never double-bill.
+    # Billing invoice issuance. Hourly rather than daily, because a subscription enters its
+    # lead window at an arbitrary moment (a signup on the 14th is due on the 14th) and the
+    # invoice should appear close to that moment rather than up to a day later. Issuance is
+    # idempotent on (subscription_id, period_start), so the frequency costs one indexed query
+    # per sweep and can never double-bill.
     billing_sweep_interval_seconds: float = 3600.0
+
+    # How far ahead of the period end the renewal invoice is raised. This is the merchant's
+    # whole window in which to pay: KHQR carries no mandate to charge a stored credential, so
+    # the only reminder with any force is one that arrives while the service is still on.
+    billing_lead_days: int = 7
+
+    # How long an unpaid invoice may run past its due date before the account is frozen.
+    # Policy rather than mechanism, which is why it is a setting: it is the number support
+    # gets asked about.
+    billing_grace_days: int = 7
+
+    # The switch on the one irreversible step in the dunning sequence. Off by default, so a
+    # freeze can be observed in production — tiers recorded, notices rendered — and only
+    # turned on once real merchants have been through a full cycle of warnings.
+    billing_enforce_enabled: bool = False
+
+    # Phase B: the same tier warnings, also delivered by email. Unset means the channel is
+    # simply off — the in-app banner is derived from `due_at` and needs no provider, so a
+    # deployment without a key still warns every merchant, and its absence is silence rather
+    # than an error. The rows are keyed `(invoice_id, tier, channel)`, so turning this on
+    # mid-cycle sends the *current* tier once and never re-sends the in-app history.
+    resend_api_key: str | None = None
+    # The envelope sender. Kept as a full address so it can carry a display name
+    # (`ChmabaPay Billing <billing@chmaba.com>`) — an inbox recognisable at a glance matters
+    # more for a dunning mail than for any other mail the platform sends.
+    billing_email_from: str = "billing@chmaba.com"
+    # A dunning mail is not on a request path, so this is generous; it is still bounded so one
+    # unreachable provider cannot hold the hourly reminder sweep open indefinitely.
+    resend_timeout_seconds: float = 10.0
 
     # Bakong Open API integration
     bakong_base_url: str = "https://api-bakong.nbc.gov.kh"

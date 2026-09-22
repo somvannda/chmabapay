@@ -81,6 +81,12 @@ class StoreOut(BaseModel):
     # "ChmabaPay HQ", where plan fees are collected. Surfaced so the platform owner's
     # dashboard can label its own store rather than silently hide it.
     is_internal: bool
+    # The platform's billing hold, set when a store is over the plan's store allowance
+    # after a downgrade. Orthogonal to `status` on purpose: a held store keeps whatever
+    # status it had, so clearing the hold restores exactly what billing took and a store
+    # an operator disabled stays disabled. Surfaced so the billing page can offer the
+    # merchant the slot chooser — which stores of the fifty stay live.
+    billing_suspended_at: datetime | None
     link: LinkOut | None
     created_at: datetime
 
@@ -101,6 +107,7 @@ class StoreOut(BaseModel):
             logo_image_url=store.logo_image_url,
             whitelabel_css=store.whitelabel_css,
             is_internal=store.is_internal,
+            billing_suspended_at=store.billing_suspended_at,
             link=LinkOut.from_model(link) if link else None,
             created_at=store.created_at,
         )

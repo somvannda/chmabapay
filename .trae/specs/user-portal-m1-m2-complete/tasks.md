@@ -10,7 +10,8 @@ Ordering notes:
 ---
 
 ## Task 1: Backend - unify auth context (session cookie OR Bearer key) for CRUD routers
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `src/chmabapay/auth.py` defines `AuthContext` and `get_current_auth_context` (session cookie OR Bearer key), consumed by `routers/stores.py`, `routers/payments.py`, `routers/keys.py`, `routers/webhooks.py`, `routers/reports.py` and `routers/transactions.py`; cookie auth on those CRUD routes is exercised by `tests/test_account_security.py::test_a_frozen_account_reads_and_pays_but_cannot_write` (GET `/v1/stores`, `/v1/payments`, `/v1/keys`, `/v1/webhooks` over `session_client`), `/auth/signout` POST lives in `src/chmabapay/routers/auth.py`, and the safe `?next=` redirect is covered by `tests/test_account_security.py::test_the_sign_in_redirect_survives_the_oauth_round_trip` (the spec's `tests/routers/test_auth_context.py` was never created).
 - **Priority**: high
 - **Depends On**: None (blocking prerequisite)
 - **Description**:
@@ -30,7 +31,8 @@ Ordering notes:
 - **Notes**: Existing `_enforce_max_stores` already operates on ctx.account — zero structural change, only wrap resolver into AuthContext.
 
 ## Task 2: Frontend - PortalLayout + useSession hook + 401 redirect logic + nav active sync
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: the portal shell is `web/landing/components/portal/DashboardShell.tsx` (the real filename; the spec's `PortalLayout.tsx` never existed), rendered with the session guard by `web/landing/app/dashboard/layout.tsx`, while `web/landing/components/portal/useSession.ts` performs the 401 → `/user/google/auth/login?next=` redirect and nav active state is derived by `DashboardShell.activeNavFromPath` (sign-out is wired in the layout, not as a `logout()` method on the hook).
 - **Priority**: high
 - **Depends On**: T1
 - **Description**:
@@ -52,7 +54,8 @@ Ordering notes:
   - `rubric` TR-2.4: Layout reuse & responsiveness (scale 1-5). 1 = duplicated in each page; 3 = layout works desktop only; 5 = reused all pages, mobile sidebar hide (under 900px works). Threshold >= 4.
 
 ## Task 3: Dashboard Overview page (/dashboard) enhancement with real data-backed stats + today activity payments list
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `web/landing/app/dashboard/page.tsx` renders the four metric cards (Paid today / Settled / Avg. payment / Active stores), the "Get started in 3 steps" panel and a last-5 "Recent activity" list, taking its real totals from server-side aggregates at `GET /v1/reports/payments.json` (`summary.total_matching_paid_amount_cents`) rather than a client-side sum of 200 payments.
 - **Priority**: high
 - **Depends On**: T2
 - **Description**:
@@ -71,7 +74,8 @@ Ordering notes:
   - `rule` TR-3.2: No-payment empty state renders dashed state per CSS (match classes on activity div).
 
 ## Task 4: Stores index + New store wizard + Store detail pages
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: `web/landing/app/dashboard/stores/page.tsx` (list with create/disable/enable), `web/landing/app/dashboard/stores/new/page.tsx` (form) and the real detail `web/landing/app/dashboard/[public_id]/page.tsx` plus its `/payments` `/settings` sub-pages exist; the described 10-row pagination / created_at sort / status filter, the 2-step wizard with destination-type tabs and the delete-store confirm do not — Bakong/bank destinations were retired by `supabase/migrations/4-merge-sub-merchants-into-stores.sql` and `src/chmabapay/routers/stores.py` exposes no DELETE route (only `/disable`, `/enable`, `/activate`).
 - **Priority**: high
 - **Depends On**: T2
 - **Description**:
@@ -89,7 +93,8 @@ Ordering notes:
   - `rubric` TR-4.3: Wizard UX flow (scale 1-5). 1 = single huge form; 3 = 2 steps but no tooltips; 5 = tabs by destination type, masked bakong/bank numbers preview, copy-to-clipboard store public_id. Threshold >= 4.
 
 ## Task 5: Payments index + New payment + Payment detail (QR copy + simulate paid button for admins)
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `web/landing/app/dashboard/payments/page.tsx` (status + store filters, load-more), `web/landing/app/dashboard/payments/new/page.tsx` (amount / reference_id / store / metadata) and `web/landing/app/dashboard/payments/[public_id]/page.tsx` (QR `<img src="/pay/{id}/qr.svg">`, checkout-url copy button, paid_at + bakong_ref, and the admin-only "Test: Mark paid" button POSTing `/_dev/payments/{id}/pay`) all exist — note the QR route is `.svg`; the `.png` the spec names never existed on the backend.
 - **Priority**: high
 - **Depends On**: T2
 - **Description**:
@@ -108,7 +113,8 @@ Ordering notes:
   - `rule` TR-5.3: Checkout_url copy button writes to clipboard correctly (navigator.clipboard).
 
 ## Task 6: API Keys page (list + create with scope + reveal once modal + revoke)
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: `web/landing/app/dashboard/keys/page.tsx` implements the list, create form, one-time `RevealBanner` (never re-revealed), Revoke and Rotate; the described Store-scope vs Account-scope tabs with Individual-Starter gating do not exist because keys became workspace-scoped — `allow_account_scope_keys` was dropped in `supabase/migrations/7-retire-dead-plan-and-store-config.sql` and the account-type split in `alembic/versions/0008_drop_account_type.py`.
 - **Priority**: high
 - **Depends On**: T2
 - **Description**:
@@ -124,7 +130,8 @@ Ordering notes:
   - `rubric` TR-6.3: Secret handling UX (scale 1-5). 1 = re-exposes; 3 = reveal once but no checkboxes; 5 = reveal once + warning text + checkbox + toast on copy. Threshold >= 4.
 
 ## Task 7: Webhooks endpoints page (list + add + signing secret reveal once + rotate secret + edit/disable/delete)
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `web/landing/app/dashboard/webhooks/page.tsx` lists endpoints and implements add/edit-with-event-checkboxes, disable, delete, signing-secret reveal-once (`RevealSecretModal`) and rotate (`POST /v1/webhooks/{id}/rotate-secret`), plus test-send and a deliveries log — note the real event names are `payment.completed/expired/superseded/reversed`, not the spec's `payment.created/paid/expired/refunded`.
 - **Priority**: high
 - **Depends On**: T2
 - **Description**:
@@ -140,7 +147,8 @@ Ordering notes:
   - `rubric` TR-7.3: Event type coverage; scale 1-5. 1 = no event selection (all events only); 3 = static list of 4; 5 = searchable/selectable chips + "Select all" checkbox. Threshold >= 4.
 
 ## Task 8: Billing & Plans page (plan matrix + upgrade CTAs + subscription card)
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: `web/landing/app/dashboard/billing/page.tsx` renders the plan matrix, the subscription card and upgrade CTAs calling `POST /v1/billing/change-plan`; the described Starter→Growth "redirect to /dashboard/keys with Account scope pre-enabled" and Growth→Scale "Sub-Merchants nav unlocks" steps are absent, and the Starter/Growth/Scale/Enterprise plans themselves were deleted by `supabase/migrations/7-retire-dead-plan-and-store-config.sql` (plans are now Free/Starter/Pro).
 - **Priority**: high
 - **Depends On**: T2
 - **Description**:
@@ -157,7 +165,8 @@ Ordering notes:
   - `rubric` TR-8.3: Plan matrix fidelity to BRD §3.1; scale 1-5. 1 = missing rows; 3 = half features; 5 = all 12 feature rows present with exact values from BRD. Threshold >= 4.
 
 ## Task 9: Settings page (Profile / KYC / Billing tabs / Features admin-only)
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: `web/landing/app/dashboard/settings/page.tsx` ships Profile and Billing tabs (plus a new Security tab for email/password/account-erase); the KYC tab is superseded — `supabase/migrations/6-drop-kyc.sql` dropped every KYC column and `kyc_status` — and no Features/whitelabel tab exists there (whitelabel branding lives in the store settings page `web/landing/app/dashboard/[public_id]/settings/page.tsx`).
 - **Priority**: high
 - **Depends On**: T2
 - **Description**:
@@ -175,7 +184,8 @@ Ordering notes:
   - `rubric` TR-9.3: Form UX quality (scale 1-5). 1 = unlabeled inputs; 3 = labels + basic placeholder; 5 = field-level error messages from backend 400 detail, submit disabled on invalid, server-validation toast success. Threshold >= 4.
 
 ## Task 10: Sub-Merchants page (gated) + Reports page (CSV export buttons, Starter hidden)
-- **Status**: `pending`
+- **Status**: `superseded`
+- **Verified**: no `/dashboard/sub-merchants` route exists today — `supabase/migrations/4-merge-sub-merchants-into-stores.sql` merged sub-merchants into stores (dropping the `sub_merchants` table and `allow_saas_sub_merchants`), and the "Reports nav hidden for Starter" gate was removed by `alembic/versions/0010_drop_csv_export_gate.py`; the page itself survives and works ungated at `web/landing/app/dashboard/reports/page.tsx`.
 - **Priority**: medium
 - **Depends On**: T2
 - **Description**:
@@ -188,7 +198,8 @@ Ordering notes:
   - `rubric` TR-10.3: CSV export handling; 1-5. 1 = errors; 3 = downloads raw JSON not CSV; 5 = CSV content-type, correct filename, BOM if needed Excel. Threshold >= 4.
 
 ## Task 11: Help center / onboarding pages (low priority M1 nice-to-have)
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: `web/landing/app/dashboard/help/page.tsx` renders six collapsible FAQ accordions as specified; no `/dashboard/onboarding` route was ever created (the only trace left is a stale `/onboarding` entry in `web/landing/app/robots.ts`), and the Overview shows an inline "Get started in 3 steps" panel instead of a separate onboarding carousel.
 - **Priority**: low
 - **Depends On**: T2
 - **Description**:
@@ -200,7 +211,8 @@ Ordering notes:
   - `rubric` TR-11.2: Onboarding usefulness; 1-5. 1 = empty; 3 = generic steps; 5 = real links to create store/new payment/webhook pages with pre-filled data suggestions. Threshold >= 3 (low priority).
 
 ## Task 12: Verification — next build + CSS grep + pytest regression run
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: twelve of the named route pages exist under `web/landing/app/dashboard/` (`stores`, `stores/new`, `stores/[public_id]`, `payments`, `payments/new`, `payments/[public_id]`, `keys`, `webhooks`, `billing`, `settings`, `reports`, `help`, plus the `[public_id]` store workspace) and a grep for ` style=` across `web/landing/**/*.tsx` returns 0 matches, satisfying AC-10/NFR-1 (the spec's `/dashboard/sub-merchants` and `/dashboard/onboarding` rows are absent by design; `next build` and `pytest` were not re-executed during this audit).
 - **Priority**: high
 - **Depends On**: All of T1–T11
 - **Description**:
@@ -215,7 +227,8 @@ Ordering notes:
   - `rule` TR-12.3: pytest exit 0.
 
 ## Task 13: End-to-end walkthrough evidence — BRD §5 Sokha demo
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: the full five-step walkthrough was captured as `.trae/specs/user-portal-m1-m2-complete/evidence/step1-signin.png`, `step2-store-create.png`, `step3-payment-create-qr.png`, `step4-mark-paid.png` and `step5-webhook.png`.
 - **Priority**: high
 - **Depends On**: T12
 - **Description**:

@@ -24,6 +24,11 @@ dependencies = [
     # escaping and the text format all have sharp edges.
     "prometheus-client>=0.20",
     "redis>=8.1.0",
+    # The IANA timezone database, for `zoneinfo`. Notification copy renders dates on the
+    # merchant's own calendar (`Asia/Phnom_Penh`), and `ZoneInfo(...)` is built at import time —
+    # so where there is no system tz database this is not a formatting glitch but a failure to
+    # start. A slim container image is exactly such a host.
+    "tzdata>=2025.1",
 ]
 
 [dependency-groups]

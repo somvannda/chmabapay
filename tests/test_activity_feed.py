@@ -25,8 +25,8 @@ from chmabapay import models
 from chmabapay.config import Settings
 from chmabapay.db import session_factory
 from chmabapay.services import billing as billing_svc
-from chmabapay.services import notifications, payments as payment_svc, telegram
-from chmabapay.services import stores as store_svc
+from chmabapay.services import notifications, telegram
+from chmabapay.services import payments as payment_svc
 
 BOT_TOKEN = "8123456789:AAF-test-bot-token"
 GROUP_ID = "-1002712101901"

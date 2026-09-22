@@ -134,6 +134,26 @@ async def mint_qr(
     return qr_string, qr_md5, expires_at, hosted_session
 
 
+def _refuse_unusable_store(store: models.Store) -> None:
+    """Refuse a store that cannot take a new payment, naming which reason applies.
+
+    Two causes, two codes, because the fix is different in each case and only one of them is
+    the merchant's to undo:
+
+    * `store_disabled` — the merchant, or an operator, turned this store off on purpose.
+    * `store_billing_suspended` — the platform is holding it, because the account is on a
+      plan smaller than its store count. Settling the invoice restores it.
+
+    Detection is deliberately not gated on either: a payment already in a customer's hand has
+    to settle, and stranding money that is already moving would be indefensible as well as
+    creating refund exposure against the merchant.
+    """
+    if store.status == models.STORE_DISABLED:
+        raise HTTPException(status_code=400, detail="store_disabled")
+    if store.billing_suspended_at is not None:
+        raise HTTPException(status_code=400, detail="store_billing_suspended")
+
+
 async def create_payment(
     session: AsyncSession,
     *,
@@ -144,8 +164,7 @@ async def create_payment(
     idempotency_key: str | None,
     hosted_qr: bool | None = None,
 ) -> tuple[models.Payment, bool]:
-    if store.status == models.STORE_DISABLED:
-        raise HTTPException(status_code=400, detail="store_disabled")
+    _refuse_unusable_store(store)
     link = await load_active_link(session, store.id)
 
     if idempotency_key:
@@ -246,8 +265,9 @@ async def reissue_payment(
             return live, False
 
     store = await session.get(models.Store, parent.store_id)
-    if store is None or store.status == models.STORE_DISABLED:
+    if store is None:
         raise HTTPException(status_code=400, detail="store_disabled")
+    _refuse_unusable_store(store)
     link = await session.get(models.PaymentLink, parent.payment_link_id)
     if link is None:
         raise HTTPException(status_code=400, detail="payment_link_missing")
@@ -389,6 +409,11 @@ async def check_plan_quota(
     CutLuy-style: a successful (paid) payment counts as one transaction; the quota
     is monthly and shared across all stores on the account. Test-mode payments do
     not count. Returns 402 `quota_exceeded` when the plan limit is reached.
+
+    A plan given up earlier this month is not metered against the plan that replaced it —
+    see `downgraded_this_month`. The overage is what makes the deferral affordable: it is
+    asked only once the count is already past the allowance, so the extra query is not on
+    the path of a merchant who is comfortably inside their plan.
     """
     if mode != "live":
         return
@@ -408,8 +433,67 @@ async def check_plan_quota(
         # No active plan yet — fall back to the Free tier default.
         included = 3000
     count = await count_paid_payments_this_month(session, account.id)
-    if count >= included:
+    if count >= included and not await downgraded_this_month(session, account.id):
         raise HTTPException(status_code=402, detail="quota_exceeded")
+
+
+async def quota_deferred_until(
+    session: AsyncSession, account_id: int, *, now: datetime | None = None
+) -> datetime | None:
+    """The instant the current plan's allowance starts being enforced, or None if it already is.
+
+    Non-None means a paid plan was given up during the current calendar month, so the count the
+    merchant has already accrued is not held against the plan that replaced it until the month
+    turns. `downgraded_this_month` is this same question asked as a yes/no, and
+    `check_plan_quota` is the only thing the answer changes — one implementation between them,
+    because the portal renders the date and it must be the date the quota check honours.
+
+    Reported to the portal because the *display* needs it, not only the enforcement. The usage
+    bar reads `used / included` from the plan in force, so a merchant who settled 40,000 payments
+    and then moved to a 15,000 plan sees "40,000 / 15,000" and a full bar while every code they
+    mint still works. The number is right and the deferral is why, so without this the page has
+    no way to say so (§7.7).
+
+    The month's usage carries across a plan change, because the quota is a calendar-month count
+    (`count_paid_payments_this_month`). A merchant who has settled 40,000 payments and then
+    chooses a smaller plan is therefore over the new allowance the instant they chose it, and
+    every code they mint answers 402 until the first of the next month — a total stop arrived at
+    by accident, with nothing on the billing page to explain it. So the new allowance starts at
+    the next boundary, and until then the store cap is the only lever that bites. This defers
+    enforcement; it does not clear the count, which is why the caller asks only once the count is
+    already over the allowance.
+
+    **A paid plan, and never the Free one a signup is given.** Metering from the first day is
+    the point of the Free tier; a deferral keyed on any subscription that ended this month
+    would hand every new account an unmetered first month. A cancellation with no paid plan
+    behind it is a signup's own subscription being replaced, and that is not a downgrade.
+    """
+    moment = now or _now()
+    month_start = moment.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    res = await session.execute(
+        select(models.PlanSubscription.id)
+        .join(models.Plan, models.Plan.id == models.PlanSubscription.plan_id)
+        .where(
+            models.PlanSubscription.account_id == account_id,
+            models.PlanSubscription.status == "canceled",
+            models.Plan.monthly_fee_cents > 0,
+            models.PlanSubscription.canceled_at.is_not(None),
+            models.PlanSubscription.canceled_at >= month_start,
+        )
+        .limit(1)
+    )
+    if res.scalar_one_or_none() is None:
+        return None
+    # The first instant of the next calendar month: 32 days forward then snap to the 1st, which
+    # lands on the boundary for every month length, the same way the count above defines one.
+    return (month_start + timedelta(days=32)).replace(day=1)
+
+
+async def downgraded_this_month(
+    session: AsyncSession, account_id: int, *, now: datetime | None = None
+) -> bool:
+    """Whether a paid plan was given up during the current calendar month. See above."""
+    return await quota_deferred_until(session, account_id, now=now) is not None
 
 
 async def count_paid_payments_this_month(

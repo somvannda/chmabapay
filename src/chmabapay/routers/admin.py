@@ -892,19 +892,36 @@ async def delete_plan(
 
 
 def _invoice_row(
-    invoice: models.PlanInvoice, account_email: str | None = None
+    invoice: models.PlanInvoice,
+    account_email: str | None = None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
+    due_at = billing_svc.as_utc(invoice.due_at)
+    moment = now or datetime.now(UTC)
     return {
         "id": invoice.id,
         "account_id": invoice.account_id,
         "account_email": account_email,
         "period_month": invoice.period_month,
+        "period_start": invoice.period_start,
+        "period_end": invoice.period_end,
         "status": invoice.status,
         "base_fee_cents": invoice.base_fee_cents,
         "usage_payments_count": invoice.usage_payments_count,
         "overage_fee_cents": invoice.overage_fee_cents,
         "total_due_cents": invoice.total_due_cents,
+        "due_at": due_at,
+        # Derived, never read off `status`: the worker writes `open` for an invoice due next
+        # week and for one a week late, so a status column cannot answer "what is about to
+        # lapse" — the question this list exists to answer.
+        "is_overdue": (
+            invoice.status in billing_svc.UNPAID_STATUSES
+            and due_at is not None
+            and due_at < moment
+        ),
         "paid_at": invoice.paid_at,
+        "voided_at": invoice.voided_at,
+        "void_reason": invoice.void_reason,
         "created_at": invoice.created_at,
     }
 
@@ -913,19 +930,29 @@ def _invoice_row(
 async def list_all_invoices(
     period_month: str | None = None,
     status: str | None = None,
+    overdue: bool = False,
     page: int = 1,
     per_page: int = 25,
     ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
     session: AsyncSession = Depends(get_session),
 ):
-    """Plan invoices across every account."""
+    """Plan invoices across every account.
+
+    `overdue=true` is the operator's dunning queue: unpaid invoices whose `due_at` has
+    passed, most overdue first, so a freeze can be seen coming without opening each row.
+    """
     page, per_page, offset = _clamp_paging(page, per_page)
+    now = datetime.now(UTC)
 
     filters = []
     if period_month:
         filters.append(models.PlanInvoice.period_month == period_month)
     if status:
         filters.append(models.PlanInvoice.status == status)
+    if overdue:
+        filters.append(models.PlanInvoice.status.in_(billing_svc.UNPAID_STATUSES))
+        filters.append(models.PlanInvoice.due_at.is_not(None))
+        filters.append(models.PlanInvoice.due_at < now)
 
     total_rows = (
         await session.execute(
@@ -933,21 +960,26 @@ async def list_all_invoices(
         )
     ).scalar_one() or 0
 
+    order = (
+        # Most overdue first, so the queue reads as an order of work.
+        [models.PlanInvoice.due_at.asc(), models.PlanInvoice.id.asc()]
+        if overdue
+        else [models.PlanInvoice.period_month.desc(), models.PlanInvoice.id.desc()]
+    )
+
     rows = (
         await session.execute(
             select(models.PlanInvoice, models.Account.email)
             .join(models.Account, models.Account.id == models.PlanInvoice.account_id)
             .where(*filters)
-            .order_by(
-                models.PlanInvoice.period_month.desc(), models.PlanInvoice.id.desc()
-            )
+            .order_by(*order)
             .limit(per_page)
             .offset(offset)
         )
     ).all()
 
     return {
-        "data": [_invoice_row(inv, email) for inv, email in rows],
+        "data": [_invoice_row(inv, email, now) for inv, email in rows],
         "pagination": Pagination(
             page=page,
             per_page=per_page,
@@ -960,7 +992,7 @@ async def list_all_invoices(
 class InvoiceResolveIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["mark-paid", "waive", "credit"]
+    action: Literal["mark-paid", "waive", "credit", "void"]
     reason: str = Field(min_length=3, max_length=500)
     # `credit` only: how much was given up. Defaults to the whole invoice. Never
     # subtracted from `total_due_cents` — the invoice goes on saying what was billed,
@@ -972,6 +1004,7 @@ _RESOLVED_INVOICE_STATUS = {
     "mark-paid": "paid",
     "waive": "waived",
     "credit": "credited",
+    "void": billing_svc.INVOICE_VOID,
 }
 
 
@@ -982,17 +1015,22 @@ async def resolve_invoice(
     ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
     session: AsyncSession = Depends(get_session),
 ):
-    """Close an invoice by hand: settle it, waive it, or credit it.
+    """Close an invoice by hand: settle it, waive it, credit it, or withdraw it.
 
-    All three exist for the same reason, which is why they are one route: a `pending`
+    All four exist for the same reason, which is why they are one route: a `pending`
     subscription waiting on an invoice nobody will ever pay leaves the merchant stuck
     on their old plan with no in-product way out, and correcting that used to need a
-    database session. The activation step and the audit shape are identical, and three
-    copies of them would be three places to drift.
+    database session. The activation step and the audit shape are identical, and four
+    copies of them would be four places to drift.
 
     Only `mark-paid` writes `paid_at`. A waiver and a credit are not income, and
     stamping a settlement date on one would make a revenue report count money that
     never arrived.
+
+    `void` is the odd one out and the reason it is not a fourth settlement: it grants
+    nothing at all. It withdraws a claim the platform should not have made, so the
+    subscription is left exactly as it was and the next sweep is free to bill that
+    window again — which is what the partial unique index exists to allow.
     """
     invoice = await session.get(models.PlanInvoice, invoice_id)
     if invoice is None:
@@ -1003,15 +1041,44 @@ async def resolve_invoice(
         )
 
     now = datetime.now(UTC)
-    invoice.status = _RESOLVED_INVOICE_STATUS[body.action]
-    invoice.updated_at = now
-    if body.action == "mark-paid":
-        invoice.paid_at = now
 
-    if invoice.subscription_id is not None:
-        # The same activation the rail path runs, so an invoice settled by hand and one
-        # paid by QR leave the account in an identical state.
-        await billing_svc.activate_subscription(session, invoice.subscription_id)
+    if body.action == "mark-paid":
+        # The same settlement the rail runs, so a transfer quoted over the phone leaves the
+        # account in exactly the state a QR payment would: unfrozen, with the coverage the
+        # invoice bought in force. Splitting this into its own branch is what makes an operator
+        # able to fix the one case with no in-product way out — a merchant who has paid by bank
+        # transfer and is otherwise stranded, frozen, unable to mint the code they were asked
+        # for.
+        await billing_svc.settle_invoice(session, invoice, paid_at=now, source="admin")
+    elif body.action == "void":
+        # No `paid_at`, no `activate_subscription`, no `extend_coverage`: notably unlike the
+        # waiver, a void does not buy the period it was raised for. `next_billing_at` is left
+        # where it was, so W3 raises the window again on its next sweep — the operator is
+        # saying "not this invoice", not "free month".
+        #
+        # It still lifts the hold. A freeze is keyed on this invoice being unpaid, so voiding it
+        # would otherwise strand the merchant frozen with nothing left to pay and no way to
+        # unfreeze — the dead end T-23 exists to prevent, reached from the operator side.
+        invoice.status = billing_svc.INVOICE_VOID
+        invoice.voided_at = now
+        invoice.void_reason = billing_svc.VOID_OPERATOR
+        invoice.updated_at = now
+        billing_svc.lift_billing_hold(await session.get(models.Account, invoice.account_id))
+    else:
+        # A waiver and a credit forgive the debt without any money arriving: neither is income,
+        # so neither writes `paid_at`. Both still resolve the invoice the freeze is keyed on and
+        # therefore have to lift it, or an operator forgiving $9.99 would leave the merchant
+        # frozen over a debt that no longer exists.
+        invoice.status = _RESOLVED_INVOICE_STATUS[body.action]
+        invoice.updated_at = now
+        if invoice.subscription_id is not None:
+            # The same activation the rail path runs, so the coverage the waiver bought is in
+            # force. `extend_coverage` is part of that state: without it a waived invoice would
+            # leave the subscription with a period end in the past, so the sweep would never
+            # renew the merchant the operator just unblocked.
+            await billing_svc.activate_subscription(session, invoice.subscription_id)
+            await billing_svc.extend_coverage(session, invoice)
+        billing_svc.lift_billing_hold(await session.get(models.Account, invoice.account_id))
 
     details: dict[str, Any] = {
         "resolution": body.action,

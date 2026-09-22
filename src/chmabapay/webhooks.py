@@ -65,11 +65,18 @@ def build_event_payload(event_id: str, event_type: str, payment, store) -> dict:
     # Only meaningful on a settled payment, and only true when the money arrived
     # after the code had been withdrawn — which is a different operational story
     # from an ordinary sale and should not be invisible in a report.
-    settled_late = bool(
-        payment.paid_at
-        and payment.expires_at
-        and payment.paid_at > payment.expires_at
-    )
+    #
+    # Normalized before comparing, because SQLite hands back naive datetimes for a
+    # tz-aware column and comparing one against an aware value raises. Postgres never
+    # does this, so the unguarded comparison worked in production and broke the test
+    # suite — the same trap `services.payments.reissue_payment` guards against.
+    paid_at = payment.paid_at
+    expires_at = payment.expires_at
+    if paid_at is not None and paid_at.tzinfo is None:
+        paid_at = paid_at.replace(tzinfo=UTC)
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    settled_late = bool(paid_at and expires_at and paid_at > expires_at)
     return {
         "id": event_id,
         "type": event_type,

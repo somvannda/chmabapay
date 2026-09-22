@@ -77,9 +77,9 @@
 5. KYC files stored locally first (disk); S3 signed URLs Phase 2. Code abstracts upload path behind `kyc_storage_upload(file)` helper so Phase 2 S3 swap is one function change.
 
 ## Open Questions
-- [ ] KYC file storage: Confirm S3 vs local disk for Phase 1 (currently assumed local, helper abstraction ready).
-- [ ] Auth lib: Prefer `fastapi-sso` vs manual httpx OAuth2 flow (currently assumed minimal manual httpx for less deps, can install if desired).
-- [ ] Frontend UI library: shadcn/ui + Tailwind vs custom styled-components (per DESIGN_TOKENS theme.ts, likely shadcn/ui + Tailwind most consistent).
+- [x] KYC file storage: Confirm S3 vs local disk for Phase 1 (currently assumed local, helper abstraction ready). → resolved: moot — KYC was dropped entirely, so no KYC file storage exists (supabase/migrations/6-drop-kyc.sql drops every identity-document column and the plan-level KYC gate).
+- [x] Auth lib: Prefer `fastapi-sso` vs manual httpx OAuth2 flow (currently assumed minimal manual httpx for less deps, can install if desired). → resolved: the manual httpx OAuth2 flow shipped — `src/chmabapay/routers/auth.py` google_login/google_callback call Google's endpoints with `httpx.AsyncClient`; `fastapi-sso` was never adopted.
+- [x] Frontend UI library: shadcn/ui + Tailwind vs custom styled-components (per DESIGN_TOKENS theme.ts, likely shadcn/ui + Tailwind most consistent). → resolved: Next.js App Router + Tailwind CSS with hand-built components in `web/shared` and `web/landing` — `web/landing/package.json` lists `tailwindcss` but no shadcn/ui and no styled-components.
 
 ---
 

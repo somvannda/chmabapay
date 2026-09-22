@@ -43,6 +43,11 @@ type PlanInfo = {
 
 type Subscription = {
   plan?: PlanInfo | string | null;
+  // Top-level on the API response, and deliberately so: a lapsed account can owe money with no
+  // subscription row left to hang it on. `current_period_end` is when the paid coverage ends,
+  // which is the date the plan card shows.
+  current_period_end?: string | null;
+  outstanding_invoice_id?: number | null;
   [k: string]: unknown;
 };
 
@@ -543,6 +548,17 @@ export default function DashboardOverviewPage() {
             <div className="dash-plan-value">
               {planName(profile, subscription)}
             </div>
+            {/* The renewal date, or that money is owed. "Payment due" rather than "overdue": an
+                unpaid invoice is `outstanding` from the day it is raised — seven days before it is
+                due — and the banner above carries the precise urgency copy. This line just names
+                the state of the plan for the merchant who is not being warned about anything. */}
+            {subscription?.outstanding_invoice_id ? (
+              <div className="dash-plan-note dash-plan-note-warn">Payment due</div>
+            ) : subscription?.current_period_end ? (
+              <div className="dash-plan-note">
+                Renews {formatDate(subscription.current_period_end)}
+              </div>
+            ) : null}
             <div className="dash-actions">
               <Link className="dash-btn dash-btn-secondary" href="/dashboard/billing">
                 Manage plan →

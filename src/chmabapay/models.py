@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -35,6 +36,11 @@ class Base(DeclarativeBase):
 # --------------------------------------------------------------------------- #
 ACCOUNT_ACTIVE = "active"
 ACCOUNT_SUSPENDED = "suspended"
+# A billing hold, set by the grace-enforcement job when a plan invoice runs past its due
+# date. Distinct from `suspended` on purpose: a suspended account cannot sign in at all,
+# which would lock a merchant out of the one page that can clear their debt. A restricted
+# account signs in, reads everything and can pay — it just cannot write until it does.
+ACCOUNT_RESTRICTED = "restricted"
 
 STORE_DRAFT = "draft"
 STORE_LINK_PENDING = "link_pending"
@@ -140,6 +146,15 @@ class Store(Base):
     # of its own merchants (see `services.payments.count_paid_payments_this_month`) and
     # the console reports its takings as platform revenue, separately from merchant GMV.
     is_internal: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Set when the account is on a plan smaller than its store count, so the platform
+    # holds this store until the merchant pays or re-picks which ones stay. A flag
+    # rather than a `status` value on purpose: `disable_store` overwrites `status` and
+    # `enable_store` then has to *infer* what to restore, so a status cannot carry the
+    # "why". Keeping this separate means a billing hold and an operator's deliberate
+    # disable can never overwrite each other — see `services.stores.apply_store_cap`.
+    billing_suspended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     status: Mapped[str] = mapped_column(String(16), default=STORE_DRAFT, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -333,14 +348,25 @@ class PlanSubscription(Base):
 
 class PlanInvoice(Base):
     __tablename__ = "plan_invoices"
-    # One invoice per account per period, and the constraint is load-bearing rather
-    # than tidy: the billing worker issues on a schedule and may run twice (a retry,
-    # a restart mid-sweep), and the period is the natural key, so this is what makes
-    # the second run a no-op instead of a second bill for the same month. Same
-    # reasoning as `plan_ledger_entries` above — see P0-6 and services/billing.py.
+    # One *live* invoice per subscription-period, and the constraint is load-bearing
+    # rather than tidy: the billing worker issues on a schedule and may run twice (a
+    # retry, a restart mid-sweep), and the period is the natural key, so this is what
+    # makes the second run a no-op instead of a second bill. Same reasoning as
+    # `plan_ledger_entries` — see P0-6 and services/billing.py.
+    #
+    # Partial, excluding `void`, because a void is a historical record rather than a
+    # claim: a voided invoice must not reserve its window forever, or voiding one for a
+    # period still in force would make that period unbillable. `period_start` is NULL on
+    # pre-0012 rows and NULLs are distinct in both SQLite and Postgres, so those rows do
+    # not participate at all.
     __table_args__ = (
-        UniqueConstraint(
-            "account_id", "period_month", name="uq_plan_invoice_period"
+        Index(
+            "uq_plan_invoice_live_period",
+            "subscription_id",
+            "period_start",
+            unique=True,
+            sqlite_where=text("status != 'void'"),
+            postgresql_where=text("status != 'void'"),
         ),
         Index("ix_plan_invoices_period_month", "period_month"),
     )
@@ -348,19 +374,65 @@ class PlanInvoice(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), nullable=False)
     subscription_id: Mapped[int | None] = mapped_column(ForeignKey("plan_subscriptions.id"))
+    # A display label derived from `due_at`, kept because it is in the KHQR reference id,
+    # the admin filter and the portal table. Nothing is *decided* from it any more: the
+    # window below is what the billing logic reads.
     period_month: Mapped[str] = mapped_column(String(7), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), default="draft")
+    # The window the invoice is a claim for, and when it was expected. Instants, so no
+    # calendar arithmetic is involved in "is it due" or "how many days are left".
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(16), default="open")
     base_fee_cents: Mapped[int] = mapped_column(Integer, default=0)
     usage_payments_count: Mapped[int] = mapped_column(Integer, default=0)
     overage_payments_count: Mapped[int] = mapped_column(Integer, default=0)
     overage_fee_cents: Mapped[int] = mapped_column(Integer, default=0)
     total_due_cents: Mapped[int] = mapped_column(Integer, default=0)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # `downgraded` | `superseded` | `grace_expired` | `pre_lifecycle` | `operator`
+    void_reason: Mapped[str | None] = mapped_column(String(32))
     chmabapay_payment_id: Mapped[int | None] = mapped_column(ForeignKey("payments.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class PlanInvoiceReminder(Base):
+    """What the platform told a merchant about an invoice, and when.
+
+    `(invoice_id, tier, channel)` is the key, and it is the whole point of the table: two
+    worker replicas and a retry must converge on one message, and a database constraint is
+    the only enforcement that actually holds. The `channel` column is what lets email be
+    added later without re-sending the in-app tier.
+
+    A row is *not* what makes a warning visible — the banner is derived from `due_at`, so a
+    worker outage can never hide a notice the merchant was owed. This table is the record
+    that the platform was warning them from that hour onward, which is what answers "were
+    they warned before we froze them?" during a dispute.
+    """
+
+    __tablename__ = "plan_invoice_reminders"
+    __table_args__ = (
+        UniqueConstraint(
+            "invoice_id", "tier", "channel", name="uq_plan_invoice_reminder"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("plan_invoices.id"), nullable=False, index=True
+    )
+    # due_3 | due_1 | due_today | overdue_1 | overdue_3 | overdue_final
+    tier: Mapped[str] = mapped_column(String(24), nullable=False)
+    # in_app now; email in Phase B
+    channel: Mapped[str] = mapped_column(String(16), nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    detail: Mapped[dict | None] = mapped_column(JSON)
 
 
 class PlanLedgerEntry(Base):

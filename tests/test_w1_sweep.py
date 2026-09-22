@@ -26,7 +26,7 @@ from chmabapay import models, workers
 from chmabapay.db import session_factory
 from chmabapay.services import stores as store_svc
 from chmabapay.workers.job import Job
-from chmabapay.workers.w1_payment_detection import PaymentDetectionWorker, QUEUE
+from chmabapay.workers.w1_payment_detection import QUEUE, PaymentDetectionWorker
 
 
 class _RecordingTransport:

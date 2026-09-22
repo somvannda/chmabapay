@@ -52,6 +52,12 @@ const ERROR_COPY: Record<string, string> = {
   // (routers/payments.py).
   merchant_not_found:
     "No store on this account uses that merchant id. Check the id, or pass the store id instead.",
+  // Raised on every write while the account is on hold for non-payment
+  // (routers/auth.py, `restricted_may_reach`). The dashboard disables its own controls in this
+  // state, so this message is what a keyboard-driven or stale-tab attempt sees — and it has to
+  // say which screen fixes it, or the merchant has no idea where to go.
+  account_restricted:
+    "Your account is on hold because a plan invoice is unpaid, so this change was not saved. Settle the invoice or move to a smaller plan on the billing page, and everything starts working again.",
 };
 
 function detailOf(body: unknown): string | null {

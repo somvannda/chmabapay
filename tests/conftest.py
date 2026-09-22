@@ -143,6 +143,34 @@ def _fresh_rate_limits():
         lockout.reset()
 
 
+async def _refuse_to_send(*_args, **_kwargs):
+    """Fail loudly rather than deliver. Nothing in the suite may reach Resend."""
+    raise AssertionError("a test tried to reach Resend — no test may send real mail")
+
+
+@pytest.fixture(autouse=True)
+def _no_live_email(monkeypatch):
+    """Keep the suite off the Resend rail.
+
+    `RESEND_API_KEY` lives in the developer's `.env` — and the call it would make comes from the
+    *reminder sweep*, a job whose whole purpose is to be run over the dunning clock. Without this
+    every test that walks a simulated week of sweeps would deliver real mail to the `@dunning.test`
+    addresses the fixtures invented.
+
+    Two locks, because one is not enough. The environment is emptied so the default path under
+    test is the "no provider configured" one every deployment ran before the channel existed, and
+    the transport is replaced so that a test which *does* turn the channel on without stubbing it
+    gets an `AssertionError` instead of a delivery. Note that setting the variable alone does
+    nothing: `get_settings` is `lru_cache`d, so the real key read from `.env` on the first call is
+    the one still in force — the cache has to be dropped for the override to count.
+    """
+    from chmabapay.services import resend as resend_svc
+
+    monkeypatch.setenv("RESEND_API_KEY", "")
+    get_settings.cache_clear()
+    monkeypatch.setattr(resend_svc, "http_post", _refuse_to_send)
+
+
 @pytest.fixture(autouse=True)
 async def _fresh_db():
     # pytest-asyncio gives every test its own event loop, but the engine is
