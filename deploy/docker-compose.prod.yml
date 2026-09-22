@@ -187,6 +187,25 @@ x-api-env: &api-env
   CHMABAPAY_HQ_STORE_ID: ${CHMABAPAY_HQ_STORE_ID:-}
   CHMABAPAY_HQ_PAYWAY_LINK: ${CHMABAPAY_HQ_PAYWAY_LINK:-}
 
+  # The dunning clock. `lead` is how long before a period ends its renewal invoice is
+  # raised; `grace` is how long after that invoice is due before enforcement freezes
+  # the account for non-payment. Both are read from the environment and nowhere else —
+  # the console has no switch for either — so a variable missing from this list is a
+  # setting that silently does nothing rather than one that fails.
+  #
+  # Enforcement ships **off**: deploy, watch a full D-7 -> D+6 cycle with the notices
+  # showing, and only then set it true. See the deploy-time checks in
+  # `.trae/specs/prepaid-subscription-lifecycle/tasks.md`.
+  BILLING_LEAD_DAYS: ${BILLING_LEAD_DAYS:-7}
+  BILLING_GRACE_DAYS: ${BILLING_GRACE_DAYS:-7}
+  BILLING_ENFORCE_ENABLED: ${BILLING_ENFORCE_ENABLED:-false}
+  # The same dunning tiers, by email, through Resend. Empty means the channel is off —
+  # and only the channel: every tier is still recorded in-app, which is what the
+  # dashboard banner reads, so a merchant is never unwarned by a provider outage. The
+  # from-address must be on a domain verified in the Resend account or it answers 403.
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  BILLING_EMAIL_FROM: ${BILLING_EMAIL_FROM:-billing@chmaba.com}
+
   RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
 
 services:
