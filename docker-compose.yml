@@ -85,6 +85,13 @@ x-api-env: &api-env
   CHMABAPAY_ADMIN_PASSWORD: ${CHMABAPAY_ADMIN_PASSWORD:-}
   CHMABAPAY_HQ_STORE_ID: ${CHMABAPAY_HQ_STORE_ID:-}
   CHMABAPAY_HQ_PAYWAY_LINK: ${CHMABAPAY_HQ_PAYWAY_LINK:-}
+  # The dunning clock and its email channel. The console has no switch for any of
+  # these, so one omitted from this list is a setting that silently does nothing.
+  BILLING_LEAD_DAYS: ${BILLING_LEAD_DAYS:-7}
+  BILLING_GRACE_DAYS: ${BILLING_GRACE_DAYS:-7}
+  BILLING_ENFORCE_ENABLED: ${BILLING_ENFORCE_ENABLED:-false}
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  BILLING_EMAIL_FROM: ${BILLING_EMAIL_FROM:-billing@chmaba.com}
 
 services:
   db:
