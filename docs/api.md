@@ -59,10 +59,11 @@ read. Retry with the same value to get the same payment back.
 
 Validation: `amount ≥ 0.01`, ≤ link max, ≤ 2 decimals — `amount_too_low` / `amount_too_high`
 (`400` from the service, `422` from the request schema) and `invalid_amount` (`422`).
-Missing/invalid key → `401 unauthorized`; suspended account → `403 account_suspended`.
-Quota exhausted → `402 quota_exceeded`. No link / disabled → `400 payment_link_disabled` /
-`400 store_disabled`. Unknown store → `404 store_not_found`, or `404 merchant_not_found` when
-addressed by `merchant=`.
+Missing/invalid key → `401 unauthorized`; suspended account → `403 account_suspended`;
+account frozen for an unpaid plan invoice → `403 account_restricted`. Quota exhausted →
+`402 quota_exceeded`. No link / disabled → `400 payment_link_disabled` / `400 store_disabled`;
+held by the platform for billing (`store_billing_suspended`) → `400`. Unknown store →
+`404 store_not_found`, or `404 merchant_not_found` when addressed by `merchant=`.
 
 Response `201 Created` (or `200` on idempotent replay):
 
@@ -274,10 +275,13 @@ Codes returned in `detail` (verified against `src/`):
 | `unauthorized` | 401 | Missing or invalid key |
 | `invalid_session` | 401 | Cookie-only endpoint called without a valid session |
 | `account_suspended` | 403 | The account is suspended |
+| `account_restricted` | 403 | The account is frozen for an unpaid plan invoice. No route is served except the billing allowlist (`GET /v1/billing/*`, `POST /v1/billing/change-plan`) — including every API key, which is refused wholesale. Settling the invoice, moving to Free, or moving to a smaller paid plan lifts it |
 | `quota_exceeded` | 402 | Plan quota reached |
 | `whitelabel_not_enabled` | 403 | Branding fields sent without the entitlement |
 | `invalid_amount` / `amount_too_low` / `amount_too_high` | 422 (or 400 from the service) | Amount rejected |
-| `payment_link_disabled` / `store_disabled` | 400 | Store has no link, or is disabled |
+| `payment_link_disabled` | 400 | Store has no active link |
+| `store_disabled` | 400 | The store is switched off — by the merchant, or by an operator |
+| `store_billing_suspended` | 400 | The platform is holding the store: the account is on a plan smaller than its store count. Unlike `store_disabled` this is not the merchant's own switch, and it clears when the plan is settled or a slot is swapped back on the billing page |
 | `offline_qr_requires_a_confirmation_source` | 400 | `hosted_qr=false` where nothing can confirm it |
 | `payload_too_long` | 400 | `GET /v1/khqr/render.svg` only: the payload does not fit a QR code. Not a request-body limit. |
 | `invalid_payload` | 400 | `GET /v1/khqr/render.svg`: the payload could not be encoded |
@@ -300,6 +304,17 @@ Codes returned in `detail` (verified against `src/`):
   stores on the account. Pending, scanned, expired and failed payments never count, and the
   window is keyed on `paid_at` — the month the money landed, not the month the code was minted.
   Exhausted → create returns `402` until the month rolls over or the plan is upgraded.
+- **A plan given up this month is not metered against the plan that replaced it.** The count is a
+  calendar-month total, so a merchant who settles 40,000 payments and then moves to a smaller plan
+  would be over the new allowance the instant they chose it — a total stop, for the rest of the
+  month, arrived at by accident. The new allowance therefore starts at the next calendar-month
+  boundary, and until then the store cap is the lever that bites. A merchant who was never on a
+  paid plan is metered from their first day: the deferral is keyed on a paid plan being given up,
+  not on a plan starting.
+  `GET /v1/billing/subscription` reports it as `quota_deferred_until` — the instant the new
+  allowance starts being enforced, `null` when it already is. It exists for the portal: usage is
+  counted against the plan *in force*, so a mid-month downgrade reads over-limit while every code
+  still mints, and this is the only way a client can explain that rather than contradict it.
 - A store can be marked **internal** on the store object (`is_internal`), which means it belongs
   to the platform itself rather than a merchant tenant — "ChmabaPay HQ" is the one such store,
   and it is where plan fees are collected. An internal store's payments are exempt from quota,
@@ -310,6 +325,70 @@ Codes returned in `detail` (verified against `src/`):
   `client_max_body_size`, which is nginx's 1 MB default — nothing in this repository raises it.
   (The "5 MB / 1,000 keys / 8 levels" figures previously written here were a spec that was never
   implemented.)
+
+## Billing and plan renewal
+
+Plan fees are **prepaid** and collected by KHQR, so there is no stored credential to charge and
+nothing renews itself: the merchant has to be asked, and has to pay. The whole sequence follows
+from that, and it is written down here because it reaches into the API an integrator's own systems
+call — a frozen account is refused, and a capped store stops minting.
+
+Timeline for one 30-day period, where `D` is the day the period ends (the invoice's `due_at`):
+
+| When | What happens |
+| --- | --- |
+| `D-7` | The renewal invoice is raised for the next period, and the first notice appears. |
+| `D-3`, `D-1`, `D` | Further notices, each more urgent than the last. |
+| `D+1`, `D+3`, `D+6` | Overdue notices. |
+| `D+7` | Grace ends and the account is **frozen** (`status: restricted`): no store can mint a code, the dashboard is read-only, and every API key is refused with `403 account_restricted`. Nothing is deleted and not one store row is written. |
+| on payment | The account is unfrozen and everything works again, because only its status was ever changed. |
+
+- **Three ways out of a freeze**, all on the billing page: settle the invoice; move to Free (the
+  unpaid invoice is withdrawn); or move to a smaller paid plan (that invoice is withdrawn and the
+  new plan starts when its own invoice is paid). Each ends with no open invoice and an active
+  account.
+- **Paying late bills from the day you paid.** An invoice settled *after* the freeze is voided
+  rather than marked paid — a `paid` invoice always describes a window the merchant actually
+  received — and a new invoice covers `[paid_at, paid_at + 30 days)`.
+- **A smaller plan caps the stores immediately.** Stores over the new allowance are held
+  (`billing_suspended_at` on the store object) and a new code against one answers
+  `400 store_billing_suspended`, while a payment already in a customer's hand still settles.
+  `POST /v1/stores/{public_id}/activate` swaps a held store back in, holding whichever store makes
+  room, so the count never changes.
+- Only `GET /v1/billing/plans` is public. The rest of `/v1/billing/*` is session-cookie only, and
+  while an account is frozen those routes plus reads are the *only* ones served.
+
+### The plan invoice object
+
+| field | notes |
+| --- | --- |
+| id | used by `POST /v1/billing/invoices/{id}/khqr` to mint a payable code |
+| period_month | `YYYY-MM` label derived from `due_at` — a label, not the window |
+| period_start, period_end | the window this invoice is a claim for |
+| due_at | when it was expected; `null` only on pre-2026 rows |
+| days_until_due, is_overdue | derived from `due_at` on every read, never stored |
+| status | `open` / `paid` / `waived` / `credited` / `void` |
+| base_fee_cents, overage_fee_cents, total_due_cents | the amount, in cents, with `_formatted` string twins |
+| paid_at | written only by a real settlement; a waiver and a credit carry none |
+| voided_at, void_reason | set when a claim was withdrawn: `downgraded`, `superseded`, `grace_expired`, `pre_lifecycle`, `operator` |
+
+`void` is unpaid-and-abandoned rather than settled: the window it named is released and can be
+billed again, which is why voiding is not how a debt is forgiven. A voided invoice is still
+**payable** — settling one is how a merchant who let a period lapse buys it back.
+
+### GET /v1/billing/notices
+
+At most one notice, most urgent first. `level` is `info` / `warning` / `critical`; `state` is
+`issuance`, `due_3`, `due_1`, `due_today`, `overdue_1`, `overdue_3`, `overdue_final` or `frozen`,
+with `frozen` outranking every tier and describing the account rather than the invoice — an
+operator can freeze an account with no invoice at all, and then the notice carries no amount.
+`title`, `body` and `action_label` are rendered server-side, and `action_url` deep-links to the
+billing page with the invoice preselected. `dismissible` is a policy the server owns, so a tier
+that must not be dismissed stays visible without a client release. Empty when nothing is owed.
+
+The state is derived from `due_at` on every read, never from the platform's own record of what it
+said, so a worker outage cannot hide a warning the merchant was owed — the endpoint itself says
+nothing about that table.
 
 ## Rate limits
 

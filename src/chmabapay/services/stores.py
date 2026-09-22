@@ -11,6 +11,7 @@ rows describe the rest of the mutation.
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -109,6 +110,31 @@ def reject_unentitled_branding(account: models.Account, payload) -> None:
         return
     if any(getattr(payload, name, None) for name in BRANDING_FIELDS):
         raise HTTPException(status_code=403, detail="whitelabel_not_enabled")
+
+
+async def plan_max_stores(
+    session: AsyncSession, account: models.Account
+) -> int | None:
+    """The live plan's store allowance, or None when no plan is in force.
+
+    `None` means "no allowance to apply", which is how both callers read it: as a ceiling
+    on creating stores (`_enforce_max_stores`) and as a cap on holding them
+    (`apply_store_cap`). It is the same kind of account — one with no `trial`/`active`
+    subscription — and in both cases the truthful answer is that nothing is being sold.
+    """
+    return (
+        await session.execute(
+            select(models.Plan.max_stores)
+            .join(
+                models.PlanSubscription,
+                models.PlanSubscription.plan_id == models.Plan.id,
+            )
+            .where(
+                models.PlanSubscription.account_id == account.id,
+                models.PlanSubscription.status.in_(["trial", "active"]),
+            )
+        )
+    ).scalar_one_or_none()
 
 
 async def create_store(session: AsyncSession, account: models.Account, payload: StoreCreate):
@@ -319,6 +345,189 @@ async def enable_store(
     await session.commit()
     await session.refresh(store)
     return store
+
+
+async def apply_store_cap(
+    session: AsyncSession, account: models.Account, *, max_stores: int | None
+) -> list[models.Store]:
+    """Hold the stores an account no longer has an allowance for, oldest first.
+
+    The consequence of moving to a plan smaller than the account's store count. It does
+    **not** delete anything, does **not** touch `status`, and does not touch keys or
+    webhooks: see `models.Store.billing_suspended_at` for why the hold is a flag rather than
+    a status, and D14 for why keys and webhooks are left alone — a key is a credential
+    rather than capacity, so a held store refuses it anyway, and revoking keys would break a
+    live integration for no enforcement at all.
+
+    **The survivors are the lowest-id stores**, which is what makes the default
+    deterministic. A merchant whose real business is a different store is not stranded: the
+    billing page offers a chooser, and that store is the income that funds the next payment.
+
+    Idempotent in both directions, and that is the load-bearing property. It counts what is
+    *currently* unheld rather than re-deriving a set from scratch, so once a merchant has
+    re-picked their stores the count matches the allowance and a re-run is a no-op instead of
+    undoing their choice. Short of the allowance it releases the most recently held first, so
+    an upgrade restores in reverse order.
+
+    A store an operator disabled for abuse is never released by this: its flag was never set.
+
+    The caller commits.
+    """
+    if max_stores is None:
+        return []
+
+    stores = list(
+        (
+            await session.execute(
+                select(models.Store)
+                .where(models.Store.account_id == account.id)
+                .order_by(models.Store.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    held = [s for s in stores if s.billing_suspended_at is not None]
+    free = [s for s in stores if s.billing_suspended_at is None]
+    now = models.utcnow()
+
+    if len(free) > max_stores:
+        # Newest first, so the oldest keep working — the default the notice named.
+        surplus = sorted(free, key=lambda s: s.id, reverse=True)[: len(free) - max_stores]
+        for store in surplus:
+            store.billing_suspended_at = now
+            store.updated_at = now
+        await session.flush()
+        return sorted(surplus, key=lambda s: s.id)
+
+    if len(free) < max_stores and held:
+        # Highest id first, which is the exact mirror of how they were held — and by id
+        # rather than by `billing_suspended_at`, because SQLite hands back naive datetimes
+        # and sorting those against an aware `now` would raise.
+        shortage = sorted(held, key=lambda s: s.id, reverse=True)[: max_stores - len(free)]
+        for store in shortage:
+            store.billing_suspended_at = None
+            store.updated_at = now
+        await session.flush()
+        return []
+
+    return []
+
+
+class StoreSlotMove(NamedTuple):
+    """The result of one slot swap.
+
+    `moved` is not `displaced is not None`: a store brought back on a plan with room
+    displaces nothing and still changed.
+    """
+
+    store: models.Store
+    displaced: models.Store | None
+    moved: bool
+
+
+async def move_store_slot(
+    session: AsyncSession, account: models.Account, store_public_id: str
+) -> StoreSlotMove:
+    """Bring a billing-held store back, holding whichever store makes room for it.
+
+    The merchant's half of the store cap. `apply_store_cap` picks the survivors
+    deterministically — the oldest — so a downgrade never blocks on a decision, and this
+    is how a merchant whose real business is a different store gets it back. Leaving them
+    stuck with the platform's arbitrary choice would cost them the income that funds their
+    next payment (§7.6).
+
+    **The allowance is preserved, not exceeded.** The store comes back and exactly one live
+    store takes its place on the held side, so the count is the same before and after: never
+    six, never four. On a plan with room nothing is displaced, because there is nothing to
+    make room for. Counting from the current set rather than re-deriving one is what keeps
+    this and a later `apply_store_cap` in agreement — a re-run after a merchant has
+    re-picked finds the count already at the allowance and changes nothing.
+
+    **Refused for a store an operator disabled.** `STORE_DISABLED` is an abuse decision,
+    not a billing hold, and this route cannot reverse it — `enable_store` is the route that
+    can. The two are separately answerable on purpose (§7.6).
+
+    The caller commits.
+    """
+    # Serialise the swap per account, and take the lock *before* reading anything else.
+    # Two chooser clicks arriving together would otherwise both read the same live set and
+    # both release a store, leaving one more live than the plan allows; and a store read
+    # before the lock is never refreshed afterwards, because a session keeps the state it
+    # already has for a row it has loaded. Postgres honours the clause; SQLite ignores it,
+    # and its single writer serialises the same two requests anyway.
+    await session.execute(
+        select(models.Account.id).where(models.Account.id == account.id).with_for_update()
+    )
+
+    store = await get_store(session, account, store_public_id)
+
+    if store.status == models.STORE_DISABLED:
+        raise HTTPException(status_code=409, detail="store_disabled")
+
+    if store.billing_suspended_at is None:
+        # Already live. Nothing changed, so nothing is recorded — the same rule
+        # `enable_store` follows, and the reason a double-click writes one audit row.
+        return StoreSlotMove(store=store, displaced=None, moved=False)
+
+    max_stores = await plan_max_stores(session, account)
+    now = models.utcnow()
+
+    store.billing_suspended_at = None
+    store.updated_at = now
+    # Flushed before the count is read so the store being brought back is part of the set
+    # the surplus is measured against: otherwise it would look like a store that still
+    # needs a slot making.
+    await session.flush()
+
+    displaced: list[models.Store] = []
+    if max_stores is not None:
+        live = list(
+            (
+                await session.execute(
+                    select(models.Store)
+                    .where(
+                        models.Store.account_id == account.id,
+                        models.Store.billing_suspended_at.is_(None),
+                    )
+                    .order_by(models.Store.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        surplus = len(live) - max_stores
+        if surplus > 0:
+            # Newest first, the mirror of how the downgrade held them, and never the store
+            # the merchant just chose.
+            candidates = sorted(
+                (s for s in live if s.id != store.id), key=lambda s: s.id, reverse=True
+            )
+            for victim in candidates[:surplus]:
+                victim.billing_suspended_at = now
+                victim.updated_at = now
+                displaced.append(victim)
+            await session.flush()
+
+    audit.record(
+        session,
+        actor=account,
+        action="store.slot_moved",
+        target_type="Store",
+        target_id=store.id,
+        details={
+            "name": store.name,
+            "displaced_id": displaced[0].id if displaced else None,
+            "displaced_name": displaced[0].name if displaced else None,
+        },
+    )
+    await session.commit()
+    await session.refresh(store)
+    for row in displaced:
+        await session.refresh(row)
+    return StoreSlotMove(
+        store=store, displaced=displaced[0] if displaced else None, moved=True
+    )
 
 
 async def update_store(

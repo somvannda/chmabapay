@@ -21,6 +21,7 @@ from ..openapi import (
 from ..services import billing as billing_svc
 from ..services import notifications
 from ..services import payments as svc
+from ..services import stores as store_svc
 from .auth import get_current_session_account
 
 router = APIRouter(prefix="/v1/billing", tags=["billing"])
@@ -115,6 +116,70 @@ async def _get_active_sub(
 class SubscriptionOut(BaseModel):
     subscription: dict[str, Any] | None
     plan: PlanOut | None
+    # When the coverage the merchant paid for ends — the date the dashboard's plan card shows.
+    # Top-level rather than a key inside `subscription`, so it reads the same whether or not a
+    # subscription row accompanies it: a frozen merchant's row may be gone while their debt is not.
+    current_period_end: datetime | None = None
+    # Set while a plan invoice is unpaid: what the billing page's Pay action should open, and the
+    # reason a notice exists at all.
+    outstanding_invoice_id: int | None = None
+    # Set while the current plan's allowance is not yet being enforced, because a paid plan was
+    # given up during this calendar month: the instant enforcement starts (§7.7). A date rather
+    # than a flag, because the sentence that explains it names the date and the month boundary is
+    # policy the server owns. The usage bar reads its allowance from the plan in force, so a
+    # mid-month downgrade reads over-limit while nothing is blocked — this is what lets the page
+    # say why instead of contradicting itself.
+    quota_deferred_until: datetime | None = None
+
+
+@router.get("/notices", dependencies=SESSION_SECURITY, responses=AUTH_ERRORS)
+async def list_notices(
+    account: models.Account = Depends(get_current_session_account),
+    session: AsyncSession = Depends(get_session),
+):
+    """The one notice the portal's banner should show, or none at all.
+
+    At most one, and the copy is computed server-side with it (see `billing.derive_notices`), so
+    the sentence a merchant reads here is the same one the reminder worker recorded having
+    delivered. Session-only on purpose: this is what the shell renders, not an API a merchant's
+    own systems consume.
+    """
+    return {"notices": await billing_svc.derive_notices(session, account)}
+
+
+async def _void_open_invoices(
+    session: AsyncSession, account_id: int, *, reason: str, now: datetime
+) -> list[models.PlanInvoice]:
+    """Retire every unpaid invoice on the account, and record why.
+
+    Used where a merchant resolves a balance by choosing a different plan rather than paying
+    it (§7.5). Voiding is not tidiness — it *is* the resolution: the freeze is keyed on an open
+    overdue invoice, so a merchant who moved to Starter while the Pro invoice stayed open would
+    be frozen *on Starter*, permanently, blocked by a plan they have already declined to buy.
+
+    Every unpaid one, not just the oldest, because `find_open_invoice` refuses a new purchase
+    while anything is outstanding — leaving one behind would recreate the same trap on the next
+    click. The rows are kept, marked `void` with a reason: "the merchant walked away" and "the
+    platform never should have billed this" are different stories to tell a year later.
+    """
+    rows = list(
+        (
+            await session.execute(
+                select(models.PlanInvoice).where(
+                    models.PlanInvoice.account_id == account_id,
+                    models.PlanInvoice.status.in_(billing_svc.UNPAID_STATUSES),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for invoice in rows:
+        invoice.status = billing_svc.INVOICE_VOID
+        invoice.void_reason = reason
+        invoice.voided_at = now
+        invoice.updated_at = now
+    return rows
 
 
 @router.get(
@@ -128,11 +193,23 @@ async def get_subscription(
     session: AsyncSession = Depends(get_session),
 ):
     sub, plan = await _get_active_sub(session, account.id)
+    # Read here rather than inside `_subscription_out`, which has no session: the outstanding
+    # invoice belongs to the account, not to the subscription, and it is the one thing the plan
+    # card needs when there is no subscription left to describe.
+    outstanding = await billing_svc.find_open_invoice(session, account.id)
+    outstanding_id = outstanding.id if outstanding is not None else None
     if sub is None or plan is None:
-        return SubscriptionOut(subscription=None, plan=None)
+        return SubscriptionOut(
+            subscription=None, plan=None, outstanding_invoice_id=outstanding_id
+        )
     return SubscriptionOut(
         subscription=_subscription_out(sub, plan),
         plan=PlanOut.from_model(plan),
+        current_period_end=sub.next_billing_at,
+        outstanding_invoice_id=outstanding_id,
+        # Only asked when there is a plan in force: with no subscription there is no allowance
+        # for a deferral to postpone.
+        quota_deferred_until=await svc.quota_deferred_until(session, account.id),
     )
 
 
@@ -177,7 +254,12 @@ async def change_plan(
 
     A move to a free tier still applies immediately — there is nothing to collect,
     and making a downgrade wait on a payment would trap a merchant on a plan they
-    are trying to leave.
+    are trying to leave. It does enforce the allowance that choice implies
+    (`apply_store_cap`), because otherwise "downgrade to Free" would be a way to keep
+    every store running for nothing.
+
+    An unpaid invoice blocks a new purchase rather than accruing beside it: two open
+    periods through one QR flow is a conversation, not a checkout.
     """
     res = await session.execute(
         select(models.Plan).where(models.Plan.code == body.plan_code)
@@ -198,6 +280,18 @@ async def change_plan(
         raise HTTPException(status_code=400, detail="plan_unchanged")
 
     if new_plan.monthly_fee_cents <= 0:
+        # Moving to Free writes off whatever is outstanding, because there is nothing left to
+        # collect against it: the plan it was billing for is the one being left. Without this a
+        # merchant mid-renewal-window keeps an open claim on a plan they have just left, which
+        # blocks their next purchase (`find_open_invoice`) and, for a frozen account, keeps them
+        # frozen on Free — the exact trap §7.5 exists to prevent.
+        await _void_open_invoices(
+            session, account.id, reason=billing_svc.VOID_DOWNGRADED, now=now
+        )
+        # And a freeze follows the debt it is keyed on: the debt is gone, so the hold is too.
+        # A no-op for an ordinary account, which is not restricted in the first place.
+        billing_svc.lift_billing_hold(account)
+
         if old_sub is not None:
             old_sub.status = "canceled"
             old_sub.canceled_at = now
@@ -211,6 +305,14 @@ async def change_plan(
         )
         session.add(new_sub)
         await session.flush()
+
+        # A downgrade enforces the allowance it is choosing. Without this, "downgrade to
+        # Free" is a menu item that keeps every store running for free — the same leak as
+        # not paying, reached without a lapse.
+        await store_svc.apply_store_cap(
+            session, account, max_stores=new_plan.max_stores
+        )
+
         audit.record(
             session,
             actor=account,
@@ -223,14 +325,34 @@ async def change_plan(
         await session.refresh(new_sub)
         return ChangePlanOut(subscription=_subscription_out(new_sub, new_plan))
 
-    # One invoice per account per period is a database constraint, so a second plan
-    # change in the same month cannot be billed. Refusing it here turns what would
-    # otherwise be a constraint violation (a 500) into an answer the client can
-    # explain, and stops two paid subscriptions being parked against one invoice.
-    period = billing_svc.period_month_for(now)
-    existing = await billing_svc.find_period_invoice(session, account.id, period)
-    if existing is not None:
-        raise HTTPException(status_code=409, detail="period_already_invoiced")
+    # An unpaid invoice blocks a second purchase. Two periods settled through one QR flow is
+    # a conversation rather than a checkout. This replaces the old calendar-month guard,
+    # which drifted against the 30-day credit and happily let a merchant accrue two unpaid
+    # periods in two different months.
+    #
+    # A *frozen* account is the exception, and it is the whole point of §7.5's chooser: the
+    # invoice standing in the way is the one the freeze is keyed on, so this click is the
+    # merchant resolving it by choosing a plan they can afford. Refusing would leave them frozen
+    # on a plan they have already declined to buy, with no path forward but support.
+    outstanding = await billing_svc.find_open_invoice(session, account.id)
+    if outstanding is not None:
+        if account.status != models.ACCOUNT_RESTRICTED:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"open_invoice_unpaid: invoice {outstanding.id} for "
+                    f"{outstanding.period_month} is still unpaid"
+                ),
+            )
+        await _void_open_invoices(
+            session, account.id, reason=billing_svc.VOID_DOWNGRADED, now=now
+        )
+        # The coverage whose window was just written off is retired with it. Leaving it `active`
+        # would let W3 re-raise that window an hour later — the void frees the period key — and
+        # the merchant would be back at this same click with the same balance. Their plan is not
+        # lost: the purchase below is parked as `pending` and in force the moment it is paid,
+        # which is the rule everywhere else a paid tier is bought.
+        await billing_svc.retire_live_subscriptions(session, account.id, now=now)
 
     pending = models.PlanSubscription(
         account_id=account.id,
@@ -245,8 +367,18 @@ async def change_plan(
     # `issue_invoice` returns `(invoice, created)`. Unpacking it matters: a tuple is
     # never `None`, so treating the result as a single invoice skipped the guard below
     # and then raised on `invoice.id`, turning every paid-plan change into a 500.
+    #
+    # The window starts now: this invoice buys the period the merchant is about to use,
+    # which is why a first purchase is prepaid while a renewal is billed in its lead
+    # window. `due_at = now` because nothing is in force yet — there is no service to
+    # lapse, so this one is collectible immediately and carries no dunning.
     invoice, _created = await billing_svc.issue_invoice(
-        session, pending, new_plan, period_month=period, now=now
+        session,
+        pending,
+        new_plan,
+        period_start=now,
+        period_end=now + billing_svc.CREDIT_PERIOD,
+        due_at=now,
     )
     if invoice is None:
         # Unreachable while the fee check above is `> 0`. It is here so that a zero
@@ -263,7 +395,7 @@ async def change_plan(
             "from_plan": old_code,
             "to_plan": new_plan.code,
             "invoice_id": invoice.id,
-            "period_month": period,
+            "period_month": invoice.period_month,
         },
     )
     await session.commit()
@@ -313,9 +445,31 @@ async def _get_hq_store(session: AsyncSession) -> models.Store:
 
 
 def _serialize_invoice(invoice: models.PlanInvoice) -> dict[str, Any]:
+    """One invoice, including where its window sits and whether it is late.
+
+    `issued_at` used to be read here through a `getattr` default, because the column was
+    intended and never added. The real dates replace it: `due_at` is what every reminder and
+    every grace clock is measured from, and `is_overdue` is derived from it rather than
+    stored, because a stored flag needs a writer to keep it true.
+
+    `as_utc` is the service's, not a local copy: the same naive-from-SQLite guard decides
+    `is_overdue` here and `lapsed` in `settle_invoice`, and two copies could disagree about
+    what "overdue" means on the two sides of one payment.
+    """
+    now = datetime.now(UTC)
+    due_at = billing_svc.as_utc(invoice.due_at)
     return {
         "id": invoice.id,
         "period_month": invoice.period_month,
+        "period_start": invoice.period_start,
+        "period_end": invoice.period_end,
+        "due_at": invoice.due_at,
+        "days_until_due": None if due_at is None else (due_at - now).days,
+        "is_overdue": (
+            due_at is not None
+            and due_at < now
+            and invoice.status in billing_svc.UNPAID_STATUSES
+        ),
         "status": invoice.status,
         "base_fee_cents": invoice.base_fee_cents,
         "base_fee_formatted": _money_str(invoice.base_fee_cents),
@@ -326,7 +480,8 @@ def _serialize_invoice(invoice: models.PlanInvoice) -> dict[str, Any]:
         "total_due_cents": invoice.total_due_cents,
         "total_due_formatted": _money_str(invoice.total_due_cents),
         "paid_at": invoice.paid_at,
-        "issued_at": getattr(invoice, "issued_at", None),
+        "voided_at": invoice.voided_at,
+        "void_reason": invoice.void_reason,
         "chmabapay_payment_id_ref": (
             str(invoice.chmabapay_payment_id) if invoice.chmabapay_payment_id is not None else None
         ),
@@ -414,8 +569,12 @@ async def get_invoice_khqr(
     if invoice is None:
         raise HTTPException(status_code=404, detail="invoice_not_found")
 
-    if invoice.status == "paid":
+    if invoice.status == billing_svc.INVOICE_PAID:
         raise HTTPException(status_code=400, detail="invoice_already_paid")
+
+    # A `void` invoice is still payable, on purpose: a merchant whose account was frozen,
+    # or who walked away and came back, buys their plan back by settling the code they
+    # already have. Refusing it would remove the only route back.
 
     hq_store = await _get_hq_store(session)
     reference_id = f"INV-{invoice.id}-{invoice.period_month}"
@@ -430,10 +589,11 @@ async def get_invoice_khqr(
     )
 
     invoice.chmabapay_payment_id = payment.id
-    if invoice.status == "draft":
-        invoice.status = "issued"
-    if hasattr(invoice, "issued_at") and getattr(invoice, "issued_at", None) is None:
-        invoice.issued_at = datetime.now(UTC)
+    # Minting a code is what turns a raised invoice into a collectible one. `draft` and
+    # `issued` were the old spellings of that state; they are still *read* as unpaid, but
+    # nothing writes them again.
+    if invoice.status in billing_svc.LEGACY_UNPAID:
+        invoice.status = billing_svc.INVOICE_OPEN
     await session.commit()
     await session.refresh(invoice)
 

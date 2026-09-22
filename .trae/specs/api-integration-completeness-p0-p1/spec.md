@@ -67,8 +67,8 @@
 5. Frontend build: Use existing `next build` + `next start` on port 3001 for verification as project_memory describes (fixes stale `.next` CSS hash issue by blowing away `.next` before rebuild).
 
 ## Open Questions
-- [ ] Does the existing W2 webhook worker persist delivery attempts with HTTP status? If not we'll expose Event timestamps + endpoint id only and mark the response_body_preview as "N/A for historical deliveries" until infra catches up.
-- [ ] ChmabaPay HQ store id for invoice self-billing KHQR: hard-code to env var `CHMABAPAY_HQ_STORE_ID` (acceptable)? Yes assumed — if unset at runtime, fallback to first store owned by admin_account.
+- [x] Does the existing W2 webhook worker persist delivery attempts with HTTP status? If not we'll expose Event timestamps + endpoint id only and mark the response_body_preview as "N/A for historical deliveries" until infra catches up. → resolved: yes, it does — `models.EventDelivery` (`src/chmabapay/models.py:285`) persists `last_response_status`, `attempts` and `last_error` per `(event, endpoint)`, and `GET /v1/webhooks/{endpoint_id}/deliveries` (`src/chmabapay/routers/webhooks.py:377`, `list_webhook_deliveries`) returns them as `http_status` / `attempt_count` / `response_body_preview`, so the Event-only fallback shape was never needed.
+- [x] ChmabaPay HQ store id for invoice self-billing KHQR: hard-code to env var `CHMABAPAY_HQ_STORE_ID` (acceptable)? Yes assumed — if unset at runtime, fallback to first store owned by admin_account. → resolved: `resolve_hq_store` (`src/chmabapay/services/billing.py:204`) resolves in three steps, not two — `CHMABAPAY_HQ_STORE_ID` first (matches by numeric id or `public_id`, source `"env"`), then a store *named* `ChmabaPay HQ` owned by an `is_platform_admin` account (source `"console"`, so plan fees cannot land in an operator's unrelated store), and only then the admin account's first active store (source `"fallback"`); "first store owned by admin" is the last resort, not the default.
 
 ---
 

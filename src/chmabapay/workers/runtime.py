@@ -46,6 +46,15 @@ from .w5_retention_sweeper import (
     retention_heartbeat_dedup_key,
     retention_heartbeat_job_payload,
 )
+from .w6_billing_lifecycle import (
+    JOB_ENFORCE,
+    JOB_REMIND,
+    BillingLifecycleWorker,
+    enforce_heartbeat_job_payload,
+    heartbeat_dedup_key,
+    reminder_heartbeat_job_payload,
+)
+from .w6_billing_lifecycle import QUEUE as Q_LIFECYCLE
 
 log = logging.getLogger(__name__)
 
@@ -58,6 +67,7 @@ def worker_registry() -> dict[str, Worker]:
         Q_BILLING: BillingInvoiceWorker(),
         Q_EXPIRY: ExpirySweeperWorker(),
         Q_RETENTION: RetentionSweeperWorker(),
+        Q_LIFECYCLE: BillingLifecycleWorker(),
     }
 
 
@@ -127,6 +137,8 @@ def start_workers(transport: QueueTransport, stop: asyncio.Event) -> list[asynci
 #   - W4 Expiry sweep minute-granularity job (60s) dedup per minute
 #   - W1 Payment detection safety-net scan for orphans pending > 30s
 #   - W3 Billing sweep hourly job, dedup per hour (invoice issuance is idempotent)
+#   - W6 Dunning clock hourly, two jobs deduped per hour: `remind` (record the tier the
+#     invoice has reached) and `enforce` (freeze past-grace accounts, expire parked purchases)
 #
 # NFR-2 compliance: this scheduler uses loop.call_at rescheduling, ZERO while
 # loops anywhere except QueueTransport.run_workers in workers/base.py (count=1).
@@ -173,6 +185,30 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
             )
         except Exception as exc:  # noqa: BLE001
             log.debug("W3 heartbeat enqueue skip: %s", exc)
+
+    async def w6_tick() -> None:
+        """Both halves of the dunning clock, each deduped by its own hour.
+
+        The `enforce` half is enqueued whether or not `billing_enforce_enabled` is set: the
+        service reports what it would have done and changes nothing, which is how the sequence is
+        watched in production before the switch is thrown. Skipping the enqueue instead would make
+        the flag look identical to a stalled worker.
+        """
+        from ..services.billing import utcnow
+
+        moment = utcnow()
+        for job_type, payload in (
+            (JOB_REMIND, reminder_heartbeat_job_payload()),
+            (JOB_ENFORCE, enforce_heartbeat_job_payload()),
+        ):
+            try:
+                await transport.enqueue(
+                    Q_LIFECYCLE,
+                    dedup_key=heartbeat_dedup_key(job_type, moment),
+                    payload=payload,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.debug("W6 %s heartbeat enqueue skip: %s", job_type, exc)
 
     async def w2_fallback_fanout(batch: int = 20) -> None:
         try:
@@ -228,6 +264,9 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
     )
     w5_interval = max(60.0, float(settings.retention_sweep_interval_seconds or 86400.0))
     w3_interval = max(60.0, float(settings.billing_sweep_interval_seconds or 3600.0))
+    # The dunning clock runs at the invoice clock's cadence: both are "how often the platform
+    # looks at where a subscription sits", and one setting is one thing for an operator to tune.
+    w6_interval = w3_interval
 
     # Fire once immediately for warm-up.
     #
@@ -244,6 +283,10 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
     # idempotent per (account, period), so a boot that finds nothing due costs one
     # indexed query.
     await w3_tick()
+    # W6 for the third time and the same reason, plus one of its own: the grace clock is what
+    # freezes an account, and a boot is the last moment at which a skipped hour is harmless.
+    # Both halves are idempotent — one row per (invoice, tier), one status write per account.
+    await w6_tick()
 
     # Recursive callback chains — stop flag checked each reschedule.
     def _schedule_w4() -> None:
@@ -318,6 +361,18 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
 
         loop.create_task(_do())
 
+    def _schedule_w6() -> None:
+        if stop.is_set():
+            return
+
+        async def _do() -> None:
+            if stop.is_set():
+                return
+            await w6_tick()
+            loop.call_later(w6_interval, _schedule_w6)
+
+        loop.create_task(_do())
+
     # Prime the first reschedules.
     loop.call_later(w4_interval, _schedule_w4)
     loop.call_later(w2_interval, _schedule_w2)
@@ -325,6 +380,7 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
     loop.call_later(w1_young_interval, _schedule_w1_young)
     loop.call_later(w5_interval, _schedule_w5)
     loop.call_later(w3_interval, _schedule_w3)
+    loop.call_later(w6_interval, _schedule_w6)
 
     # Block on stop.wait() until shutdown. This is a simple .wait(), no while loop.
     await stop.wait()

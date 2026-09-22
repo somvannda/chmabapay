@@ -362,11 +362,62 @@ async def _maybe_promote_admin_and_seed_hq(
     await session.commit()
 
 
+# What a frozen (`restricted`) account may still reach. §7.4: reads, plus the routes that
+# clear the debt. Named explicitly rather than inferred, because "the billing page" *is* the
+# point of the state — a frozen merchant with no way to pay is a merchant who phones support.
+#
+# `POST /v1/billing/change-plan` is here in both of its uses: paying by settling the invoice,
+# and choosing a smaller plan instead. Both are ways out (§7.5), and neither grants anything
+# until it is paid — a paid tier lands in `pending` with an invoice.
+RESTRICTED_ALLOWED_WRITES: frozenset[tuple[str, str]] = frozenset(
+    {("POST", "/v1/billing/change-plan")}
+)
+
+# The reads a frozen account may *not* have, because they are not reads.
+#
+# `GET /v1/transactions/check-status/{id}` settles the payment it polls: its handler reaches
+# `status_reconciler` → `services.payments.mark_paid`, which flips the payment, writes a ledger
+# entry, fires a webhook and can settle a plan invoice. It is exempt from the read allowance on
+# purpose, and refusing it costs the merchant nothing: settlement is W1's job, on a 5s/30s
+# sweep, and it does not depend on the merchant's own poll. An in-flight code a customer is
+# still holding therefore settles normally (§7.6) — what stops is the *merchant* driving writes.
+RESTRICTED_REFUSED_READS: frozenset[str] = frozenset({"/v1/transactions/check-status"})
+
+
+def _under(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(prefix + "/")
+
+
+def restricted_may_reach(request: Request) -> bool:
+    """Whether a frozen account's session may make this request.
+
+    The rule is deliberately coarse: **reads are open, writes are closed except the billing
+    escape hatch.** Every route that does something reaches the gate through one of the two
+    choke points, so a new route is covered the day it is added rather than the day someone
+    remembers — `test_every_mutating_route_refuses_a_frozen_account` proves it by enumerating
+    the app's own routes.
+    """
+    method = request.method.upper()
+    if (method, request.url.path) in RESTRICTED_ALLOWED_WRITES:
+        return True
+    if method in ("GET", "HEAD", "OPTIONS"):
+        return not any(
+            _under(request.url.path, prefix) for prefix in RESTRICTED_REFUSED_READS
+        )
+    return False
+
+
 async def get_current_session_account(
     request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> models.Account:
-    """FastAPI dependency: read JWT cookie, verify, load Account. Raises 401 on failure."""
+    """FastAPI dependency: read JWT cookie, verify, load Account. Raises 401 on failure.
+
+    A `restricted` account is *served*, not locked out — that is the whole reason the freeze
+    uses its own status rather than `suspended` (§7.4). It gets here, and the read-only gate
+    above decides per request what it may do. `suspended` keeps its 401: an account under
+    review cannot sign in at all, and `suspended` outranks `restricted`.
+    """
     settings = get_settings()
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
@@ -382,8 +433,13 @@ async def get_current_session_account(
         select(models.Account).where(models.Account.id == account_id)
     )
     account = res.scalar_one_or_none()
-    if account is None or account.status != models.ACCOUNT_ACTIVE:
+    if account is None or account.status not in (
+        models.ACCOUNT_ACTIVE,
+        models.ACCOUNT_RESTRICTED,
+    ):
         raise HTTPException(status_code=401, detail="invalid_session")
+    if account.status == models.ACCOUNT_RESTRICTED and not restricted_may_reach(request):
+        raise HTTPException(status_code=403, detail="account_restricted")
     return account
 
 
@@ -651,7 +707,10 @@ async def password_login(
         )
         await session.commit()
         raise HTTPException(status_code=401, detail="invalid_credentials")
-    if account.status != models.ACCOUNT_ACTIVE:
+    if account.status not in (models.ACCOUNT_ACTIVE, models.ACCOUNT_RESTRICTED):
+        # `restricted` is allowed through, and only `restricted`: a frozen merchant has to be
+        # able to sign in to reach the billing page that clears the debt. `suspended` is an
+        # operator's lockout and stays one — no session at all.
         _audit_login(
             session, account, "auth.login_failed", email=email, ip=ip,
             reason="account_suspended",

@@ -8,7 +8,10 @@ on a repeat — an action that changed nothing records nothing.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import httpx
+import pytest
 import pytest_asyncio
 from conftest import make_account, make_key, make_store, make_webhook
 from sqlalchemy import func, select
@@ -291,6 +294,141 @@ async def test_crediting_an_invoice_records_what_was_given_up(client):
     assert entry.details["credited_cents"] == 3000
     assert entry.details["total_due_cents"] == 5999
     assert await active_plan_code(merchant.id) == "pro"
+
+
+async def freeze(account_id: int) -> None:
+    """Put the account where the enforcement job leaves it.
+
+    Written directly rather than by running W6: this file is about what an operator can
+    do to a frozen account, and the freeze itself is `test_billing_dunning.py`'s subject.
+    """
+    async with session_factory() as session:
+        row = await session.get(models.Account, account_id)
+        assert row is not None
+        row.status = models.ACCOUNT_RESTRICTED
+        await session.commit()
+
+
+async def backdate(invoice_id: int, *, days: int) -> None:
+    """Move an invoice's due date into the past — the only clock the overdue filter and
+    the dunning copy read."""
+    async with session_factory() as session:
+        invoice = await session.get(models.PlanInvoice, invoice_id)
+        assert invoice is not None
+        invoice.due_at = datetime.now(UTC) - timedelta(days=days)
+        await session.commit()
+
+
+async def subscription_statuses(account_id: int) -> list[str]:
+    async with session_factory() as session:
+        return list(
+            (
+                await session.execute(
+                    select(models.PlanSubscription.status).where(
+                        models.PlanSubscription.account_id == account_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+async def test_voiding_an_invoice_withdraws_the_claim_without_granting_it(client):
+    merchant, invoice_id = await buy_an_invoice(client)
+    operator = await make_operator()
+
+    async with signed_in(operator) as admin:
+        res = await admin.post(
+            f"/v1/admin/invoices/{invoice_id}/resolve",
+            json={"action": "void", "reason": "duplicate of a window already billed"},
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["status"] == "void"
+        assert body["void_reason"] == "operator"
+        assert body["voided_at"] is not None
+        # A withdrawal is not a settlement: nothing arrived and nothing was forgiven.
+        assert body["paid_at"] is None
+        assert body["total_due_cents"] == 5999
+
+        again = await admin.post(
+            f"/v1/admin/invoices/{invoice_id}/resolve",
+            json={"action": "mark-paid", "reason": "trying it on"},
+        )
+        assert again.status_code == 409
+        assert again.json()["detail"] == "invoice_already_void"
+
+    # Unlike a waiver, `void` does not buy the period: the pending subscription is exactly
+    # where `change-plan` left it, so the merchant is still on their old plan.
+    assert await active_plan_code(merchant.id) is None
+    assert await subscription_statuses(merchant.id) == ["pending"]
+
+    entry = (await rows("invoice.resolved"))[0]
+    assert entry.actor_account_id == operator.id
+    assert entry.details["resolution"] == "void"
+    assert entry.details["reason"] == "duplicate of a window already billed"
+    assert entry.details["total_due_cents"] == 5999
+
+
+@pytest.mark.parametrize("action", ["mark-paid", "waive", "credit", "void"])
+async def test_resolving_the_invoice_that_froze_an_account_unfreezes_it(client, action):
+    """Whichever way the debt stops existing, the hold has to lift with it.
+
+    All four actions answer one question — "is this invoice still a claim?" — and the freeze
+    is keyed on the answer being yes. An account left `restricted` with no open invoice is
+    stranded: the billing page it is allowed to reach has nothing left in it to pay.
+    """
+    merchant, invoice_id = await buy_an_invoice(client)
+    operator = await make_operator()
+    await freeze(merchant.id)
+
+    async with signed_in(operator) as admin:
+        res = await admin.post(
+            f"/v1/admin/invoices/{invoice_id}/resolve",
+            json={"action": action, "reason": "settled out of band"},
+        )
+        assert res.status_code == 200, res.text
+
+    async with session_factory() as session:
+        row = await session.get(models.Account, merchant.id)
+        assert row is not None
+        assert row.status == models.ACCOUNT_ACTIVE
+
+    # The three settlements put the plan in force; the void deliberately does not.
+    assert await active_plan_code(merchant.id) == (None if action == "void" else "pro")
+
+
+async def test_the_overdue_filter_lists_what_is_about_to_lapse(client):
+    """The operator's half of the dunning clock: unpaid invoices past their due date,
+    visible without opening each row."""
+    _merchant, invoice_id = await buy_an_invoice(client)
+    operator = await make_operator()
+    await backdate(invoice_id, days=8)
+
+    async with signed_in(operator) as admin:
+        listing = await admin.get("/v1/admin/invoices")
+        assert listing.status_code == 200, listing.text
+        row = listing.json()["data"][0]
+        # The row carries the clock even when the filter is off — `open` alone cannot say
+        # whether the due date has passed.
+        assert row["is_overdue"] is True
+        assert row["due_at"] is not None
+
+        filtered = await admin.get("/v1/admin/invoices?overdue=true")
+        assert filtered.status_code == 200, filtered.text
+        assert [r["id"] for r in filtered.json()["data"]] == [invoice_id]
+        assert filtered.json()["pagination"]["total_rows"] == 1
+
+        # A settled invoice is not overdue however old its due date is, which is the whole
+        # reason the filter is derived from `due_at` rather than filtered on `status`.
+        await admin.post(
+            f"/v1/admin/invoices/{invoice_id}/resolve",
+            json={"action": "waive", "reason": "settled out of band"},
+        )
+        settled = await admin.get("/v1/admin/invoices?overdue=true")
+        assert settled.json()["data"] == []
+        assert settled.json()["pagination"]["total_rows"] == 0
 
 
 # --------------------------------------------------------------------------- #

@@ -51,6 +51,12 @@ async def resolve_key_context(
         raise _unauthorized()
     api_key, account = row
 
+    if account.status == models.ACCOUNT_RESTRICTED:
+        # A frozen account's API is refused in full, in one line (D12). A key is not a
+        # read-only instrument — it is the integration that mints payment codes — so there is
+        # no allowlist to apply here, and the distinction from a session is deliberate: a
+        # session reaches the portal and can pay the invoice, a key cannot pay anything.
+        raise HTTPException(status_code=403, detail="account_restricted")
     if account.status != models.ACCOUNT_ACTIVE:
         raise HTTPException(status_code=403, detail="account_suspended")
 

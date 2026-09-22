@@ -22,6 +22,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_PAGE = REPO_ROOT / "web" / "landing" / "app" / "api" / "docs" / "page.tsx"
+API_DOC = REPO_ROOT / "docs" / "api.md"
 
 # Routers whose every route sits behind a credential. Router-level
 # `dependencies=AUTH_SECURITY` in the source is what makes this true; if a route
@@ -229,6 +230,46 @@ def test_the_previously_omitted_endpoints_are_on_the_docs_page() -> None:
         if (method, _normalize_path(path)) not in operations
     ]
     assert missing == [], f"missing from the docs page: {missing}"
+
+
+def _api_doc_text() -> str:
+    """`docs/api.md`, or a skip.
+
+    The same reasoning as `_docs_page_text`: the API image is built from `src/` and this file
+    lives beside it in the repository rather than behind the API. A full checkout runs the
+    assertion; an API-only one skips with the mount it needs.
+    """
+    if not API_DOC.exists():
+        pytest.skip(
+            "docs/api.md not in this checkout; to run this assertion mount the "
+            f"repository, e.g. -v <repo>/docs:/app/docs:ro (looked in {API_DOC})"
+        )
+    return API_DOC.read_text(encoding="utf-8")
+
+
+def test_every_refusal_a_caller_must_tell_apart_is_documented(
+    schema: dict[str, Any],
+) -> None:
+    """Three refusals look alike and are not.
+
+    `store_disabled` is the merchant's own switch. `store_billing_suspended` is the platform
+    holding the store because the plan is smaller than the store count. `account_restricted` is
+    the whole account frozen for an unpaid invoice. Each has a different fix, so a caller who
+    cannot tell them apart retries the wrong one or phones support instead of paying — which is
+    why the codes have to be reachable *and* written down.
+
+    Reachability is asserted where each code is produced (`tests/test_billing_invoices.py` for the
+    store hold, `tests/test_account_security.py` across the route table for the account hold).
+    This is the other half, checked against both surfaces a reader actually sees.
+    """
+    create = schema["paths"]["/v1/payments"]["post"]["responses"]
+    assert "store_billing_suspended" in create["400"]["description"]
+    assert "store_disabled" in create["400"]["description"]
+    assert "account_restricted" in create["403"]["description"]
+
+    doc = _api_doc_text()
+    for code in ("store_disabled", "store_billing_suspended", "account_restricted"):
+        assert f"`{code}`" in doc, f"{code} is not in docs/api.md"
 
 
 def test_payment_create_and_reissue_declare_their_reachable_statuses(

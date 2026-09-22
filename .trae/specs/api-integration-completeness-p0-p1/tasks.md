@@ -1,7 +1,8 @@
 # ChmabaPay - API Integration Completeness Implementation Plan
 
 ## Task 1: Admin KYC Router (Queue List + Approve + Reject)
-- **Status**: `pending`
+- **Status**: `superseded`
+- **Verified**: KYC was dropped entirely by `supabase/migrations/6-drop-kyc.sql`, which removes `accounts.kyc_status`, `kyc_approved_at`, `kyc_reject_reason` and `kyc_live_blocked` plus `plans.kyc_required_for_live`; the word `kyc` no longer appears anywhere under `src/`, and `routers/admin.py` today is a different operator console (`/v1/admin/accounts`, `/v1/admin/plans`, `/v1/admin/invoices`, `/v1/admin/payments`, `/v1/admin/hq-store`) with no KYC queue/approve/reject routes.
 - **Priority**: high
 - **Depends On**: None
 - **Description**:
@@ -21,7 +22,8 @@
 ---
 
 ## Task 2: Sub-Merchant Model + Platform Router (CRUD)
-- **Status**: `pending`
+- **Status**: `superseded`
+- **Verified**: `supabase/migrations/4-merge-sub-merchants-into-stores.sql` folds the whole sub-merchant capability into stores — it adds `stores.external_id` and `stores.whitelabel_css`, folds `sub_merchants` rows into the store each one owned, then `DROP TABLE IF EXISTS sub_merchants` and drops `accounts.saas_sub_merchants_enabled` and `plans.max_sub_merchants` / `allow_saas_sub_merchants`; `src/chmabapay/routers/platform.py` no longer exists and there is no `SubMerchant` model in `src/chmabapay/models.py`.
 - **Priority**: high
 - **Depends On**: None
 - **Description**:
@@ -48,7 +50,8 @@
 ---
 
 ## Task 3: Payment sub_merchant_id Resolver + Sub-Merchant Paid Counters
-- **Status**: `pending`
+- **Status**: `superseded`
+- **Verified**: the shadow-store resolver was replaced by the merged store model — `routers/payments.py:148 resolve_target()` now branches on `body.merchant` → `Store.external_id` and `body.store` (no `sub_merchant_id` field or branch exists anywhere under `src/`), and per-merchant paid metering moved to `PlanLedgerEntry` (`services/billing.py:166 period_usage`, written in `services/payments.py`), both following `supabase/migrations/4-merge-sub-merchants-into-stores.sql`.
 - **Priority**: high
 - **Depends On**: Task 2 (SubMerchant model must exist)
 - **Description**:
@@ -66,7 +69,8 @@
 ---
 
 ## Task 4: Billing Invoices List + Self-Pay KHQR via Own Gateway
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `routers/billing.py:491 list_invoices` serves `GET /v1/billing/invoices` (session-only, `?period_month=`, ordered `period_month` DESC) and `routers/billing.py:556 get_invoice_khqr` serves `GET /v1/billing/invoices/{invoice_id}/khqr` (201, mints the payment via `_invoice_payment` → `services.payments.create_payment` on the resolved HQ store), pinned by `tests/test_billing_invoices.py::test_the_same_invoice_gives_the_same_payment_twice`.
 - **Priority**: high
 - **Depends On**: None (can work even if PlanInvoice model needs to be added; it was in M1)
 - **Description**:
@@ -84,7 +88,8 @@
 ---
 
 ## Task 5: Reports Router (CSV + JSON Payments Export, Plan-Gated)
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: both endpoints exist today — `routers/reports.py:131 export_payments_csv` (`GET /v1/reports/payments.csv`, streaming, exercised by `tests/test_settlement_lifecycle.py`) and `routers/reports.py:199 export_payments_json` (`GET /v1/reports/payments.json` with the totals summary) — but the plan gate half was deliberately removed by `alembic/versions/0010_drop_csv_export_gate.py`, which drops `plans.csv_export_enabled` because the 403 was unreachable (every plan, Free included, had it true).
 - **Priority**: medium
 - **Depends On**: None
 - **Description**:
@@ -104,7 +109,8 @@
 ---
 
 ## Task 6: Webhook Deliveries Listing Endpoint
-- **Status**: `pending`
+- **Status**: `complete`
+- **Verified**: `routers/webhooks.py:377 list_webhook_deliveries` serves `GET /v1/webhooks/{endpoint_id}/deliveries`, returning `WebhookDeliveryOut` rows (delivery_id, event_type, http_status, attempt_count, response_body_preview truncated to 500 chars, created_at, completed_at) read from `models.EventDelivery` (`models.py:285`, columns `last_response_status` / `attempts` / `last_error`) joined to `Event`, newest first with `?limit=` (default 200).
 - **Priority**: medium
 - **Depends On**: None
 - **Description**:
@@ -120,7 +126,8 @@
 ---
 
 ## Task 7: Landing API Docs Page Full Rewrite (Correct Paths + 6 New Groups + Getting Started Curl Panels)
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: the rewrite landed and holds today in `web/landing/app/api/docs/page.tsx` — a corrected `endpointGroups` array (e.g. `GET/POST /v1/keys`, `/v1/khqr/from-link`, `/v1/reports/payments.csv`; no `/v1/auth/api-keys` string) plus a `quickStartPanels` component with 6 curl/Node.js blocks — but the spec's "Admin (Platform Owner)" and "Platform (SaaS Sub-Merchants)" groups (and the raw `/_dev` rail group) are gone, because those routers were removed by `supabase/migrations/6-drop-kyc.sql` and `supabase/migrations/4-merge-sub-merchants-into-stores.sql`.
 - **Priority**: high
 - **Depends On**: None (but we write docs groups based on actual routes after backend tasks 1-6 so route list is accurate; run docs edit last to reflect reality)
 - **Description**:
@@ -156,7 +163,8 @@
 ---
 
 ## Task 8: Integration Verification, Rebuild + Regressions Cleanup
-- **Status**: `pending`
+- **Status**: `partial`
+- **Verified**: the verification intent survives as a standing test rather than a one-off run — `tests/test_openapi_schema.py` (11 tests, green when run today) asserts `openapi.json` validity, that every published path is on the docs page (`test_every_published_path_is_documented_or_declared_internal`), and that `/v1/admin` + `/_dev` are deliberately kept out of the schema; `tests/test_migrations.py` covers the model↔migration diff — but TR-8.3's "Platform" tag no longer exists (router removed by `supabase/migrations/4-merge-sub-merchants-into-stores.sql`) and the admin router is hidden from `openapi.json` on purpose, so two of its three required tags are moot.
 - **Priority**: high
 - **Depends On**: Tasks 1, 2, 3, 4, 5, 6, 7
 - **Description**:

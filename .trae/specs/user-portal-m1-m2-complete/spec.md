@@ -146,9 +146,9 @@
 5. Plans seed rows already exist in Postgres with codes: starter/growth/scale/enterprise.
 
 ## Open Questions
-- [ ] **Q1**: KYC file uploads today → M1 accepts URLs pasted by user only. OK? (later M2 file picker + signed URL upload).
-- [ ] **Q2**: On dashboard overview metric cards today, real aggregate endpoints (sum paid today) — backend has no route for totals yet. Options: (a) add quick `/v1/metrics/overview` JSON endpoint; (b) derive stats by aggregating the existing payments list results client-side with a `limit=200` fetch; (c) show 0 placeholder until backend builds reports later. Preference? Default assumption is (b) — client-side aggregation limited to last 200 payments so M1 works without new routes.
-- [ ] **Q3**: Help center page (/dashboard/help) needed now, or skip for M1 and focus on Overview/Stores/Payments/Keys/Webhooks/Billing/Settings only? Default assumption: include a small Help center accordion page as low-effort, but mark priority=low so it doesn't block core flows.
+- [x] **Q1**: KYC file uploads today → M1 accepts URLs pasted by user only. OK? (later M2 file picker + signed URL upload). → resolved: KYC was removed from the product entirely — `supabase/migrations/6-drop-kyc.sql` drops every KYC column (and `kyc_status`), so no KYC form exists and the URL-vs-file-picker question is moot.
+- [x] **Q2**: On dashboard overview metric cards today, real aggregate endpoints (sum paid today) — backend has no route for totals yet. Options: (a) add quick `/v1/metrics/overview` JSON endpoint; (b) derive stats by aggregating the existing payments list results client-side with a `limit=200` fetch; (c) show 0 placeholder until backend builds reports later. Preference? Default assumption is (b) — client-side aggregation limited to last 200 payments so M1 works without new routes. → resolved: neither (b) nor (c) shipped — `web/landing/app/dashboard/page.tsx` reads server-side aggregates from `GET /v1/reports/payments.json` (`summary.total_matching_paid_amount_cents`), implemented in `src/chmabapay/routers/reports.py`.
+- [x] **Q3**: Help center page (/dashboard/help) needed now, or skip for M1 and focus on Overview/Stores/Payments/Keys/Webhooks/Billing/Settings only? Default assumption: include a small Help center accordion page as low-effort, but mark priority=low so it doesn't block core flows. → resolved: shipped — `web/landing/app/dashboard/help/page.tsx` renders a 6-item FAQ accordion list (no backend call); no separate onboarding route was created.
 
 ## Acceptance Criteria
 

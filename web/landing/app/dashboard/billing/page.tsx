@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { readApiError } from "@/components/portal/apiError";
 import { useToast } from "@/components/portal/Toast";
+import { useSession } from "@/components/portal/useSession";
 
 /* ------------------------------------------------------------------ *
  * API types — everything rendered on this page comes from the API.
@@ -30,11 +32,39 @@ type SubscriptionInfo = {
   status?: string;
   next_billing_at?: string | null;
   trial_ends_at?: string | null;
+  // The invoice the account is frozen over, if any. Nullable on purpose: a frozen account can
+  // owe nothing at all (an operator froze it by hand), and the hold copy has to be able to say
+  // so instead of quoting $0.00.
+  outstanding_invoice_id?: number | null;
+};
+
+/** A store as the API returns it. `billing_suspended_at` is the platform's hold, not a status. */
+type StoreOut = {
+  id: string;
+  db_id: number;
+  name: string;
+  status: string;
+  billing_suspended_at: string | null;
+};
+
+type StoreSlotResponse = {
+  store: StoreOut;
+  displaced: StoreOut | null;
+  moved: boolean;
 };
 
 type SubscriptionResponse = {
   subscription: SubscriptionInfo | null;
   plan: PlanOut | null;
+  // Set while the current plan's allowance is not yet enforced, because a paid plan was given
+  // up this calendar month: the instant enforcement starts. A sibling of `subscription` rather
+  // than a key inside it, like `current_period_end` and `outstanding_invoice_id` — it is a fact
+  // about the account, and it reads the same whether or not a row accompanies it.
+  //
+  // The usage figure is counted against the plan *in force*, so a mid-month downgrade reads
+  // "3,100 / 3,000" while every code still mints. The number is right and this is why, which is
+  // what lets the card below say so instead of leaving the bar to contradict itself (§7.7).
+  quota_deferred_until?: string | null;
 };
 
 type Invoice = {
@@ -49,6 +79,14 @@ type Invoice = {
   overage_fee_formatted?: string | null;
   total_due_formatted?: string | null;
   paid_at?: string | null;
+  // The window the invoice is a claim for, and when it was expected. `is_overdue` is derived
+  // server-side from `due_at` rather than stored, so this page never has to guess from a status
+  // value — the worker writes `open` for both an invoice due next week and one a week late.
+  due_at?: string | null;
+  days_until_due?: number | null;
+  is_overdue?: boolean;
+  voided_at?: string | null;
+  void_reason?: string | null;
 };
 
 type ChangePlanResponse = {
@@ -142,23 +180,35 @@ function statusPill(status: string | undefined): { className: string; label: str
   }
 }
 
-function invoicePill(status: string | undefined | null): { className: string; label: string } {
-  switch (status) {
-    case "paid":
-      return { className: "dash-pill dash-pill-paid", label: "Paid" };
-    case "draft":
-      return { className: "dash-pill dash-pill-pending", label: "Draft" };
-    case "issued":
-      return { className: "dash-pill dash-pill-scanned", label: "Issued" };
-    case "open":
-      // What the billing worker writes when it raises an invoice. "Due" rather than
-      // the raw status, which would render as a lowercase "open" in a pill.
-      return { className: "dash-pill dash-pill-pending", label: "Due" };
-    case "overdue":
-      return { className: "dash-pill dash-pill-failed", label: "Overdue" };
-    default:
-      return { className: "dash-pill dash-pill-pending", label: status || "—" };
+/**
+ * One invoice's badge.
+ *
+ * `Overdue Nd` comes from the API's derived `is_overdue` and `days_until_due`, never from a status
+ * value: the worker writes `open` for an invoice due next week and for one a week late, and a
+ * separate clock is what tells them apart. A status-only badge could therefore only ever say
+ * "Open" for a debt that has already cost the merchant their payment codes.
+ *
+ * A `void` invoice says `Void` and is still payable — settling one is how a lapsed merchant buys
+ * their plan back (§5.3) — so the Pay button appears beside it rather than the row reading as dead.
+ */
+function invoicePill(inv: Invoice): { className: string; label: string } {
+  if (inv.status === "paid") {
+    return { className: "dash-pill dash-pill-paid", label: "Paid" };
   }
+  if (inv.status === "void" || inv.voided_at) {
+    return { className: "dash-pill dash-pill-superseded", label: "Void" };
+  }
+  if (inv.is_overdue) {
+    const days = inv.days_until_due;
+    return {
+      className: "dash-pill dash-pill-failed",
+      label:
+        typeof days === "number" && days < 0 ? `Overdue ${Math.abs(days)}d` : "Overdue",
+    };
+  }
+  // `draft` and `issued` are the pre-migration spellings of "unpaid" and are still read as open
+  // by the API, so they are labelled the same way here rather than with a status nobody uses.
+  return { className: "dash-pill dash-pill-pending", label: "Open" };
 }
 
 type Feature = { label: string; on: boolean };
@@ -354,11 +404,53 @@ function InvoicePaymentModal({
  * Page
  * ------------------------------------------------------------------ */
 
+/**
+ * Opens the payment modal for `?pay={invoice_id}`.
+ *
+ * That URL is the backend's own notice `action_url` — the banner's one link — so this has to work
+ * both on a cold load and on a client-side navigation from another dashboard page.
+ * `useSearchParams` is what makes the second case work: a `window.location` read in an effect
+ * would never see the URL change, because Next's router does not reload the document. Next
+ * requires a `useSearchParams` consumer to sit inside a Suspense boundary, which is why this is a
+ * component of its own rather than a line in the page.
+ */
+function OpenInvoiceFromUrl({
+  invoices,
+  onOpen,
+}: {
+  invoices: Invoice[];
+  onOpen: (invoice: Invoice) => void | Promise<void>;
+}) {
+  const searchParams = useSearchParams();
+  const payId = searchParams.get("pay");
+  const handled = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!payId || handled.current === payId) return;
+    const match = invoices.find((inv) => String(inv.id) === payId);
+    // No match yet means the list is still in flight; the effect runs again when it lands.
+    if (!match) return;
+    handled.current = payId;
+    void onOpen(match);
+  }, [payId, invoices, onOpen]);
+
+  return null;
+}
+
 export default function BillingPage() {
   const { notify } = useToast();
+  // The hold is account-level, so it is the profile that says whether the page is the
+  // merchant's way out rather than a read-only view of it.
+  const { profile } = useSession();
   const [plans, setPlans] = useState<PlanOut[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
+  // Held separately from `subscription` because the API sends it beside the subscription row
+  // rather than inside it, and this page keeps only the row (`data.subscription`). Reading it as
+  // `subscription?.quota_deferred_until` was the first attempt and it silently rendered nothing:
+  // the type described the nested shape, the API answered at the top level, and no fallback
+  // exists to paper over the difference the way `outstanding_invoice_id` has one.
+  const [quotaDeferredUntil, setQuotaDeferredUntil] = useState<string | null>(null);
   const [currentPlan, setCurrentPlan] = useState<PlanOut | null>(null);
   const [subLoading, setSubLoading] = useState(true);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -379,6 +471,11 @@ export default function BillingPage() {
   const [khqrError, setKhqrError] = useState<string | null>(null);
   const [payStatus, setPayStatus] = useState("pending");
   const [paySecondsLeft, setPaySecondsLeft] = useState<number | null>(null);
+  // The store allowance, for the slot chooser. Only meaningful when something is held —
+  // `GET /v1/stores` is a read, so it stays available while the account is frozen.
+  const [stores, setStores] = useState<StoreOut[]>([]);
+  const [storesError, setStoresError] = useState<string | null>(null);
+  const [movingStoreId, setMovingStoreId] = useState<string | null>(null);
 
   const loadPlans = useCallback(async () => {
     setPlansLoading(true);
@@ -408,6 +505,7 @@ export default function BillingPage() {
         const data = (await res.json()) as SubscriptionResponse;
         setSubscription(data.subscription ?? null);
         setCurrentPlan(data.plan ?? null);
+        setQuotaDeferredUntil(data.quota_deferred_until ?? null);
       }
     } catch (e) {
       setSubError(e instanceof Error ? e.message : String(e));
@@ -463,6 +561,57 @@ export default function BillingPage() {
     void loadInvoices();
     void loadUsage();
   }, [loadPlans, loadSubscription, loadInvoices, loadUsage]);
+
+  const loadStores = useCallback(async () => {
+    setStoresError(null);
+    try {
+      const res = await fetch("/v1/stores", { credentials: "include" });
+      if (!res.ok) throw new Error(await readApiError(res));
+      const data = await res.json().catch(() => ({}));
+      setStores(Array.isArray(data?.data) ? data.data : []);
+    } catch (e) {
+      setStoresError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadStores();
+  }, [loadStores]);
+
+  /**
+   * Bring one suspended store back, moving whichever store makes room for it.
+   *
+   * The displacement is the server's to decide and it answers with the store it held, so
+   * the merchant is told which one went offline rather than discovering it later. A store
+   * the platform held is the only thing this can release; an operator's own disable is a
+   * different refusal with its own message.
+   */
+  async function handleActivateStore(store: StoreOut) {
+    if (movingStoreId) return;
+    setMovingStoreId(store.id);
+    try {
+      const res = await fetch(`/v1/stores/${store.id}/activate`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(await readApiError(res));
+      const data = (await res.json()) as StoreSlotResponse;
+      await loadStores();
+      if (!data.moved) {
+        notify(`${store.name} is already live.`);
+      } else if (data.displaced) {
+        notify(
+          `${store.name} is live. ${data.displaced.name} was suspended to make room.`,
+        );
+      } else {
+        notify(`${store.name} is live again.`);
+      }
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setMovingStoreId(null);
+    }
+  }
 
   async function handleChangePlan(planCode: string) {
     if (changingPlanCode) return;
@@ -621,6 +770,21 @@ export default function BillingPage() {
       ? Math.min(100, Math.round((usedThisMonth / limit) * 100))
       : 0;
 
+  /**
+   * Whether the usage bar needs the deferral explained to it.
+   *
+   * Only when it changes what the bar *means*: the figure now comes from a plan whose allowance
+   * is not being enforced, so "over" is a reading the merchant cannot act on. Under the
+   * allowance the deferral is invisible and a note would be noise, and with no plan loaded there
+   * is no limit to be over.
+   */
+  const deferredUntil = quotaDeferredUntil ? formatDate(quotaDeferredUntil) : null;
+  const showDeferredNote =
+    deferredUntil !== null &&
+    limit > 0 &&
+    usedThisMonth !== null &&
+    usedThisMonth >= limit;
+
   const renewalText = (() => {
     if (subscription?.status === "trial" && subscription.trial_ends_at) {
       return `Trial ends ${formatDate(subscription.trial_ends_at)}`;
@@ -633,8 +797,40 @@ export default function BillingPage() {
 
   const subPill = statusPill(subscription?.status);
 
+  /**
+   * The invoice the hold is keyed on.
+   *
+   * The subscription response names it directly (`outstanding_invoice_id`), which is what
+   * the server freezes on. The fallback covers a stale read: an unpaid invoice is the only
+   * thing that can hold an account, so showing the oldest one is closer to true than
+   * showing nothing.
+   */
+  const outstanding = useMemo(() => {
+    const id = subscription?.outstanding_invoice_id;
+    if (id !== null && id !== undefined) {
+      return invoices.find((inv) => Number(inv.id) === Number(id)) ?? null;
+    }
+    return invoices.find((inv) => inv.status !== "paid" && !inv.voided_at) ?? null;
+  }, [invoices, subscription]);
+
+  const isFrozen = profile?.status === "restricted";
+  const heldStores = useMemo(
+    () => stores.filter((s) => s.billing_suspended_at !== null),
+    [stores],
+  );
+  const liveStores = useMemo(
+    () => stores.filter((s) => s.billing_suspended_at === null),
+    [stores],
+  );
+
   return (
     <>
+      {/* The banner's CTA lands here as /dashboard/billing?pay={id}. Rendered above the page head
+          so the modal opens as soon as the invoice list is in. */}
+      <Suspense fallback={null}>
+        <OpenInvoiceFromUrl invoices={invoices} onOpen={openInvoicePayment} />
+      </Suspense>
+
       <div className="dash-page-head">
         <div>
           <h1 className="dash-page-title">Billing &amp; plans</h1>
@@ -645,6 +841,134 @@ export default function BillingPage() {
       </div>
 
       {errorMsg && <div className="dash-warn">{errorMsg}</div>}
+
+      {isFrozen && (
+        <section className="dash-panel bill-hold" aria-label="Account on hold">
+          <div className="dash-panel-title">Your account is on hold</div>
+          <div className="dash-hint">
+            {outstanding ? (
+              <>
+                A plan invoice for{" "}
+                {outstanding.total_due_formatted || "the amount shown below"} is unpaid
+                {outstanding.due_at
+                  ? ` (due ${formatDate(outstanding.due_at)})`
+                  : ""}
+                . Until it is settled your stores cannot generate payment codes and the
+                rest of the dashboard is read-only. Nothing has been deleted — your
+                stores, keys, links and history are exactly as you left them.
+              </>
+            ) : (
+              <>
+                Your stores cannot generate payment codes and the rest of the dashboard
+                is read-only. Nothing has been deleted — your stores, keys, links and
+                history are exactly as you left them.
+              </>
+            )}
+          </div>
+
+          {/* The three ways out, in the order a merchant should consider them. Every one
+              of them is reachable from this page and nowhere else while frozen, which is
+              why this page is the one surface the read-only mode leaves writable. */}
+          <ol className="bill-hold-ways">
+            <li>
+              <strong>Settle the invoice.</strong> Scan a code and everything comes back
+              the moment the bank confirms.
+              {outstanding && (
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-primary dash-btn-sm"
+                  onClick={() => void openInvoicePayment(outstanding)}
+                >
+                  Pay{" "}
+                  {outstanding.total_due_formatted
+                    ? outstanding.total_due_formatted
+                    : "with KHQR"}
+                </button>
+              )}
+            </li>
+            <li>
+              <strong>Move to Free.</strong> The unpaid invoice is withdrawn, the debt
+              goes with it, and the account is unfrozen straight away with the Free
+              plan&apos;s allowance.{" "}
+              <a href="#plans">Choose Free</a>
+            </li>
+            <li>
+              <strong>Move to a smaller paid plan.</strong> The old invoice is withdrawn
+              and the plan starts the moment its own invoice is paid.{" "}
+              <a href="#plans">Choose a plan</a>
+            </li>
+          </ol>
+        </section>
+      )}
+
+      {/* Hidden while the account is frozen, not merely disabled: a freeze stops every
+          store regardless of the cap (§7.2), and the gate refuses this write while frozen
+          by design — the allowlist is reads plus `change-plan`. Showing the chooser here
+          would be a button that can only answer 403, and the hold panel above already
+          names the three writes that do work. It reappears the moment the hold lifts. */}
+      {!isFrozen && (heldStores.length > 0 || storesError) && (
+        <section className="dash-panel" aria-label="Store allowance">
+          <div className="dash-panel-title">Which stores stay live</div>
+          <div className="dash-hint">
+            {currentPlan?.max_stores
+              ? `Your plan allows ${currentPlan.max_stores} store${
+                  currentPlan.max_stores === 1 ? "" : "s"
+                }. ${liveStores.length} ${
+                  liveStores.length === 1 ? "is" : "are"
+                } live, and the rest are suspended — they keep their links, keys and history, but they cannot generate payment codes. Bring one back and whichever store makes room for it is suspended in its place, so you never go over the allowance.`
+              : "The stores below are suspended and cannot generate payment codes. They keep their links, keys and history."}
+          </div>
+          {storesError ? (
+            <div className="dash-warn">
+              Your stores could not be loaded, so this is not a statement that nothing is
+              suspended.
+              <div className="dash-empty-cta-row">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary dash-btn-sm"
+                  onClick={() => void loadStores()}
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="bill-slot-subhead">
+                Live ({liveStores.length}
+                {currentPlan?.max_stores ? ` of ${currentPlan.max_stores}` : ""})
+              </div>
+              <ul className="bill-slot-list">
+                {liveStores.map((s) => (
+                  <li key={s.id} className="bill-slot-row">
+                    <span>{s.name}</span>
+                    <span className="dash-pill dash-pill-paid">Live</span>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="bill-slot-subhead">
+                Suspended — plan limit ({heldStores.length})
+              </div>
+              <ul className="bill-slot-list">
+                {heldStores.map((s) => (
+                  <li key={s.id} className="bill-slot-row">
+                    <span>{s.name}</span>
+                    <button
+                      type="button"
+                      className="dash-btn dash-btn-secondary dash-btn-sm"
+                      disabled={movingStoreId !== null}
+                      onClick={() => void handleActivateStore(s)}
+                    >
+                      {movingStoreId === s.id ? "Bringing back…" : "Bring back"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </section>
+      )}
 
       <section className="dash-panel" aria-label="Current subscription">
         <div className="dash-panel-title">Current subscription</div>
@@ -696,13 +1020,19 @@ export default function BillingPage() {
                     aria-label="Monthly payment quota used"
                   />
                 </div>
+                {showDeferredNote && (
+                  <p className="bill-usage-note">
+                    Nothing is blocked until {deferredUntil} — these payments were made
+                    under your previous plan.
+                  </p>
+                )}
               </div>
             )}
           </div>
         )}
       </section>
 
-      <section aria-label="Plan comparison">
+      <section aria-label="Plan comparison" id="plans">
         <div className="dash-panel">
           <div className="dash-panel-title">Choose your plan</div>
           {plansLoading ? (
@@ -832,6 +1162,7 @@ export default function BillingPage() {
               <tr>
                 <th>Period</th>
                 <th>Status</th>
+                <th>Due</th>
                 <th>Base fee</th>
                 <th>Overage</th>
                 <th>Total due</th>
@@ -841,20 +1172,23 @@ export default function BillingPage() {
             </thead>
             <tbody>
               {invoices.map((inv) => {
-                const pill = invoicePill(inv.status);
-                const unpaid = inv.status !== "paid" && inv.status !== "draft";
+                const pill = invoicePill(inv);
+                // Everything except a settled invoice is payable. A `void` one included, on
+                // purpose: settling it is the reinstatement path, and the API refuses only `paid`.
+                const payable = inv.status !== "paid";
                 return (
                   <tr key={String(inv.id)}>
                     <td>{inv.period_month || inv.period || "—"}</td>
                     <td>
                       <span className={pill.className}>{pill.label}</span>
                     </td>
+                    <td>{formatDate(inv.due_at)}</td>
                     <td>{inv.base_fee_formatted || "$0.00"}</td>
                     <td>{inv.overage_fee_formatted || "$0.00"}</td>
                     <td>{inv.total_due_formatted || "$0.00"}</td>
                     <td>{formatDate(inv.paid_at)}</td>
                     <td>
-                      {unpaid ? (
+                      {payable ? (
                         <button
                           type="button"
                           className="dash-btn dash-btn-secondary dash-btn-sm"

@@ -31,10 +31,14 @@ from .routers.auth import SESSION_COOKIE
 class ErrorOut(BaseModel):
     """An error body is `{"detail": …}`.
 
-    `detail` is a machine code (`quota_exceeded`, `store_disabled`) on the API paths
-    and, in a few older places, a human sentence; both are strings, and FastAPI's own
-    validation errors are a list of objects — which is why this is a union rather
-    than a `str`.
+    `detail` is a machine code. The three refusals a merchant has to tell apart are
+    `store_disabled` (they switched the store off), `store_billing_suspended` (the platform is
+    holding it because the account is over its plan's store allowance) and `account_restricted`
+    (the whole account is frozen for an unpaid plan invoice) — each has a different fix, and a
+    merchant who cannot tell them apart calls support instead of paying. Others include
+    `quota_exceeded` and `whitelabel_not_enabled`. In a few older places `detail` is a human
+    sentence; both are strings, and FastAPI's own validation errors are a list of objects —
+    which is why this is a union rather than a `str`.
     """
 
     detail: str | list[dict[str, Any]] | None = None
@@ -59,14 +63,18 @@ SESSION_COOKIE_SCHEME = APIKeyCookie(
 AUTH_SECURITY = [Security(API_KEY_SCHEME), Security(SESSION_COOKIE_SCHEME)]
 SESSION_SECURITY = [Security(SESSION_COOKIE_SCHEME)]
 
-# What every authenticated route can answer, whatever else it does.
+# What every authenticated route can answer, whatever else it does. The two 403 codes are
+# different states with different ways out: `account_suspended` is an operator's lockout and
+# nothing the caller can undo, `account_restricted` is a billing hold and the billing routes
+# are exactly what lifts it.
 AUTH_ERRORS: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorOut, "description": "Missing or invalid credentials."},
     403: {
         "model": ErrorOut,
         "description": (
-            "The account is suspended, or this credential may not do this "
-            "(`whitelabel_not_enabled`)."
+            "The account is suspended (`account_suspended`), frozen for an unpaid plan "
+            "invoice (`account_restricted` — only the billing routes are served while it "
+            "holds), or this credential may not do this (`whitelabel_not_enabled`)."
         ),
     },
 }
@@ -98,13 +106,19 @@ UPSTREAM_ERROR = {
     }
 }
 
-# A precondition on the request itself failed: a disabled store or link, an amount
-# outside the link's bounds, an offline QR nothing can confirm. Only on the routes
-# that create or transition a payment.
+# A precondition on the request itself failed: a store that is switched off
+# (`store_disabled`) or held by the platform for billing (`store_billing_suspended`), a link
+# with no destination, an amount outside the link's bounds, an offline QR nothing can confirm.
+# Only on the routes that create or transition a payment.
 BAD_REQUEST_ERROR = {
     400: {
         "model": ErrorOut,
-        "description": "A precondition the request must meet was not met.",
+        "description": (
+            "A precondition the request must meet was not met. On the payment routes this "
+            "includes `store_disabled` and `store_billing_suspended`, which are different "
+            "states: one is the merchant's own switch, the other is the platform holding the "
+            "store until the plan is settled."
+        ),
     }
 }
 

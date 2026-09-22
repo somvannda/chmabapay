@@ -4719,6 +4719,15 @@ body.dash-path-dashboard > .landing-footer {
   font-weight: 700;
   color: var(--ink);
 }
+/* Explains a bar that reads over the allowance while nothing is blocked, so it is set in the
+   muted voice rather than as a warning: it exists to stop the figure above it reading as a
+   contradiction, not to raise an alarm the merchant has nothing to act on. */
+.bill-usage-note {
+  margin: 0;
+  font-size: var(--fs-12);
+  color: var(--muted);
+  line-height: var(--lh-snug);
+}
 
 .bill-grid {
   display: grid;
@@ -4814,6 +4823,68 @@ body.dash-path-dashboard > .landing-footer {
 .bill-card-cta {
   margin-top: var(--sp-5);
   width: 100%;
+}
+
+/* ---------- Billing: the hold notice and the slot chooser ---------- */
+/* The two panels a merchant sees only when their plan is smaller than what they were
+   using — a freeze, or a downgrade that left stores suspended. Both are the way out, so
+   both are allowed to be the loudest thing on the page. */
+.bill-hold {
+  border-color: #f3d3b5;
+  background: #fffbf6;
+}
+/* The three ways out are an ordered list because the order is advice: settle first, and
+   shrink only if that is what you meant. */
+.bill-hold-ways {
+  margin: var(--sp-4) 0 0;
+  padding-left: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  font-size: var(--fs-14);
+  line-height: var(--lh-body);
+  color: var(--muted);
+}
+.bill-hold-ways strong {
+  color: var(--ink);
+}
+.bill-hold-ways a {
+  color: var(--violet);
+  font-weight: 600;
+}
+.bill-hold-ways button {
+  margin-left: var(--sp-3);
+  vertical-align: middle;
+}
+.bill-slot-subhead {
+  margin-top: var(--sp-5);
+  font-size: var(--fs-13);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--muted);
+}
+/* Fifty stores is the case this exists for, so the list scrolls rather than pushing the
+   invoice table off the page. */
+.bill-slot-list {
+  list-style: none;
+  margin: var(--sp-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.bill-slot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-14);
+  color: var(--ink);
 }
 
 /* ---------- Legacy surfaces still used by pages ---------- */
@@ -5177,4 +5248,120 @@ body.dash-path-dashboard > .landing-footer {
   line-height: var(--lh-body);
   color: var(--ink-2);
 }
+
+/* ---------- Billing notice (shell banner) ----------
+   Driven by GET /v1/billing/notices. The three levels reuse the exact colours of the form alert
+   trio above, so "something needs you" looks the same wherever a merchant meets it. The banner
+   sits in `.cp-body` above `<main>`, inside its own container so its text lines up with the
+   topbar and the page below rather than running edge to edge. */
+.cp-notice {
+  border-bottom: 1px solid var(--line);
+}
+.cp-notice-inner {
+  max-width: var(--app-container);
+  margin: 0 auto;
+  padding: var(--sp-4) var(--app-gutter);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  box-sizing: border-box;
+}
+.cp-notice-body {
+  min-width: 0;
+}
+.cp-notice-title {
+  font-size: var(--fs-14);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.cp-notice-text {
+  margin: var(--sp-1) 0 0;
+  font-size: var(--fs-13);
+  line-height: var(--lh-snug);
+}
+.cp-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-shrink: 0;
+}
+.cp-notice-dismiss {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-13);
+  color: inherit;
+  opacity: 0.75;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.cp-notice-dismiss:hover {
+  opacity: 1;
+}
+.cp-notice-info {
+  background: #eff6ff;
+  color: #1e40af;
+}
+.cp-notice-warning {
+  background: #fff7ed;
+  color: #9a3412;
+}
+.cp-notice-critical {
+  background: #fef2f2;
+  color: #991b1b;
+}
+@media (max-width: 720px) {
+  .cp-notice-inner {
+    flex-direction: column;
+    gap: var(--sp-3);
+  }
+}
+
+/* ---------- Read-only mode while the account is on hold ----------
+   The controls stay visible and readable, but not editable, and this is a courtesy rather than
+   the gate: every write route answers 403 `account_restricted` regardless, and that is the
+   enforcement. What this buys is a merchant who does not fill in a form that will be refused.
+
+   Two halves, and both are needed. `.cp-readonly` is the wrapper the shell always renders around
+   the page; when the account is on hold it is a *disabled* `fieldset`, which disables every form
+   control inside it natively — including for the keyboard, which `pointer-events` cannot touch.
+   `.cp-main-readonly` is the dimming, so a merchant can see at a glance that the page is locked.
+
+   Scoped so the shell chrome stays live — signing out has to keep working — and the billing page
+   is never given either one, because paying is the way out of the state. Links stay clickable
+   too: they navigate, they do not write. */
+.cp-readonly {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+/* The wrapper is a real box, so the page rhythm has to be re-declared one level in:
+   `.cp-main > * + *` above can no longer see these children. */
+.cp-readonly > * + * {
+  margin-top: var(--sp-5);
+}
+.cp-main-readonly input,
+.cp-main-readonly textarea,
+.cp-main-readonly select,
+.cp-main-readonly button,
+.cp-main-readonly [role="button"] {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+/* The plan card's second line: the renewal date, or that money is owed. The card is dark, so
+   these are the dark-card tones the rest of it uses. */
+.dash-plan-note {
+  font-size: 13px;
+  color: #cbd5e1;
+}
+.dash-plan-note-warn {
+  color: #fde68a;
+  font-weight: 600;
+}
+
 

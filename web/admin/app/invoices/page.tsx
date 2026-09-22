@@ -12,12 +12,21 @@ type AdminInvoice = {
   account_id: number;
   account_email: string | null;
   period_month: string;
+  period_start: string | null;
+  period_end: string | null;
   status: string;
   base_fee_cents: number;
   usage_payments_count: number;
   overage_fee_cents: number;
   total_due_cents: number;
+  // The window this invoice is a claim for, and when it was expected. `is_overdue` is
+  // derived server-side from `due_at` rather than read off `status`, because the worker
+  // writes `open` for an invoice due next week and for one a week late.
+  due_at: string | null;
+  is_overdue: boolean;
   paid_at: string | null;
+  voided_at: string | null;
+  void_reason: string | null;
   created_at: string;
 };
 
@@ -36,9 +45,10 @@ const STATUS_OPTIONS = [
   { value: "paid", label: "Paid" },
   { value: "waived", label: "Waived" },
   { value: "credited", label: "Credited" },
+  { value: "void", label: "Void" },
 ];
 
-type InvoiceAction = "mark-paid" | "waive" | "credit";
+type InvoiceAction = "mark-paid" | "waive" | "credit" | "void";
 
 const INVOICE_ACTIONS: { value: InvoiceAction; label: string; help: string }[] = [
   {
@@ -56,7 +66,28 @@ const INVOICE_ACTIONS: { value: InvoiceAction; label: string; help: string }[] =
     label: "Credit",
     help: "Closes it as credited and puts the plan in force. The amount below is what was forgiven.",
   },
+  {
+    value: "void",
+    label: "Void",
+    help: "Withdraws the invoice without granting the period or recording income. Use it for a window that should never have been billed — the sweep can raise that window again.",
+  },
 ];
+
+/**
+ * What the chosen action does to the plan, spelled out per action.
+ *
+ * The three settlements all put the subscription in force and the void deliberately does
+ * not, so a single sentence here would be wrong for one of the four.
+ */
+const PLAN_EFFECT_BY_ACTION: Record<InvoiceAction, string> = {
+  "mark-paid":
+    "Puts the pending subscription in force, so the merchant is not left on their old plan waiting for an invoice nobody will pay.",
+  waive:
+    "Puts the pending subscription in force, so the merchant is not left on their old plan waiting for an invoice nobody will pay.",
+  credit:
+    "Puts the pending subscription in force, so the merchant is not left on their old plan waiting for an invoice nobody will pay.",
+  void: "Grants nothing: the subscription is left exactly as it is, so the next sweep may raise this window again.",
+};
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
@@ -74,23 +105,37 @@ function formatCents(cents: number | null | undefined): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
-/** `services/billing.py` writes `open` / `paid` / `waived` / `credited`. */
-function invoicePill(status: string | null | undefined): {
+/** Whole days past `due_at`, floored at zero. */
+function daysOverdue(iso: string | null | undefined): number {
+  if (!iso) return 0;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
+}
+
+/** `services/billing.py` writes `open` / `paid` / `waived` / `credited` / `void`. */
+function invoicePill(inv: AdminInvoice): {
   className: string;
   label: string;
 } {
-  switch ((status || "").toLowerCase()) {
+  switch ((inv.status || "").toLowerCase()) {
     case "paid":
       return { className: "dash-pill dash-pill-paid", label: "paid" };
     case "waived":
       return { className: "dash-pill dash-pill-scanned", label: "waived" };
     case "credited":
       return { className: "dash-pill dash-pill-reversed", label: "credited" };
+    case "void":
+      return { className: "dash-pill dash-pill-expired", label: "void" };
     default:
-      return {
-        className: "dash-pill dash-pill-pending",
-        label: status || "open",
-      };
+      // `open` covers an invoice raised last week and one a week late, so the badge says
+      // which of the two this is rather than repeating the status word the filter uses.
+      return inv.is_overdue
+        ? {
+            className: "dash-pill dash-pill-failed",
+            label: `overdue ${daysOverdue(inv.due_at)}d`,
+          }
+        : { className: "dash-pill dash-pill-pending", label: "open" };
   }
 }
 
@@ -104,6 +149,7 @@ export default function AdminInvoicesPage() {
   const [period, setPeriod] = useState("");
   const [appliedPeriod, setAppliedPeriod] = useState("");
   const [status, setStatus] = useState("");
+  const [overdue, setOverdue] = useState(false);
   const [page, setPage] = useState(1);
   // Bumped after a resolution so the list refetches without a full reload.
   const [reloadKey, setReloadKey] = useState(0);
@@ -123,6 +169,7 @@ export default function AdminInvoicesPage() {
         const params = new URLSearchParams();
         if (appliedPeriod) params.set("period_month", appliedPeriod);
         if (status) params.set("status", status);
+        if (overdue) params.set("overdue", "true");
         params.set("page", String(page));
         params.set("per_page", "25");
         const res = await apiFetch(`/v1/admin/invoices?${params.toString()}`, {
@@ -142,7 +189,7 @@ export default function AdminInvoicesPage() {
     return () => {
       alive = false;
     };
-  }, [appliedPeriod, status, page, reloadKey]);
+  }, [appliedPeriod, status, overdue, page, reloadKey]);
 
   const onSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -239,6 +286,17 @@ export default function AdminInvoicesPage() {
               </option>
             ))}
           </select>
+          <label>
+            <input
+              type="checkbox"
+              checked={overdue}
+              onChange={(e) => {
+                setOverdue(e.target.checked);
+                setPage(1);
+              }}
+            />{" "}
+            Overdue only
+          </label>
           <button type="submit" className="dash-btn dash-btn-secondary">
             Search
           </button>
@@ -272,6 +330,7 @@ export default function AdminInvoicesPage() {
                 <th>Account</th>
                 <th>Period</th>
                 <th>Status</th>
+                <th>Due</th>
                 <th>Base fee</th>
                 <th>Usage payments</th>
                 <th>Overage</th>
@@ -282,10 +341,12 @@ export default function AdminInvoicesPage() {
             </thead>
             <tbody>
               {rows.map((inv) => {
-                const pill = invoicePill(inv.status);
+                const pill = invoicePill(inv);
                 // Resolving an already-resolved invoice is a 409, so the console does
-                // not offer it: an action that can only fail is not an action.
-                const open = !["paid", "waived", "credited"].includes(
+                // not offer it: an action that can only fail is not an action. A voided
+                // claim is resolved in the same sense — voiding it again would overwrite
+                // history.
+                const open = !["paid", "waived", "credited", "void"].includes(
                   inv.status.toLowerCase(),
                 );
                 return (
@@ -302,6 +363,7 @@ export default function AdminInvoicesPage() {
                     <td>
                       <span className={pill.className}>{pill.label}</span>
                     </td>
+                    <td>{formatDate(inv.due_at)}</td>
                     <td>{formatCents(inv.base_fee_cents)}</td>
                     <td>{nf.format(inv.usage_payments_count)}</td>
                     <td>{formatCents(inv.overage_fee_cents)}</td>
@@ -373,9 +435,8 @@ export default function AdminInvoicesPage() {
             <div className="dash-modal-body">
               <div className="dash-hint">
                 {formatCents(invoice.total_due_cents)} due for{" "}
-                {invoice.account_email || `account #${invoice.account_id}`}. Whichever
-                you pick puts the pending subscription in force, so the merchant is
-                not left on their old plan waiting for an invoice nobody will pay.
+                {invoice.account_email || `account #${invoice.account_id}`}.{" "}
+                {PLAN_EFFECT_BY_ACTION[invoiceAction]}
               </div>
               <div className="dash-field">
                 <label htmlFor="invoice-action">Action</label>
