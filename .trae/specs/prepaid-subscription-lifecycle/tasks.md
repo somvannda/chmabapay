@@ -1030,3 +1030,33 @@ ORDER BY l.created_at LIMIT 1;
 SELECT count(*) FROM stores
 WHERE account_id = <the account above> AND billing_suspended_at IS NOT NULL;
 ```
+
+### Run 1 — 2026-09-22, immediately after `0012` deployed
+
+Deployed `96e5f17` to `163.245.204.122` (`/opt/chmabapay`). The stack came up healthy
+(`api`, `landing`, `admin`, `proxy`, `db` all healthy), the `migrate` one-shot exited **0**,
+and Alembic reads **`0012 (head)`**. Check 1 was run at once; checks 2 and 3 stay open by
+design, because they need events that have not happened yet.
+
+- **1a — 0 rows**, and **1b — 0 rows**.
+- **The voiding was a no-op.** `plan_invoices` held exactly one row — `paid`, `2026-09`,
+  `$59.99` (a real Pro purchase) — so nothing was retired as `pre_lifecycle` and no
+  `next_billing_at` moved. The destructive half of `0012` had nothing to destroy, which is
+  the expected shape of a deploy onto an account that has paid its bill.
+- **The HQ store resolves from the console, not the environment.** `ChmabaPay HQ`
+  (`stores.id = 1`) belongs to `duke@chmaba.com`, carries `is_internal = true`, and holds one
+  `aba_payway` link; `CHMABAPAY_HQ_STORE_ID` is empty in `deploy/.env` while
+  `CHMABAPAY_HQ_PAYWAY_LINK` is set but unused — the sign-in bootstrap only seeds a store
+  that does not exist. So `resolve_hq_store` answers `source = 'console'`.
+- **Enforcement is off and now genuinely switchable.** Inside the `api` container:
+  `BILLING_ENFORCE_ENABLED=false`, `BILLING_LEAD_DAYS=7`, `BILLING_GRACE_DAYS=7`,
+  `RESEND_API_KEY=` (empty → email channel off), `BILLING_EMAIL_FROM=billing@chmaba.com`.
+  Those five being present at all is the `deploy/` passthrough fix from PR #4 proving
+  itself: before it, the same `docker exec env` would have shown none of them.
+- `plan_invoice_reminders` exists and is empty — the table is new, and nothing has been
+  dunned yet.
+- **Not yet exercised, and worth watching for:** the platform-admin account holds a comped
+  `pro` subscription with no invoice behind it, so W3 will raise a renewal invoice for it in
+  its lead window (~2026-10-14) and start dunning the platform's own account. D4 exempts a
+  platform admin from the freeze, so this cannot lock the platform out — but the notices will
+  appear, and moving that account to Free (or voiding the invoice) is the tidy alternative.
