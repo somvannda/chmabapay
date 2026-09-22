@@ -1017,9 +1017,20 @@ accepted as a risk for now**, because it must be recoverable to sign with.
   **hardcoded `False`**, so the BRD's Starter-to-Growth "auto-switch to business" was
   never live either. Nothing replaces the enum, because nothing ever depended on it —
   `whitelabel_enabled` already gated white-label, the plan already gated limits, and
-  sub-merchants were never built (no `SubMerchant` model, no `routers/platform.py`).
+  sub-merchants were never built in *this* schema: no `SubMerchant` model, no
+  `routers/platform.py`, and no Alembic revision that creates one.
   `BUSINESS_REQUIREMENTS.md` and the `.trae/specs/` files still describe the concept;
   they are left as records of intent rather than rewritten.
+
+  One artifact reads as though it disagrees, and is worth a sentence so nobody has to
+  re-derive this: `supabase/migrations/4-merge-sub-merchants-into-stores.sql` selects
+  `FROM sub_merchants` and then drops the table. That is the **pre-Alembic lineage** —
+  its own `README.md` says those files "were the schema path before Alembic existed.
+  Nothing executes" them now — so the table existed in the Supabase-era database and was
+  folded into `stores` there, which is why a grep for `sub_merchants` finds a migration
+  and no model. `0002_converge_legacy_schema` is where Alembic took over that schema,
+  and `docs/data-model.md` has described the store-only shape throughout — its `stores`
+  section is titled *a sub-merchant of the account (the account's own customer)*.
 
 ### P1-5 Launch gap closure
 
