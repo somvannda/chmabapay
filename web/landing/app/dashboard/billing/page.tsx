@@ -555,6 +555,11 @@ export default function BillingPage() {
   // Paid without the merchant reloading: the backend flips the invoice and the plan in
   // the same transaction as the settlement, so once this reports paid the subscription
   // and the invoice list are stale by exactly one refetch.
+  //
+  // 1.5s, not the 2.5s this started at. The server is the slow half — it is the sweep
+  // that asks ABA, and it now runs every 5s for a code still inside ABA's window — so
+  // this only needs to be comfortably shorter than that to not be the term anyone
+  // notices. The endpoint is one indexed read of the merchant's own row.
   useEffect(() => {
     if (!khqr || payIsTerminal) return;
     const id = setInterval(async () => {
@@ -578,7 +583,7 @@ export default function BillingPage() {
         // Transient. A failed poll is not a failed payment, so it is never shown as
         // one — the next tick retries.
       }
-    }, 2500);
+    }, 1500);
     return () => clearInterval(id);
   }, [khqr, payIsTerminal, notify, loadSubscription, loadInvoices]);
 

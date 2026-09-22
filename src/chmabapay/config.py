@@ -220,6 +220,28 @@ class Settings(BaseSettings):
     # W1 recurring fallback DB poll for missed jobs (safety-net; enqueue-on-write preferred)
     worker_w1_fallback_poll_seconds: float = 30.0
 
+    # The second, tighter W1 sweep — and why there are two.
+    #
+    # The sweep above is a safety net over *every* unsettled payment inside the
+    # detection window, which can be an hour wide. 30s is the right cadence for a
+    # payment nobody is watching, and the wrong one for a payment somebody is staring
+    # at: ABA's hosted QR lives 180s, so a customer who has just paid watches
+    # "waiting for you to scan and pay" for up to half a minute, and the merchant's
+    # Telegram alert is emitted at that same moment — both are waiting on this poll.
+    #
+    # Measured on the live rail 2026-09-22, from a settled payment's own attempt log:
+    # polls at 18.4s, 48.4s and 78.4s after the code was issued, i.e. exactly 30.0s
+    # apart, with the settlement landing on the third. The customer had paid before
+    # that poll; the platform simply had not asked.
+    #
+    # So payments young enough to still be inside ABA's window get their own sweep at
+    # this cadence. The cost is bounded by the batch cap, not by the interval: what
+    # decides the outbound call rate is the number of payments *in their first three
+    # minutes*, which is the set of customers actively paying — not the hour of
+    # abandoned codes the general sweep has to cover.
+    worker_w1_fast_poll_seconds: float = 5.0
+    worker_w1_fast_window_seconds: float = 180.0
+
     # Billing self-pay HQ store: used by /v1/billing/invoices/{id}/khqr to target
     # ChmabaPay's own internal store when it dog-foods create_payment() to collect plan fees.
     # Accepts either Store.id (int-as-string) or Store.public_id (string). Fallback: first

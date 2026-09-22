@@ -194,10 +194,38 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
         except Exception as exc:  # noqa: BLE001
             log.debug("W1 orphan enqueue skip: %s", exc)
 
+    async def w1_young_scan() -> None:
+        """The fast W1 sweep, scoped to payments still inside ABA's QR window.
+
+        A separate heartbeat rather than a tighter interval on the sweep above,
+        because the two cover different populations: one is a safety net over the
+        whole hour-long detection window, the other is the few minutes during which
+        a customer is actually paying. Folding them together would poll an abandoned
+        code twelve times a minute instead of twice, and would still leave the
+        watched payment waiting. See `worker_w1_fast_poll_seconds`.
+        """
+        try:
+            await transport.enqueue(
+                Q_DETECTION,
+                dedup_key=None,
+                payload={
+                    "type": "orphan_scan_pending",
+                    "max_age_seconds": int(settings.worker_w1_fast_window_seconds),
+                    # Bounded per sweep, so a burst of new payments cannot turn one
+                    # heartbeat into an unbounded run of outbound ABA calls.
+                    "batch_size": 25,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("W1 young-scan enqueue skip: %s", exc)
+
     # Intervals
     w4_interval = 60.0
     w2_interval = max(0.5, float(settings.webhook_poll_interval_seconds or 1.0))
     w1_interval = max(5.0, float(settings.worker_w1_fallback_poll_seconds or 30.0))
+    w1_young_interval = max(
+        2.0, float(settings.worker_w1_fast_poll_seconds or 5.0)
+    )
     w5_interval = max(60.0, float(settings.retention_sweep_interval_seconds or 86400.0))
     w3_interval = max(60.0, float(settings.billing_sweep_interval_seconds or 3600.0))
 
@@ -254,6 +282,18 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
 
         loop.create_task(_do())
 
+    def _schedule_w1_young() -> None:
+        if stop.is_set():
+            return
+
+        async def _do() -> None:
+            if stop.is_set():
+                return
+            await w1_young_scan()
+            loop.call_later(w1_young_interval, _schedule_w1_young)
+
+        loop.create_task(_do())
+
     def _schedule_w5() -> None:
         if stop.is_set():
             return
@@ -282,6 +322,7 @@ async def _recurring_heartbeats(transport: QueueTransport, stop: asyncio.Event) 
     loop.call_later(w4_interval, _schedule_w4)
     loop.call_later(w2_interval, _schedule_w2)
     loop.call_later(w1_interval, _schedule_w1)
+    loop.call_later(w1_young_interval, _schedule_w1_young)
     loop.call_later(w5_interval, _schedule_w5)
     loop.call_later(w3_interval, _schedule_w3)
 

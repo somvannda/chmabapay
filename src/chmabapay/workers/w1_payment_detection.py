@@ -256,6 +256,16 @@ class PaymentDetectionWorker(Worker):
         than the rail's own willingness to accept: a real payment was observed
         settling 9.5 minutes after its code had been withdrawn, and ABA gave no
         indication that was the limit.
+
+        Two payload keys narrow the sweep for the young-payment heartbeat, and both
+        are absent from the general one:
+
+          ``max_age_seconds`` — cover only rows created inside this many seconds. This
+          is what keeps the fast sweep off the hour of abandoned codes the general one
+          exists to cover; without it, a tighter interval would just poll everything
+          more often.
+          ``batch_size`` — the per-sweep cap, so a burst of new payments cannot turn
+          one heartbeat into an unbounded run of ABA calls.
         """
         from datetime import timedelta
 
@@ -265,28 +275,34 @@ class PaymentDetectionWorker(Worker):
 
         window = timedelta(seconds=get_settings().detection_window_seconds)
         cutoff = _now() - window
+        max_age_seconds = job.payload.get("max_age_seconds")
+        batch = int(job.payload.get("batch_size") or _ORPHAN_BATCH)
+
+        stmt = select(models.Payment.public_id).where(
+            models.Payment.status.in_(
+                (
+                    models.PAYMENT_PENDING,
+                    models.PAYMENT_SCANNED,
+                    models.PAYMENT_EXPIRED,
+                    # A retired replacement code is still live at ABA, and the
+                    # customer may be holding it. If it settles, that is a
+                    # second charge for one sale and the duplicate alert has to
+                    # be able to see it — so it stays under watch.
+                    models.PAYMENT_SUPERSEDED,
+                )
+            ),
+            models.Payment.created_at >= cutoff,
+        )
+        if max_age_seconds:
+            stmt = stmt.where(
+                models.Payment.created_at
+                >= _now() - timedelta(seconds=int(max_age_seconds))
+            )
+        # Oldest first: those are the ones closest to being expired out from under a
+        # payment that may already have settled.
         async with session_factory() as session:
             res = await session.execute(
-                select(models.Payment.public_id)
-                .where(
-                    models.Payment.status.in_(
-                        (
-                            models.PAYMENT_PENDING,
-                            models.PAYMENT_SCANNED,
-                            models.PAYMENT_EXPIRED,
-                            # A retired replacement code is still live at ABA, and the
-                            # customer may be holding it. If it settles, that is a
-                            # second charge for one sale and the duplicate alert has to
-                            # be able to see it — so it stays under watch.
-                            models.PAYMENT_SUPERSEDED,
-                        )
-                    ),
-                    models.Payment.created_at >= cutoff,
-                )
-                # Oldest first: those are the ones closest to being expired out
-                # from under a payment that may already have settled.
-                .order_by(models.Payment.id.asc())
-                .limit(_ORPHAN_BATCH)
+                stmt.order_by(models.Payment.id.asc()).limit(batch)
             )
             public_ids = list(res.scalars().all())
 
