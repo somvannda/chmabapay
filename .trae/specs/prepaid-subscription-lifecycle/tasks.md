@@ -1050,11 +1050,21 @@ design, because they need events that have not happened yet.
   that does not exist. So `resolve_hq_store` answers `source = 'console'`.
 - **Enforcement is off and now genuinely switchable.** Inside the `api` container:
   `BILLING_ENFORCE_ENABLED=false`, `BILLING_LEAD_DAYS=7`, `BILLING_GRACE_DAYS=7`,
-  `RESEND_API_KEY=` (empty → email channel off), `BILLING_EMAIL_FROM=billing@chmaba.com`.
-  Those five being present at all is the `deploy/` passthrough fix from PR #4 proving
-  itself: before it, the same `docker exec env` would have shown none of them.
+  `BILLING_EMAIL_FROM=billing@chmaba.com`. Those being present at all is the `deploy/`
+  passthrough fix from PR #4 proving itself: before it, the same `docker exec env` would
+  have shown none of them.
+- **The email channel was switched on later the same day.** `RESEND_API_KEY` was added to
+  `deploy/.env` — backed up first as `deploy/.env.bak-20260922-172225`, which is therefore a
+  clean rollback point — and the `api` container recreated to pick it up. Verified with a real
+  send from `billing@chmaba.com`, accepted by Resend as `01a0ca24-ace0-75d1-aace-2cd40817e130`:
+  the key is valid and `chmaba.com` is a **verified** sending domain.
+  Be precise about what that proves. It proves the credentials and the domain; it does **not**
+  prove the worker path, which is a different half of the same feature. W6 reads
+  `settings.resend_api_key`, and with it non-empty every tier it records is also delivered to
+  the account's own address — so §4.2's email half stays unexercised until a real invoice
+  reaches a tier.
 - `plan_invoice_reminders` exists and is empty — the table is new, and nothing has been
-  dunned yet.
+  dunned yet. That emptiness is also why the bullet above cannot be proven any sooner.
 - **Not yet exercised, and worth watching for:** the platform-admin account holds a comped
   `pro` subscription with no invoice behind it, so W3 will raise a renewal invoice for it in
   its lead window (~2026-10-14) and start dunning the platform's own account. D4 exempts a
