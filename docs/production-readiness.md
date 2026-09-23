@@ -886,31 +886,44 @@ checkbox could only ever say "no" to the whole thing, which hides the three.
       purge of `payments.gateway_status_raw`, which holds the ABA session token
       verbatim (`docs/legal/data-retention.md`, W5).
 - [x] A written answer on on-behalf-of usage (`docs/legal/on-behalf-of.md`).
-- [ ] Legal review of the agreement and the retention policy. **Needs a lawyer.**
-      Both documents are drafted, explicitly marked unreviewed in-place, and list
-      their open questions; no agent can close this one.
-- [ ] KYB capture at onboarding. **Not done, by an earlier decision.** See the
-      contradiction below — this reverses two recorded decisions rather than
-      representing an omission.
+- [x] Legal review of the agreement and the retention policy. **Closed on 2026-09-22 by
+      the operator's decision, not by a review.** The contracting party's own principal
+      accepted both documents as they stand rather than commissioning external review,
+      including §8's liability clause with no ceiling, and accepted that the open questions
+      in `docs/legal/merchant-agreement.md` §7 stay unanswered. Recorded as a decision
+      precisely because it is not a legal opinion: nothing in this repo has been read by a
+      lawyer, and no reader should infer otherwise from the tick.
+- **KYB capture at onboarding — permanently out of scope, by decision (2026-09-22).** Not
+  deferred, not pending, and not a gap: ChmabaPay performs no identity or business
+  verification, now or later. The operator's call is that merchant due diligence is the
+  merchant's own legal duty rather than a platform feature, which is the position
+  `docs/roadmap.md` already took and `supabase/migrations/6-drop-kyc.sql` already
+  implemented. It is listed here without a checkbox because a checkbox would imply work
+  that is waiting to be done.
 
-**The two open parts, on purpose.** Neither is a defect: one is a scope decision,
-the other needs a lawyer. While this was a single checkbox it could only be left
-unticked, because ticking it would have claimed both — which is why the parts are
-listed separately above, so the three that landed are visible next to the two
-that did not.
+**Nothing in this section is open any more.** What used to be two open parts were never
+defects — one was a scope decision and the other was a legal decision that belonged to the
+operator rather than to an agent — which is why the parts were listed separately, so the
+three that landed stayed visible next to the two that had not. Both are now settled: the
+legal item by the operator's decision, with its limits recorded on its own line above, and
+KYB capture by the decision that it is out of scope permanently. A reader who arrives here
+looking for outstanding merchant-verification work should read the line above rather than
+wait for it.
 
 **Why.** Migration 6 dropped KYC entirely, there is no merchant verification, and
 the site carries no legal pages. `docs/roadmap.md` flags the on-behalf-of question
 as the single biggest legal/technical risk.
 
-**A contradiction in the item itself, and how it was resolved.** This bullet asks
-for "KYB capture at onboarding". That reverses two recorded decisions:
+**The item contradicted itself, and how that resolved.** The bullet above once asked for
+"KYB capture at onboarding". That reversed two recorded decisions:
 `supabase/migrations/6-drop-kyc.sql` deleted every identity column, and
 `docs/roadmap.md` states *"Merchant due diligence (KYC/KYB) is your own legal duty,
 **not a platform feature**"*. Asked to choose, the call was **contract only: record
-acceptance of the agreement, add no business-category field, block nothing.** That
-decision is the reason the "a restricted business cannot be activated" criterion
-below cannot be met, and it is recorded rather than quietly dropped.
+acceptance of the agreement, add no business-category field, block nothing** — and on
+2026-09-22 the operator made that permanent rather than provisional. The same decision is
+therefore why the "a restricted business cannot be activated" criterion below cannot be met.
+That is a consequence of a decision, not an omission, and it is recorded rather than quietly
+dropped.
 
 #### Landed
 
@@ -991,8 +1004,8 @@ honoured, and a second run finding nothing to do.
 
 | Criterion | Status |
 |---|---|
-| Legal sign-off recorded | ❌ **Needs a lawyer.** Drafts exist and are marked unreviewed in-place (a visible banner on both pages); the open questions for review are listed in `docs/legal/merchant-agreement.md` §7 |
-| A restricted business cannot be activated | ❌ **Out of scope by decision.** No category field, no verification, no block — this is contract only, chosen deliberately |
+| Legal sign-off recorded | ⚠️ **Accepted by the operator, not reviewed by counsel** (2026-09-22). No draft banner remains — T-43 removed it — but the text has still never been read by a lawyer, and the open questions in `docs/legal/merchant-agreement.md` §7 are unanswered |
+| A restricted business cannot be activated | ❌ **Out of scope permanently, by decision.** No category field, no verification, no block — contract only, and not a gap that will be filled later. The same decision settles KYB: this platform does no identity or business verification, ever. |
 | Retention defined and enforced | ✅ 90-day purge, implemented and tested |
 
 Also drafted, deliberately unreviewed: `docs/legal/merchant-agreement.md` (the
