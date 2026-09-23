@@ -1,19 +1,27 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { AdminShell } from "@/components/AdminShell";
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
+// The latin subsets are vendored in `app/fonts/` instead of coming from
+// `next/font/google`. That helper downloads the files during `next build`, which
+// makes the build itself — CI and the production image alike — fail whenever
+// fonts.gstatic.com is unreachable, and it has: a CI run died mid-build fetching
+// JetBrains Mono on 2026-09-22. Both files are the upstream variable fonts, so one
+// file per family still covers every weight these apps use. See `fonts/OFL.txt`.
+const inter = localFont({
+  src: "./fonts/inter-latin.woff2",
+  weight: "100 900",
+  style: "normal",
   display: "swap",
   preload: true,
   variable: "--font-inter",
 });
 
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
+const jetbrains = localFont({
+  src: "./fonts/jetbrains-mono-latin.woff2",
+  weight: "100 800",
+  style: "normal",
   display: "swap",
   variable: "--font-mono",
 });
