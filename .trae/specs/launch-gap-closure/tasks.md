@@ -1246,8 +1246,10 @@ open stays intact:
    the environment.
 
 `docs/production-readiness.md` is the live record and carries both closures; this section
-stays as the history of how the wave closed. They now agree on what remains: only P1-4's KYB
-capture, which is a scope decision recorded as such.
+stays as the history of how the wave closed. Nothing is left open on either: P1-4's KYB
+capture is **out of scope permanently by the same operator decision**, not deferred — this
+platform does no identity or business verification, now or later, so there is no item here
+waiting to be picked up.
 
 ---
 
