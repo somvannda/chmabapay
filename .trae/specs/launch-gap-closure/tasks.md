@@ -1232,6 +1232,23 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 > Everything else the second audit found is closed here. That is what makes this the last
 > wave before the launch announcement.
 
+**Addendum, 2026-09-22 — the two items that were still open when this wave closed.** Kept
+as an addendum rather than edited into the block above, so the record of what Wave 8 left
+open stays intact:
+
+1. **P1-4's lawyer review** was closed by the operator's own decision, not by a review, and
+   §8's cap was accepted as drafted — indirect loss excluded, no ceiling. The limits of that
+   decision are recorded against P1-4 in `docs/production-readiness.md`. Nothing in this repo
+   has been read by a lawyer, and that file says so.
+2. **The HQ PayWay link** is set and verified in production: `ChmabaPay HQ` (store 1) is
+   `is_internal` and carries the console-saved `aba_payway` link, with
+   `CHMABAPAY_HQ_STORE_ID` empty so `resolve_hq_store` answers from the console rather than
+   the environment.
+
+`docs/production-readiness.md` is the live record and carries both closures; this section
+stays as the history of how the wave closed. They now agree on what remains: only P1-4's KYB
+capture, which is a scope decision recorded as such.
+
 ---
 
 ## Summary

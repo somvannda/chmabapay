@@ -1104,9 +1104,10 @@ internet:
   from the internet — the edge does not route them — and `/metrics` answers **401** from
   inside the network, where `METRICS_TOKEN` is the only thing stopping a scrape.
 
-The one thing P1-5 did **not** close, and did not touch: **P1-4's lawyer item.** The
-merchant agreement is still a draft, still marked unreviewed in place, and still needs a
-lawyer. This section exists to record what the code closed, not to move that item.
+The one thing P1-5 did **not** close, and did not touch: **P1-4's lawyer item.** It stayed
+open until 2026-09-22, when the operator closed it by their own decision rather than by a
+review — see P1-4 for the limits recorded with it. This section records what the code
+closed; that item was never going to be one of them.
 
 ---
 
@@ -1211,23 +1212,29 @@ toggle the flag explicitly through an audited admin route. Verified: 278 tests p
 migration applied, downgraded and re-applied with `alembic check` reporting no drift, and
 the production deploy proved the row counts unchanged across it.
 
-**Still open, and not closeable here.** Three items, each stated rather than implied:
+**Closed on 2026-09-22.** The three items this section used to list, and how each ended:
 
-1. **P1-4's lawyer review.** T-43 removed the last code-visible trace of the draft state
-   from the terms; it cannot substitute for the review. Unchanged.
-2. **The registered entity's details — supplied, and now stated.** On 2026-09-21 the
-   operator gave the contracting entity as **Chmaba**, registered at #62, Street P-10D,
-   Sangkat Veal Sbov, Khan Chmbar Ampov, Phnom Penh, Cambodia, and said there is **no
-   company number** to state. `/terms`, `/privacy` and the merchant-agreement draft now
-   name that entity instead of the placeholder "ChmabaPay Technologies", which was not a
-   company at all. `TERMS_VERSION` moved to `2` for the same reason the coupling in
-   `config.py` exists: an account that accepted version 1 agreed to a text that did not
-   identify its counterparty, so it must be asked again rather than have the new text
-   attributed to its old acceptance. **What is still open is the cap:** §8 excludes
-   indirect loss but sets no ceiling, and a liability cap is a decision for the lawyer,
-   not something to be invented here.
-3. **The HQ PayWay link** from P1-5's operator action. Until it is set, a paid plan
-   change correctly answers `503 billing_not_open`.
+1. **P1-4's lawyer review — closed by the operator's decision, not by a review.** The limits
+   recorded with that decision are on P1-4 above. T-43 removed the last code-visible trace
+   of the draft state; nothing could remove the need for a reader to know that no counsel
+   has seen the text.
+2. **The registered entity's details — supplied and now stated; and §8's cap settled the
+   same way.** On 2026-09-21 the operator gave the contracting entity as **Chmaba**,
+   registered at #62, Street P-10D, Sangkat Veal Sbov, Khan Chmbar Ampov, Phnom Penh,
+   Cambodia, and said there is **no company number** to state. `/terms`, `/privacy` and the
+   merchant-agreement draft now name that entity instead of the placeholder "ChmabaPay
+   Technologies", which was not a company at all. `TERMS_VERSION` moved to `2` for the same
+   reason the coupling in `config.py` exists: an account that accepted version 1 agreed to a
+   text that did not identify its counterparty, so it must be asked again rather than have
+   the new text attributed to its old acceptance. **The cap:** §8 excludes indirect loss and
+   sets no ceiling, which the operator accepted as drafted on 2026-09-22 — a decision on the
+   record rather than a gap waiting on someone.
+3. **The HQ PayWay link — set, and verified against production.** `ChmabaPay HQ` (store 1)
+   belongs to `duke@chmaba.com`, is `is_internal`, and carries the `aba_payway` link the
+   console saved. `CHMABAPAY_HQ_STORE_ID` is empty in `deploy/.env`, so `resolve_hq_store`
+   resolves it from the console rather than the environment, and `CHMABAPAY_HQ_PAYWAY_LINK`
+   is inert because the sign-in bootstrap only seeds a store that does not exist. A paid plan
+   change therefore reaches a real link instead of `503 billing_not_open`.
 
 ---
 
