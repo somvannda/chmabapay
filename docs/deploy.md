@@ -1109,9 +1109,36 @@ credential that can reach the whole account can read the JWT signing key from a
 backup — a backup is a copy of your secrets, and the place it lands has to be
 trusted accordingly.
 
-Until `BACKUP_REMOTE` is set, every night's dump is on the same disk as the database
-it came from. That survives a bad migration and a dropped table. It does not survive
-the disk.
+**Three things this cost a round trip each to learn, and none of them is visible in
+an error message.**
+
+- **`rclone lsd r2:` answers `403 AccessDenied` even with a correct token.** That is
+  the token working as intended: a bucket-scoped credential cannot list *buckets*.
+  `rclone lsf r2:chmabapay-backups` is the check that means something.
+- **A token created "Object Read only" fails on the first write with `403
+  AccessDenied` — after listing and reading succeed.** Nothing in the error names a
+  permission, so it reads like a broken endpoint. The token needs **Object Read &
+  Write** (or Admin Read & Write). R2 token permissions **cannot be edited after
+  creation**; the fix is a new token, which means new keys.
+- **Every upload logs an ERROR and then succeeds.** R2's `PutObject` response carries a
+  version id, rclone 1.60 turns round and HEADs it as `HEAD /bucket/key?versionId=…`,
+  and R2 answers **501 Not Implemented** to that request. It is not a setting on the
+  bucket: `rclone backend versioning r2:chmabapay-backups` reports **`Unversioned`**,
+  so the id is R2's own. `--s3-no-head-object` does not suppress it. The retry does, and
+  the stored object is byte-identical — verified by checksum, not by exit code.
+
+  **Do not reduce the retry count** in the rclone invocation. With `--retries 1` the
+  same upload exits non-zero *while the object is in fact written* — a false failure
+  that would page someone at 02:15 for nothing. The three `ERROR : Attempt 1/3 failed`
+  lines per file are expected output; the job's exit code and the alert are the signal,
+  not those lines, and the log is read for the `off-host copy done` line.
+
+`BACKUP_REMOTE` is set on this host, so the nightly run copies the dump, its `.meta` and
+the config archive to `r2:chmabapay-backups`. Two properties of the ordering are worth
+knowing: the copy happens **before** the prune, so a failing upload can never delete the
+local history it failed to copy; and the copy is part of the job's exit status, so a
+revoked or expired token stops the job loudly rather than quietly degrading to
+same-disk-only.
 
 A destination holding this archive is a destination holding `deploy/.env`, which
 contains `JWT_SECRET_KEY`, `POSTGRES_PASSWORD` and the Bakong credentials. It has to
@@ -1204,10 +1231,18 @@ curl -fsS https://pay.chmaba.com/health
 - Available memory went from 915 MB to 930 MB across the drill, and the POS stack was
   untouched — `deploy-front-1`, `deploy-api-1` and `deploy-db-1` all still up **2
   weeks**, `chmabapay-prod-*` all healthy.
-- **Four dumps are held**, all mode `600`: 05:18 by hand, 05:22 from cron, 06:32 as the
-  pre-migration snapshot for the `0013` deploy (58,645 bytes each, schema `0012`), and
-  06:48 after it — 67,505 bytes, **17 tables, schema `0013`**, drilled the moment it was
-  written.
+- **The off-host copy is real, and verified by checksum rather than by exit code.** A
+  cron-fired run at **09:30:02 UTC** produced `chmabapay-2026-09-24T093002Z.dump`, and
+  the bucket holds a byte-identical copy: md5 `85d478ba5d5f3a4bfaa5b87d2dc510b1` on
+  both sides, with the `.meta` and the config archive alongside it. Six objects across
+  two runs, all matching their local counterparts.
+- `rclone lsd r2:` answers **403** while `rclone lsf r2:chmabapay-backups` succeeds —
+  the token is scoped to the one bucket, which is the point of scoping it.
+- The remote's config is `/root/.config/rclone/rclone.conf`, mode `600`, root-only, and
+  it is the only place the R2 keys live on the host.
+- **Eight dumps are held locally**, all mode `600`, from 05:18 through 09:30 — the
+  `58,645`-byte `0012` set including the pre-migration snapshot, and the `67,505`-byte
+  `0013` set after it.
 
 Run end-to-end on 2026-09-24 against the development stack (Postgres 16, schema
 `0013`) before any of that, which is where the bugs below were found:
@@ -1233,21 +1268,22 @@ Run end-to-end on 2026-09-24 against the development stack (Postgres 16, schema
 
 **Not verified:**
 
-- **`BACKUP_REMOTE` is unconfigured, and that is now the only gap that matters.**
-  `rclone` v1.60.1 is installed on the host, but there is no remote and no bucket, so
-  every dump — all four on the host so far — is on the same disk as the database it came
-  from. Until a destination exists, "we have backups" is a statement about a bad
-  migration, not about the disk. This is a decision and a credential, not code: the
-  script already takes `BACKUP_REMOTE`, and the recipe above is written out.
-- **The 02:15 schedule has not fired yet.** What was proven is the command line with
-  cron's environment, at 05:22; the time itself is a line in a file until tomorrow
-  morning. Check `/var/log/chmabapay-backup.log` after 02:15 UTC.
+- **The 02:15 schedule has still not fired on its own.** Two real fires were watched —
+  09:19 and 09:30 — so the command line, the cron environment, the `HOME` dependency and
+  the upload are all proven; the *time* is a line in a file until tomorrow morning.
+  Check `/var/log/chmabapay-backup.log` after 02:15 UTC for `off-host copy done`.
+- **The remote prune has never run.** Nothing in the bucket is 14 days old yet, so the
+  `rclone delete --min-age` path in the job — the one line that deletes from a remote —
+  has no evidence behind it at all.
+- **The bucket has no lifecycle rule and versioning is off.** Retention is enforced by
+  this script and by nothing else. If the job is ever disabled, the bucket grows without
+  limit, and a deleted object is gone: there is no second copy inside R2 to fall back on.
 - `--restore` has only had its guard exercised. The restore itself is the drill's
   second pass with the same flags against a throwaway database, not a restore over
   production. Running it against production is a drill nobody should rehearse on the
   only copy.
-- The prune path has not been observed firing: `RETENTION_DAYS=14` and a working
-  rotation is a fortnight away.
+- The local prune path has also not fired: `RETENTION_DAYS=14` and a working rotation is
+  a fortnight away.
 
 Two bugs were found by running it rather than reading it, which is the reason this
 section says what was executed:
