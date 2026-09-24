@@ -1075,6 +1075,32 @@ body {
   background-size: 18px 18px;
 }
 
+/* Two rounded links meeting: the shape for "attach a store to its payment link". The
+   fourth variant, so the four Quick-start steps are distinguishable at a glance — they
+   all carried `-setup` before, which marked four different things with one glyph. */
+.landing-feature-icon-link {
+  background: #e7f4f6;
+}
+
+.landing-feature-icon-link::before,
+.landing-feature-icon-link::after {
+  right: auto;
+  bottom: auto;
+  top: 19px;
+  width: 11px;
+  height: 6px;
+  border: 2px solid #2f7f8c;
+  border-radius: 999px;
+}
+
+.landing-feature-icon-link::before {
+  left: 9px;
+}
+
+.landing-feature-icon-link::after {
+  left: 24px;
+}
+
 .landing-feature-icon-payment {
   background: #fff1e9;
 }
@@ -1720,37 +1746,11 @@ body {
   color: var(--ink);
 }
 
-/* A group whose routes cannot answer yet. Dashed rather than solid so it reads as
-   provisional at a glance, without hiding it — an integrator who has heard of the
-   Bakong ledger should find it and see why it is not usable. */
 .docs-endpoint-title-row {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-}
-
-.docs-endpoint-badge {
-  flex: none;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: #fef3c7;
-  color: #92400e;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.docs-endpoint-card.is-unavailable {
-  border-style: dashed;
-  background: #fcfcfd;
-}
-
-.docs-endpoint-card.is-unavailable .docs-path,
-.docs-endpoint-card.is-unavailable .docs-description {
-  color: var(--muted);
-  opacity: 0.75;
 }
 
 .docs-endpoint-summary {
@@ -1896,43 +1896,81 @@ body {
   background: var(--violet);
 }
 
+/* Light, like the code panels it holds. It was `#0f1015`, which would leave the webhook
+   signature section as the last dark shell on an otherwise light page. */
 .docs-signature-panel {
   border-radius: 20px;
-  border: 1px solid var(--border);
-  background: #0f1015;
+  border: 1px solid var(--line);
+  background: #ffffff;
   padding: 18px 18px 20px;
 }
 
-.docs-signature-panel-head {
-  display: inline-flex;
+/* Code panels. These were `#111217` near-black, which made a page whose own copy calls
+   them "six copy-paste steps" read like terminal output. A light panel, the language
+   named in a header, and a Copy button says the snippet is meant to be taken away. */
+.docs-code-block {
+  border: 1px solid #e9e9ef;
+  border-radius: 14px;
+  background: #fbfbfd;
+  overflow: hidden;
+}
+
+.docs-code-head {
+  display: flex;
   align-items: center;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 9999px;
-  background: #1c1e27;
-  color: #b0b2bf;
-  font-size: 10px;
-  line-height: 1;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  margin-bottom: 12px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #eef0f4;
+  background: #f5f6fa;
 }
 
-.docs-signature-code {
-  margin: 0 0 12px;
-  padding: 14px 14px 16px;
-  border-radius: 12px;
-  background: #111217;
-  color: #e9e9f2;
+.docs-code-title {
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.7;
-  overflow: auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
 }
 
-.docs-signature-code:last-child {
-  margin-bottom: 0;
+.docs-code-copy {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid #e2e4ec;
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.docs-code-copy:hover {
+  border-color: #c9ccd8;
+}
+
+.docs-code-pre {
+  margin: 0;
+  padding: 16px;
+  /* Both axes, not just x: a `max-height` is set on the Quick-start snippets, and with
+     only `overflow-x` a taller one would spill out of its panel instead of scrolling. */
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+/* Two panels stacked in the signature column need air between them — what the removed
+   `.docs-signature-code:last-child` margin rule used to give. */
+.docs-signature-panel .docs-code-block + .docs-code-block {
+  margin-top: 12px;
+}
+
+/* The same, between a convention's prose and its snippet. */
+.docs-ref-list .docs-code-block {
+  margin-top: 10px;
 }
 
 .docs-cta-card {
@@ -1940,8 +1978,150 @@ body {
   margin: 0 auto;
 }
 
+/* -------------------------------------------------------------------------- */
+/* API reference: authentication, conventions, limits, errors                  */
+/*                                                                            */
+/* Rows come from `app/api/docs/reference.ts`. They reuse the endpoint grid's   */
+/* card language so the page reads as one document, and the code column is      */
+/* monospaced so a reader can copy a token straight out of it.                  */
+/* -------------------------------------------------------------------------- */
+
+.docs-ref-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  margin-top: 48px;
+}
+
+.docs-ref-card {
+  padding: 24px;
+  border: 1px solid #e9e9ef;
+  border-radius: 16px;
+  background: #ffffff;
+}
+
+/* A group whose table runs the full width — the error catalogue is read by scanning
+   a column, so splitting it across two cards would break the scan. */
+.docs-ref-card-wide {
+  grid-column: 1 / -1;
+}
+
+.docs-ref-note {
+  margin: 8px 0 0;
+  max-width: 620px;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--muted);
+}
+
+.docs-ref-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 4px;
+}
+
+.docs-ref-table th {
+  padding: 0 0 10px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.docs-ref-table td {
+  padding: 10px 0;
+  border-top: 1px solid #f1f1f5;
+  vertical-align: top;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.docs-ref-table tr:first-child td {
+  border-top: 0;
+}
+
+.docs-ref-status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f1f1f5;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A 5xx means a bug here, not a mistake in the request, so it is the one status that
+   is coloured — the rest are ordinary refusals. */
+.docs-ref-status-server {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.docs-ref-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 700;
+  color: var(--ink);
+  /* A handful of these are long single tokens (`payment_already_reversed`,
+     `offline_qr_requires_a_confirmation_source`), which set the column's min-content
+     width the same way the endpoint descriptions did. */
+  overflow-wrap: anywhere;
+}
+
+/* Inline code inside a table cell or a convention paragraph. The catalogue is data, so a
+   token is written as a backticked span and `RichText` renders it with this. Deliberately
+   the only markup a row supports. */
+.docs-ref-inline {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+  background: #f7f7fb;
+  padding: 1px 5px;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+.docs-ref-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 20px;
+}
+
+.docs-ref-list h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.docs-ref-list p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--muted);
+}
+
+.docs-ref-link {
+  display: inline-block;
+  margin-top: 16px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 @media (max-width: 1024px) {
   .docs-endpoint-grid,
+  .docs-ref-grid,
   .docs-signature-shell {
     grid-template-columns: 1fr;
   }
@@ -1956,7 +2136,8 @@ body {
 }
 
 @media (max-width: 768px) {
-  .docs-endpoint-grid {
+  .docs-endpoint-grid,
+  .docs-ref-grid {
     margin-top: 36px;
   }
 
@@ -2171,91 +2352,112 @@ body {
   padding: 80px 24px;
 }
 
-.docs-qs-section .section-heading {
+/* The header is a band now, not a heading with a paragraph under it: an eyebrow, the
+   title, the sentence that sets the expectation, and chips saying what is on offer. */
+.docs-qs-eyebrow {
+  margin: 0 0 12px;
+  color: var(--violet);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.docs-qs-heading {
+  margin: 0;
   font-size: 36px;
   font-weight: 700;
   letter-spacing: -0.02em;
-  margin-bottom: 8px;
+  color: var(--ink);
 }
 
-.docs-qs-section .section-subheading {
+.docs-qs-lede {
+  margin: 14px 0 0;
+  max-width: 660px;
   font-size: 16px;
-  color: var(--landing-text-muted);
   line-height: 1.6;
-  margin-bottom: 48px;
-  max-width: 720px;
+  color: var(--muted);
 }
 
-.docs-qs-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 24px;
+.docs-qs-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
 }
 
-@media (min-width: 900px) {
-  .docs-qs-grid {
-    grid-template-columns: 1fr 1fr;
-  }
+.docs-qs-chip {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
 }
 
-@media (min-width: 1200px) {
-  .docs-qs-grid {
-    grid-template-columns: 1fr 1fr;
-    column-gap: 32px;
-    row-gap: 28px;
-  }
-}
-
-.docs-qs-block {
-  background: #0c0d10;
-  border: 1px solid var(--landing-border);
-  border-radius: 12px;
-  overflow: hidden;
+/* Each step is one card that owns its own header: the title sits in the code panel's
+   chrome instead of beside it. No rail and no numbers — the order is the order of the
+   page, and the marker a reader needs is the title, not an index they have to hold in
+   their head while scrolling to the snippet that belongs to it. */
+.docs-quick-steps {
   display: flex;
   flex-direction: column;
+  gap: 18px;
+  margin: 44px 0 0;
+  max-width: 880px;
 }
 
-.docs-qs-block .docs-signature-panel-head {
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--landing-border);
-  background: linear-gradient(180deg, rgba(105,87,245,0.08) 0%, transparent 100%);
+.docs-quick-step {
+  background: #ffffff;
+  border-color: #e6e6ee;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 18px 34px -26px rgba(105, 87, 245, 0.45);
 }
 
-.docs-qs-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  background: var(--landing-accent);
-  color: #ffffff;
-  font-size: 13px;
-  font-weight: 600;
-  margin-right: 12px;
-  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+.docs-quick-step .docs-code-head {
+  padding: 13px 16px;
+  background: linear-gradient(180deg, #f7f6ff 0%, #fbfbfd 100%);
 }
 
-.docs-qs-title {
-  display: inline-block;
-  font-size: 14px;
-  font-weight: 600;
+/* Scoped: the language labels on the hero and signature panels stay small and mono,
+   while a step title reads as a title. */
+.docs-quick-step .docs-code-title {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 700;
   letter-spacing: -0.01em;
-  vertical-align: middle;
+  color: var(--ink);
 }
 
-.docs-qs-code {
-  margin: 0;
-  padding: 20px;
-  overflow-x: auto;
+.docs-code-head-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.docs-code-lang {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* The Quick-start snippets are the longest on the page, so they get a little more room
+   and a ceiling that stops one long snippet pushing the steps below it far down. */
+.docs-quick-step .docs-code-pre {
+  padding: 18px;
   font-size: 13px;
   line-height: 1.65;
-  min-height: 220px;
   max-height: 420px;
 }
 
-.docs-qs-code code.bash,
-.docs-qs-code code.javascript {
+.docs-quick-step code.bash,
+.docs-quick-step code.javascript {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   color: #e2e4e8;
   white-space: pre-wrap;
@@ -2263,8 +2465,8 @@ body {
 }
 
 /* Color palette accents for quick start (match violet #6957F5 accent system) */
-.docs-qs-code code.bash::selection,
-.docs-qs-code code.javascript::selection {
+.docs-quick-step code.bash::selection,
+.docs-quick-step code.javascript::selection {
   background: rgba(105,87,245,0.3);
 }
 
@@ -2394,6 +2596,9 @@ body {
 .dash-signout-form { margin: 0; }
 .dash-signout-btn {
   all: unset;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   box-sizing: border-box;
   display: block;
   width: 100%;
@@ -3027,6 +3232,9 @@ body {
 }
 .dash-modal-close {
   all: unset;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   width: 32px;
   height: 32px;
   display: inline-flex;
@@ -3037,6 +3245,7 @@ body {
   color: #64748b;
   font-size: 18px;
   box-sizing: border-box;
+  background: transparent;
 }
 .dash-modal-close:hover {
   background: #f3f1fb;
@@ -3098,25 +3307,43 @@ body {
   display: flex;
   gap: 2px;
   padding: 4px;
-  background: #f3f2f8;
+  background: #f0eff6;
   border-radius: 12px;
   width: fit-content;
   margin-bottom: 20px;
+  border: 1px solid #e8e7f0;
 }
 .dash-tab {
+  /* `all: unset` resets inherited styles but does not reliably prevent Chrome on
+     Windows from substituting the system accent colour for the button background.
+     The explicit `appearance`, `background`, and `forced-color-adjust` declarations
+     below are the real fix; they are not redundant with `all: unset`. */
   all: unset;
-  padding: 8px 16px;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
+  background: transparent;
+  padding: 7px 18px;
   border-radius: 9px;
   font-size: 13px;
   font-weight: 600;
-  color: #475569;
+  color: var(--muted);
   cursor: pointer;
   box-sizing: border-box;
+  line-height: 1.3;
+  transition: color 0.12s ease;
+  white-space: nowrap;
+}
+.dash-tab:hover:not(.dash-tab-active) {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 9px;
 }
 .dash-tab-active {
   background: #fff;
   color: var(--violet);
-  box-shadow: 0 2px 6px -2px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 4px -1px rgba(15, 23, 42, 0.10), 0 0 0 1px rgba(105, 87, 245, 0.12);
+  font-weight: 700;
 }
 .dash-toast-container {
   position: fixed;
@@ -3679,9 +3906,11 @@ body.dash-hide-landing-chrome > .landing-footer {
 }
 
 .dash-tab-active {
-  border: 1px solid #d4ccff !important;
-  font-weight: 700 !important;
-  box-shadow: 0 2px 8px -2px rgba(105, 87, 245, 0.25) !important;
+  /* These match the base definition above; no !important needed since the base
+     rule and this override share the same specificity and the cascade resolves
+     in document order. */
+  box-shadow: 0 1px 4px -1px rgba(15, 23, 42, 0.10), 0 0 0 1px rgba(105, 87, 245, 0.12);
+  font-weight: 700;
 }
 
 .dash-btn {
@@ -4030,17 +4259,26 @@ body.dash-path-dashboard > .landing-footer {
 
 .cp-menu { position: relative; }
 .cp-menu-btn {
+  /* `all: unset` resets inherited styles but Chrome on Windows still consults the
+     OS accent colour for <button> elements even after that reset. The explicit
+     `-webkit-appearance: none` + `background` here closes that gap — same defence
+     as the root `button { appearance: none }` block, but scoped to this element so
+     the pill always renders white regardless of the user's Windows accent setting. */
   all: unset;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-1);
-  padding: 2px var(--sp-2) 2px 2px;
+  gap: var(--sp-2);
+  padding: 3px var(--sp-2) 3px 3px;
   border: 1px solid var(--line);
   border-radius: var(--r-pill);
   background: var(--surface-card);
   cursor: pointer;
   box-sizing: border-box;
   margin-left: var(--sp-1);
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
 .cp-menu-btn:hover {
   border-color: #d8d6e6;
@@ -4058,6 +4296,22 @@ body.dash-path-dashboard > .landing-footer {
   align-items: center;
   justify-content: center;
   letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+/* User's display name shown beside the avatar in the header button, same pattern
+   as the admin shell. Hidden on narrow viewports where the avatar alone is enough. */
+.cp-menu-name {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--ink);
+  max-width: 160px;
+  padding-right: var(--sp-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .cp-menu-name { display: none; }
 }
 .cp-menu-chevron { display: inline-flex; }
 .cp-menu-chevron svg {
@@ -4100,6 +4354,9 @@ body.dash-path-dashboard > .landing-footer {
 }
 .cp-menu-item {
   all: unset;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   display: block;
   width: 100%;
   box-sizing: border-box;
@@ -4111,6 +4368,7 @@ body.dash-path-dashboard > .landing-footer {
   cursor: pointer;
   text-align: left;
   font-family: inherit;
+  background: transparent;
 }
 .cp-menu-item:hover {
   background: #f6f6f9;
@@ -4194,6 +4452,9 @@ body.dash-path-dashboard > .landing-footer {
 .cp-switcher { position: relative; }
 .cp-switcher-btn {
   all: unset;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
@@ -4408,6 +4669,16 @@ body.dash-path-dashboard > .landing-footer {
   line-height: var(--lh-body);
   color: var(--ink-2);
 }
+/* A link inside an FAQ answer — "open a support request" — reads as part of the
+   sentence, not as a button: it keeps the violet accent and only underlines on hover. */
+.dash-panel details a {
+  color: var(--violet);
+  font-weight: 600;
+  text-decoration: none;
+}
+.dash-panel details a:hover {
+  text-decoration: underline;
+}
 
 /* ==========================================================
    App design system — normalizes the shared dashboard
@@ -4593,6 +4864,12 @@ body.dash-path-dashboard > .landing-footer {
   font-size: var(--fs-14);
   padding: var(--sp-2) var(--sp-4);
   border-radius: var(--r-xs);
+  /* Explicit appearance reset: the design-token override block runs at a higher
+     cascade position than the base definition above, so appearance: none must be
+     re-stated here to keep Chrome on Windows from re-applying the system accent. */
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
 }
 
 /* Modals */
@@ -4734,20 +5011,30 @@ body.dash-path-dashboard > .landing-footer {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: var(--sp-4);
 }
+/* On wide screens lock the plan grid to 3 equal columns so the cards align even
+   when the plan list has exactly three entries (which it almost always does). */
+@media (min-width: 760px) {
+  .bill-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 .bill-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+  gap: 0;
   padding: var(--sp-6);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--surface-card);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: box-shadow 0.15s ease;
+}
+.bill-card:hover {
+  box-shadow: 0 4px 14px -4px rgba(15, 23, 42, 0.10);
 }
 .bill-card-current {
   border-color: var(--violet);
   background: #faf9ff;
-  box-shadow: 0 0 0 3px rgba(105, 87, 245, 0.08);
+  box-shadow: 0 0 0 3px rgba(105, 87, 245, 0.08), 0 4px 16px -4px rgba(105, 87, 245, 0.14);
 }
 .bill-card-badge {
   position: absolute;
@@ -4768,26 +5055,27 @@ body.dash-path-dashboard > .landing-footer {
   font-weight: 800;
   letter-spacing: -0.01em;
   color: var(--ink);
-  padding-right: 104px;
+  padding-right: 80px;
 }
 .bill-card-price {
   display: flex;
   align-items: baseline;
   gap: var(--sp-1);
-  margin-top: var(--sp-2);
-  font-size: 40px;
+  margin-top: var(--sp-3);
+  font-size: 36px;
   line-height: 1;
   font-weight: 800;
-  letter-spacing: -0.05em;
+  letter-spacing: -0.04em;
   color: var(--ink);
 }
 .bill-card-price span {
-  font-size: var(--fs-16);
+  font-size: var(--fs-14);
   font-weight: 600;
   letter-spacing: 0;
   color: var(--muted);
 }
 .bill-card-caption {
+  margin-top: var(--sp-1);
   font-size: var(--fs-13);
   color: var(--muted);
 }
@@ -4815,14 +5103,17 @@ body.dash-path-dashboard > .landing-footer {
 }
 .bill-feature-mark {
   flex: none;
+  font-size: var(--fs-12);
   font-weight: 700;
   color: var(--violet);
+  margin-top: 1px;
 }
 .bill-feature-off { color: var(--subtle); }
 .bill-feature-off .bill-feature-mark { color: var(--subtle); }
 .bill-card-cta {
   margin-top: var(--sp-5);
   width: 100%;
+  justify-content: center;
 }
 
 /* ---------- Billing: the hold notice and the slot chooser ---------- */
@@ -5003,7 +5294,9 @@ body.dash-path-dashboard > .landing-footer {
 
 /* Brand-token cleanups for shared control + status colours */
 .dash-btn-secondary { color: var(--ink); }
-.dash-tab { color: var(--ink-2); }
+/* Inactive tab text: --muted is intentional here — it creates the visual
+   distinction between selected (violet) and unselected (muted/quiet) tabs. */
+.dash-tab { color: var(--muted); }
 .dash-pill-pending {
   background: var(--line-soft);
   color: var(--ink-2);
@@ -5362,6 +5655,62 @@ body.dash-path-dashboard > .landing-footer {
 .dash-plan-note-warn {
   color: #fde68a;
   font-weight: 600;
+}
+
+/* ---------- Support: request thread ----------
+   The merchant support page is the one surface that renders a conversation, and the
+   primitives above have no message shape — a `dash-note` is a single muted line, not a
+   timestamped body that has to wrap. Operator replies take the soft violet so the two
+   sides of a thread are told apart at a glance, the same accent the billing surfaces
+   use for a platform-side action. */
+.dash-thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.dash-thread-msg {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-card);
+  padding: var(--sp-4);
+}
+.dash-thread-msg-operator {
+  border-color: transparent;
+  background: var(--violet-soft);
+}
+.dash-thread-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.dash-thread-author {
+  font-size: var(--fs-13);
+  font-weight: 700;
+  color: var(--ink);
+}
+.dash-thread-time {
+  font-size: var(--fs-12);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.dash-thread-body {
+  margin: 0;
+  font-size: var(--fs-14);
+  line-height: var(--lh-body);
+  color: var(--ink-2);
+  /* Merchant text is whatever they typed, newlines and long tokens included. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dash-thread-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line);
 }
 
 
