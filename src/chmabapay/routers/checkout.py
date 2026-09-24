@@ -33,6 +33,12 @@ display:flex;min-height:100vh;align-items:center;justify-content:center;padding:
 .amount{font-size:34px;font-weight:700;letter-spacing:-.5px;margin:4px 0 2px}
 .amount small{font-size:16px;color:var(--muted);font-weight:500}
 .meta{color:var(--muted);font-size:13px;margin-bottom:14px}
+.qrbox{margin:16px auto;padding:10px;background:#fff;border:1px solid #e5e7eb;border-radius:14px;
+width:236px;height:236px;display:flex;align-items:center;justify-content:center}
+/* An author `display` beats the UA's [hidden] rule, so the element the script
+   hides on payment has to say so itself or it stays on screen. */
+.qrbox[hidden]{display:none}
+.qr{width:100%;height:100%;display:block}
 .panel{border-radius:12px;padding:14px;text-align:center;font-size:14px;font-weight:600}
 .pending{background:#fef3c7;color:var(--warn)}
 .scanned{background:#e0f2fe;color:#0369a1}
@@ -61,6 +67,11 @@ function render(s){
   p.textContent = map[s.status] || s.status;
   const done = TERMINAL.has(s.status);
   if (c) c.hidden = done;
+  // Once the payment is over the code stops being an invitation: the route
+  // answers 410 for a dead payment, and an <img> pointing at a 410 shows the
+  // customer a broken-image icon.
+  const q = document.getElementById("qrbox");
+  if (q) q.hidden = done;
   if (done){
     const url = s.status === "paid" ? s.redirect_success : s.redirect_failure;
     if (url){
@@ -129,6 +140,23 @@ def _checkout_html(
     js = _JS.replace("%(initial)s", json.dumps(initial))
     merchant = html.escape(store.name or store.public_id)
 
+    # The code is embedded only while the payment can still take money. For one
+    # that is paid or dead the image route answers 410, and an <img> against a 410
+    # renders a broken-image icon — a worse thing to show a customer than nothing.
+    #
+    # This is what makes the link self-serve. The copy used to read "scan the QR
+    # shown by the seller", which is right for a counter sale and no help at all to
+    # a merchant who sends this URL to a customer who is not in the room.
+    if payment.status in (models.PAYMENT_PENDING, models.PAYMENT_SCANNED):
+        meta = '<div class="meta">Scan this code with your banking app to pay.</div>'
+        qr = (
+            '<div class="qrbox" id="qrbox"><img class="qr" '
+            f'src="/pay/{html.escape(payment.public_id, quote=True)}/qr.svg" '
+            f'alt="Payment code for {merchant}"></div>'
+        )
+    else:
+        meta = qr = ""
+
     if whitelabel:
         logo_url = (store.logo_image_url or "").strip()
         logo = (
@@ -158,9 +186,8 @@ def _checkout_html(
 <body><div class="card">
 <div class="head">{logo}{merchant}</div>
 <div class="body">
-<div class="meta">Scan the QR shown by the seller, then confirm the payment in your banking app.</div>
-<div class="amount">{money_to_str(payment.amount_cents)} <small>{payment.currency}</small></div>
-<div class="panel {_panel_class(payment.status)}" id="panel">…</div>
+{meta}<div class="amount">{money_to_str(payment.amount_cents)} <small>{payment.currency}</small></div>
+{qr}<div class="panel {_panel_class(payment.status)}" id="panel">…</div>
 <div id="countdown"></div>
 </div><div class="foot">{base_url}</div>
 </div><script>{js}</script></body></html>"""
