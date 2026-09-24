@@ -13,7 +13,7 @@ import re
 
 import httpx
 import pytest_asyncio
-from conftest import make_account, make_key, make_store, make_webhook
+from conftest import make_account, make_key, make_store, make_webhook, session_client
 from fastapi.routing import APIRoute
 from sqlalchemy import select
 
@@ -24,8 +24,6 @@ from chmabapay.main import app
 from chmabapay.routers.auth import (
     RESTRICTED_ALLOWED_WRITES,
     RESTRICTED_REFUSED_READS,
-    SESSION_COOKIE,
-    _make_session_jwt,
     get_current_session_account,
 )
 from chmabapay.security import hash_password, verify_password
@@ -61,14 +59,6 @@ async def make_account_row(
         await session.commit()
         await session.refresh(row)
         return row
-
-
-def session_client(row: models.Account, amr: str = "password") -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url=BASE_URL,
-        cookies={SESSION_COOKIE: _make_session_jwt(row, amr)},
-    )
 
 
 async def reload_account(account_id: int) -> models.Account:
@@ -203,6 +193,40 @@ async def test_a_password_change_checks_the_old_one_and_takes_effect():
             )
         ).scalars().one()
     assert entry.actor_account_id == row.id
+
+
+async def test_a_new_password_longer_than_bcrypt_allows_is_refused_not_a_500():
+    """bcrypt hashes at most 72 bytes and raises past that.
+
+    The request schema bounds the password in *characters* (200), not bytes, so a long
+    ASCII password — or a short one in a multi-byte script — reached `hash_password`,
+    which raised a bare ValueError and came back as an unhandled 500. It has to be a
+    refusal the caller can act on.
+    """
+    row = await make_account_row()
+
+    async with session_client(row) as client:
+        too_long = await client.post(
+            "/v1/me/password",
+            json={"current_password": PASSWORD, "new_password": "a" * 73},
+        )
+        assert too_long.status_code == 400
+        assert too_long.json()["detail"] == "password_too_long"
+
+    # 25 Khmer characters is 75 bytes: short in characters, over the limit in bytes.
+    # This is the case a character-based bound cannot catch, which is why the check is
+    # made in bytes.
+    assert len(("ក" * 25).encode("utf-8")) > 72
+    async with session_client(row) as client:
+        multibyte = await client.post(
+            "/v1/me/password",
+            json={"current_password": PASSWORD, "new_password": "ក" * 25},
+        )
+        assert multibyte.status_code == 400
+        assert multibyte.json()["detail"] == "password_too_long"
+
+    saved = await reload_account(row.id)
+    assert verify_password(PASSWORD, saved.password_hash)
 
 
 async def test_a_google_only_account_has_no_password_to_change():
@@ -421,6 +445,42 @@ def _dependency_calls(dependant) -> set:
 def concrete(path: str) -> str:
     """A request path for a templated route: `/v1/stores/{public_id}` -> `/v1/stores/x`."""
     return re.sub(r"\{[^}]+\}", "x", path)
+
+
+async def test_an_api_key_cannot_manage_api_keys(plain_client):
+    """A credential that can mint credentials can outlive its own revocation.
+
+    The key routes accepted an API key until 2026-09-23. That let a leaked key create a
+    replacement for itself — so revoking the leaked one did not end the compromise — and
+    let it revoke every other key on the account, locking the merchant out of the
+    automation the key was stolen from. Key management is session-only now, like the
+    account and billing routes, and it fails with the ordinary missing-session answer
+    rather than as a special case.
+    """
+    row = await make_account_row()
+    raw_key, _ = await make_key(row)
+    headers = {"Authorization": f"Bearer {raw_key}"}
+
+    listed = await plain_client.get("/v1/keys", headers=headers)
+    assert listed.status_code == 401
+    assert listed.json()["detail"] == "invalid_session"
+
+    # The id is deliberately one that cannot exist: authentication is refused before the
+    # handler is reached, which is itself the property being asserted.
+    for method, path in (
+        ("POST", "/v1/keys"),
+        ("POST", "/v1/keys/999999/revoke"),
+        ("POST", "/v1/keys/999999/rotate"),
+    ):
+        res = await plain_client.request(
+            method, path, json={"name": "self"}, headers=headers
+        )
+        assert res.status_code == 401, f"{method} {path}"
+        assert res.json()["detail"] == "invalid_session", f"{method} {path}"
+
+    # The same key still authenticates the surface it was issued for, so the change is
+    # scoped to key management rather than to the credential.
+    assert (await plain_client.get("/v1/stores", headers=headers)).status_code == 200
 
 
 async def test_a_frozen_account_reads_and_pays_but_cannot_write():

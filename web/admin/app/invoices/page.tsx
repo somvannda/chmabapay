@@ -303,8 +303,6 @@ export default function AdminInvoicesPage() {
         </form>
       </div>
 
-      {errorMsg && <div className="dash-warn">{errorMsg}</div>}
-
       <div className="dash-panel">
         {loading ? (
           <div className="dash-info">Loading invoices…</div>
@@ -312,6 +310,8 @@ export default function AdminInvoicesPage() {
           <div className="dash-empty">
             Could not load the invoices.
             <div className="dash-empty-desc">
+              {errorMsg}
+              <br />
               The request failed, so this is not an empty result. Reload the page
               to try again.
             </div>

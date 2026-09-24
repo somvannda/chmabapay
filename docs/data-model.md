@@ -89,9 +89,9 @@ never encodes a money destination — the store's payment link does.
 | store_id | NULL for account-scoped; set for store-scoped |
 | scope | account / store |
 | can_manage_stores | bool (account keys only) — allow store provisioning endpoints |
-| key_prefix | e.g. `ck_live_`/`ck_test_` + first 8 chars, for display |
+| key_prefix | `ck_live_` + the first 4 characters of the secret (`raw[:12]`), for display |
 | key_hash | SHA-256 of full key (full key shown once at creation) |
-| mode | live / test |
+| mode | `live` only. `new_api_key` mints `ck_live_` and nothing else; the column is kept for the Phase-4 sandbox (decision D-2) |
 | status | active / revoked |
 | last_used_at | |
 | created_at, revoked_at | |

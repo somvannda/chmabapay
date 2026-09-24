@@ -2,29 +2,35 @@
 
 from __future__ import annotations
 
+import csv
+import io
+import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import audit, models
-from ..auth import KeyContext, resolve_key_context
 from ..config import get_settings
 from ..db import get_session
 from ..healthcheck import DEFAULT_MAX_AGE_SECONDS, queue_heartbeat_ages
 from ..schemas import LinkIn
 from ..services import billing as billing_svc
 from ..services import stores as store_svc
+from ..services import support as support_svc
 from ..services.bakong import get_bakong_client
 from ..services.payments import (
     count_paid_payments_this_month,
     gen_public_id,
     mark_paid,
+    reverse_payment,
 )
 
 # The same slug parser the HQ seed uses: a PayWay share link's merchant account id is
@@ -34,6 +40,15 @@ from ..services.status_reconciler import reconcile_payment
 from ..workers.job import JobStatus
 from ..workers.runtime import build_transport, worker_registry
 from .auth import get_current_session_account, session_auth_method
+
+# Minting and rotation live with the merchant routes so both callers share one
+# implementation: a second copy here would be a second place for the hash-at-rest rule,
+# the scope, the prefix or the trail to drift.
+from .keys import KeyOut, mint_key, rotate_key_instance
+
+# The day-boundary rule the merchant exports use, so `?to=2026-09-23` on the audit
+# trail means the same thing it means on a payment report: that whole day.
+from .reports import _parse_iso_date_end, _parse_iso_date_start
 
 router = APIRouter(
     prefix="/v1/admin",
@@ -54,15 +69,11 @@ FEATURE_MAX_LEN = 80
 @dataclass
 class HybridAuthContext:
     account: models.Account
-    key_ctx: KeyContext | None
-    is_session: bool
 
 
 async def get_hybrid_admin_context(
     request: Request,
-    authorization: str | None = Header(default=None),
-    session_account: models.Account | None = Depends(get_current_session_account),
-    session: AsyncSession = Depends(get_session),
+    session_account: models.Account = Depends(get_current_session_account),
 ) -> HybridAuthContext:
     """Resolve an admin caller, or refuse.
 
@@ -80,32 +91,25 @@ async def get_hybrid_admin_context(
     exception cannot exist there. Without it, a local console would need a
     hand-set password before it could be opened at all.
 
-    An API key is still accepted: a `ck_` value is a revocable, hashed,
-    workspace-scoped credential rather than an SSO session, so the rule this
-    guard exists to enforce does not apply to it.
+    An API key is **not** a credential here, and there is no longer a `Bearer
+    ck_` branch that pretended otherwise. Until 2026-09-23 that branch was
+    evaluated *before* the claim check, so a platform-admin key sent alongside
+    any valid session cookie — including an SSO one — reached every admin route
+    with no password claim at all, which is precisely what this guard exists to
+    prevent. A key authorises a merchant's own workspace; it does not authorise
+    the operator console. A request carrying one is refused by the claim check
+    below, and a request carrying one and no cookie is refused by the session
+    dependency before this body runs.
     """
-    if authorization and authorization.startswith("Bearer ck_"):
-        key_ctx = await resolve_key_context(session, authorization)
-        ctx = HybridAuthContext(
-            account=key_ctx.account, key_ctx=key_ctx, is_session=False
-        )
-    elif session_account is not None:
-        method = session_auth_method(request)
-        allowed = method == "password" or (
-            method == "dev" and get_settings().enable_dev_gateway
-        )
-        if not allowed:
-            raise HTTPException(
-                status_code=403, detail="password_session_required"
-            )
-        ctx = HybridAuthContext(
-            account=session_account, key_ctx=None, is_session=True
-        )
-    else:
-        raise HTTPException(status_code=401, detail="unauthorized")
-    if not ctx.account.is_platform_admin:
+    method = session_auth_method(request)
+    allowed = method == "password" or (
+        method == "dev" and get_settings().enable_dev_gateway
+    )
+    if not allowed:
+        raise HTTPException(status_code=403, detail="password_session_required")
+    if not session_account.is_platform_admin:
         raise HTTPException(status_code=403, detail="forbidden")
-    return ctx
+    return HybridAuthContext(account=session_account)
 
 
 def _account_profile(account: models.Account) -> dict[str, Any]:
@@ -254,9 +258,33 @@ async def list_accounts(
 
     filters = []
     if q and q.strip():
-        like = f"%{q.strip()}%"
+        text = q.strip()
+        like = f"%{text}%"
+        # An operator's inbound question is rarely an email address. It is a store id
+        # read off a failing integration, or the prefix of a key the merchant says
+        # stopped working. Both belong to exactly one account, so the same box answers
+        # all three rather than sending the operator to a separate lookup screen.
+        #
+        # `key_prefix` is the key's opening characters — `raw[:12]`, which is all the
+        # platform stores of it. Slicing the query the same way turns a *pasted* key
+        # into a prefix match, which is the form support actually receives; a prefix
+        # typed by hand is already one. Either way this reads the prefix column, never
+        # the raw key or its hash.
         filters.append(
-            or_(models.Account.email.ilike(like), models.Account.name.ilike(like))
+            or_(
+                models.Account.email.ilike(like),
+                models.Account.name.ilike(like),
+                models.Account.id.in_(
+                    select(models.Store.account_id).where(
+                        models.Store.public_id.ilike(like)
+                    )
+                ),
+                models.Account.id.in_(
+                    select(models.ApiKey.account_id).where(
+                        models.ApiKey.key_prefix.ilike(f"{text[:12]}%")
+                    )
+                ),
+            )
         )
 
     total_rows = (
@@ -313,6 +341,14 @@ async def list_accounts(
     )
 
 
+# How many stores and keys one account-detail response carries. The invoices below it
+# have always been capped at 24; these two were unbounded, so an account with hundreds
+# of stores or keys produced an arbitrarily large response that the console then
+# rendered in full. The totals travel with the rows, so the console can say what it is
+# not showing rather than truncating in silence.
+ACCOUNT_DETAIL_ROW_CAP = 50
+
+
 @router.get("/accounts/{account_id}")
 async def get_account_detail(
     account_id: int,
@@ -334,6 +370,7 @@ async def get_account_detail(
                 select(models.Store)
                 .where(models.Store.account_id == account_id)
                 .order_by(models.Store.id)
+                .limit(ACCOUNT_DETAIL_ROW_CAP)
             )
         )
         .scalars()
@@ -357,11 +394,24 @@ async def get_account_detail(
                 select(models.ApiKey)
                 .where(models.ApiKey.account_id == account_id)
                 .order_by(models.ApiKey.id)
+                .limit(ACCOUNT_DETAIL_ROW_CAP)
             )
         )
         .scalars()
         .all()
     )
+    # Counted in the database rather than from the capped lists above, or the usage
+    # line would under-report an account simply for having more keys than one page.
+    keys_total, keys_active = (
+        await session.execute(
+            select(
+                func.count(models.ApiKey.id),
+                func.sum(
+                    case((models.ApiKey.status == models.ACCOUNT_ACTIVE, 1), else_=0)
+                ),
+            ).where(models.ApiKey.account_id == account_id)
+        )
+    ).one()
     # The plan's limits and where the account stands against them, so a decision to
     # suspend, revoke or comp is made with the merchant's actual position visible
     # rather than discovered afterwards.
@@ -405,12 +455,18 @@ async def get_account_detail(
             }
         ),
         "usage": {
-            "keys_active": sum(
-                1 for key in keys if key.status == models.ACCOUNT_ACTIVE
-            ),
+            # `sum` over no rows is NULL, not 0.
+            "keys_active": int(keys_active or 0),
+            "keys_total": int(keys_total or 0),
             "payments_this_month": await count_paid_payments_this_month(
                 session, account_id
             ),
+        },
+        "truncated": {
+            # So the console can say "showing 50 of 173" instead of implying it has
+            # listed everything the account owns.
+            "stores": len(stores) >= ACCOUNT_DETAIL_ROW_CAP,
+            "keys": len(keys) >= ACCOUNT_DETAIL_ROW_CAP,
         },
         "keys": [
             {
@@ -446,8 +502,16 @@ class AdminAccountPatch(BaseModel):
     # `Account.status` is enforced at sign-in and on every authenticated request,
     # but nothing wrote it: the platform could lock an operator out by setting the
     # column by hand and had no supported way to do it, and no record of who did.
+    # `restricted` is the billing freeze — the account still signs in and reads, but
+    # writes are refused — and it was missing here, so the one standing an operator
+    # most often needs to apply (freeze a non-payer without locking them out) was
+    # the only one they could not set.
     status: str | None = Field(
-        default=None, pattern=f"^({models.ACCOUNT_ACTIVE}|{models.ACCOUNT_SUSPENDED})$"
+        default=None,
+        pattern=(
+            f"^({models.ACCOUNT_ACTIVE}|{models.ACCOUNT_SUSPENDED}"
+            f"|{models.ACCOUNT_RESTRICTED})$"
+        ),
     )
     reason: str | None = Field(default=None, max_length=500)
 
@@ -456,6 +520,7 @@ class AdminAccountPatch(BaseModel):
 # should not have to diff a field to find the suspension.
 _STATUS_ACTIONS = {
     models.ACCOUNT_SUSPENDED: "account.suspended",
+    models.ACCOUNT_RESTRICTED: "account.restricted",
     models.ACCOUNT_ACTIVE: "account.activated",
 }
 
@@ -1160,6 +1225,70 @@ async def revoke_account_key(
     }
 
 
+class AdminKeyCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # The same bound the merchant's own `KeyCreate` uses: the name is a label the
+    # merchant will read, not a free-text field.
+    name: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/accounts/{account_id}/keys", response_model=KeyOut)
+async def mint_account_key(
+    account_id: int,
+    body: AdminKeyCreateIn,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Mint a live API key for a merchant who cannot sign in.
+
+    The merchant route is session-only by design (decision D-8: no credential may
+    extend itself), which is right — but it left a real dead end. A merchant whose
+    console account is locked out, or who simply cannot finish the integration they
+    paid for, had to be talked through a sign-in they could not complete. The operator
+    is a different actor with a different credential, and this is the escape hatch.
+
+    It runs through the merchant route's own `mint_key`, so the hash-at-rest rule, the
+    account-wide scope and the trail are identical; the difference is the audit row,
+    which names the operator and says the key was minted through the console. The
+    merchant's consent gate and plan key-limit are **not** applied here — an operator
+    acting under a support ticket is not the merchant, and the terms gate has always
+    exempted platform tooling.
+
+    The raw key is returned once and never stored. The console shows it in a modal with
+    a copy button and says plainly that closing it is the last chance to keep it.
+    """
+    account = await session.get(models.Account, account_id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="account_not_found")
+
+    key, raw = await mint_key(
+        session, account=account, name=body.name, actor=ctx.account
+    )
+    return KeyOut.from_model(key, raw_key=raw)
+
+
+@router.post("/keys/{key_id}/rotate", response_model=KeyOut)
+async def rotate_account_key(
+    key_id: int,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Replace one key with a fresh credential, on the merchant's behalf.
+
+    The counterpart to minting: a key that leaked, or whose holder left the company,
+    can be replaced from here without the merchant being able to sign in. The
+    superseded key stops working immediately either way — that part was never the
+    problem; handing the replacement to the right person was.
+    """
+    key = await session.get(models.ApiKey, key_id)
+    if key is None:
+        raise HTTPException(status_code=404, detail="key_not_found")
+
+    new_key, raw = await rotate_key_instance(session, key=key, actor=ctx.account)
+    return KeyOut.from_model(new_key, raw_key=raw)
+
+
 @router.post("/stores/{store_public_id}/disable")
 async def disable_account_store(
     store_public_id: str,
@@ -1577,6 +1706,12 @@ class PaymentMarkPaidOut(BaseModel):
     paid_at: datetime | None
 
 
+class PaymentReverseOut(BaseModel):
+    id: str
+    status: str
+    reversed_at: datetime | None
+
+
 class PaymentRedeliverOut(BaseModel):
     id: str
     redelivered: int
@@ -1831,6 +1966,55 @@ async def mark_admin_payment_paid(
     )
 
 
+@router.post("/payments/{public_id}/reverse", response_model=PaymentReverseOut)
+async def reverse_admin_payment(
+    public_id: str,
+    body: PaymentReasonIn,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Record that a merchant's settled payment was refunded.
+
+    The merchant-facing route is scoped to the merchant's own account, so a refund
+    dispute raised by telephone had no in-product answer: an operator could
+    reconcile, mark paid and redeliver, but not give money back. That is not a
+    cosmetic gap — a payment left `paid` overstates revenue in every report built
+    on it for the rest of its retention window, and the merchant has to be talked
+    through a state correction the console cannot make.
+
+    Only settled money can be reversed, and `reverse_payment` is the same service
+    the merchant route calls, so the state guards (`409 payment_not_paid`,
+    `409 payment_already_reversed`), the negative ledger row and the
+    `payment.reversed` webhook are identical here. What differs is the record: the
+    reason is mandatory rather than optional, and the audit row names the operator
+    who decided it.
+    """
+    payment, store, account = await _load_admin_payment(session, public_id)
+
+    # Recorded into the transaction `reverse_payment` commits, so a reversal can
+    # never exist without the trail that says which operator made it.
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="admin.payment_reversed",
+        target_type="Payment",
+        target_id=payment.id,
+        details={
+            "reason": body.reason.strip(),
+            "amount_cents": payment.amount_cents,
+            "account_id": account.id,
+            "store_id": store.id,
+        },
+    )
+    await reverse_payment(session, payment, reason=body.reason)
+    await session.refresh(payment)
+    return PaymentReverseOut(
+        id=payment.public_id,
+        status=payment.status,
+        reversed_at=payment.reversed_at,
+    )
+
+
 @router.post("/payments/{public_id}/redeliver", response_model=PaymentRedeliverOut)
 async def redeliver_admin_payment_events(
     public_id: str,
@@ -2037,6 +2221,7 @@ class AdminDeliveryRetryOut(BaseModel):
 @router.post("/deliveries/{delivery_id}/retry", response_model=AdminDeliveryRetryOut)
 async def retry_delivery(
     delivery_id: int,
+    include_successes: bool = False,
     ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
     session: AsyncSession = Depends(get_session),
 ):
@@ -2052,6 +2237,13 @@ async def retry_delivery(
     `webhook_max_attempts` is terminal, and the merchant who just fixed their
     endpoint should get a real attempt rather than one that is refused as spent.
 
+    A delivery that already **succeeded** is left alone unless the caller opts in
+    with `include_successes=true` — the same rule the payment-level route applies.
+    Re-sending a `payment.completed` the merchant already processed can double-process
+    the sale on their side, so it is a deliberate choice rather than a side effect. A
+    direct caller used to get it re-sent silently, while the console's own checkbox
+    sent nothing at all.
+
     Quiet on a repeat, like every other operator action here: a delivery already due
     now with a fresh budget has nothing to change, so it writes no second audit row.
     """
@@ -2059,12 +2251,28 @@ async def retry_delivery(
     if delivery is None:
         raise HTTPException(status_code=404, detail="delivery_not_found")
 
+    if delivery.status == models.DELIVERY_SUCCESS and not include_successes:
+        return AdminDeliveryRetryOut(
+            id=delivery.id,
+            status=delivery.status,
+            attempts=delivery.attempts,
+            next_attempt_at=delivery.next_attempt_at,
+            retried=False,
+        )
+
     now = datetime.now(UTC)
+    # SQLite returns a naive value for this column where Postgres returns an aware
+    # one, so comparing the stored instant to `now` raised `TypeError` — a 500 — the
+    # second time an operator retried the same row. Every writer stores UTC, so a
+    # naive value is read as UTC rather than compared across offsets.
+    next_attempt = delivery.next_attempt_at
+    if next_attempt is not None and next_attempt.tzinfo is None:
+        next_attempt = next_attempt.replace(tzinfo=UTC)
     already_due = (
         delivery.status == models.DELIVERY_RETRYING
         and delivery.attempts == 0
-        and delivery.next_attempt_at is not None
-        and delivery.next_attempt_at <= now
+        and next_attempt is not None
+        and next_attempt <= now
     )
     if already_due:
         return AdminDeliveryRetryOut(
@@ -2398,6 +2606,47 @@ async def _worker_signals() -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
+# Health
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/health")
+async def admin_health(
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """What the deployment can say about itself, in one place.
+
+    `/health` answers 200 whenever the API process is up, which is what compose needs
+    and not what an operator needs: it says nothing about the database, the worker, or
+    whether the queues behind detection are draining. The overview folds the worker
+    signals into one "needs attention" line; this is the page behind that line, so a
+    wedged worker can be diagnosed without SSH.
+
+    No connection strings are returned. They carry passwords, and a console page is not
+    the place to reveal them — only whether the metrics scrape is secured.
+    """
+    settings = get_settings()
+
+    try:
+        await session.execute(select(models.Account.id).limit(1))
+        database = "ok"
+    except Exception as exc:  # noqa: BLE001 — reported, not raised: the page must render
+        database = f"error: {exc}"
+
+    return {
+        "app": settings.app_name,
+        "database": database,
+        "worker_transport": settings.worker_transport,
+        "dev_gateway": settings.enable_dev_gateway,
+        "metrics_scrape_secured": bool(settings.metrics_token),
+        "expected_queues": list(worker_registry()),
+        "heartbeat_max_age_seconds": DEFAULT_MAX_AGE_SECONDS,
+        "workers": await _worker_signals(),
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Audit trail
 # --------------------------------------------------------------------------- #
 
@@ -2415,11 +2664,49 @@ def _audit_row(entry: models.AuditLog, actor_email: str | None) -> dict[str, Any
     }
 
 
+def _audit_filters(
+    *,
+    action: str | None,
+    target_type: str | None,
+    actor_account_id: int | None,
+    from_date: str | None,
+    to_date: str | None,
+) -> list[Any]:
+    """The view's filters, shared by the view and the export.
+
+    One builder rather than two copies: an export that filtered differently from the
+    page it was launched from is a file nobody can reconcile with what they were
+    looking at. `from`/`to` are dates, not instants, and reuse the reports module's
+    day-boundary rule — `to` includes its whole day.
+    """
+    filters: list[Any] = []
+    if action:
+        filters.append(models.AuditLog.action == action)
+    if target_type:
+        filters.append(models.AuditLog.target_type == target_type)
+    if actor_account_id is not None:
+        filters.append(models.AuditLog.actor_account_id == actor_account_id)
+    if from_date:
+        filters.append(models.AuditLog.created_at >= _parse_iso_date_start(from_date))
+    if to_date:
+        filters.append(models.AuditLog.created_at <= _parse_iso_date_end(to_date))
+    return filters
+
+
+# An export is a file, not a page, so it cannot page. It is still bounded: an
+# unfiltered request against a trail that grows with every mutation would otherwise
+# pull the whole table into memory. The counts travel in the response headers, so a
+# truncated file says so instead of looking complete.
+AUDIT_EXPORT_CAP = 10_000
+
+
 @router.get("/audit-logs")
 async def list_audit_logs(
     action: str | None = None,
     target_type: str | None = None,
     actor_account_id: int | None = None,
+    from_date: str | None = Query(default=None, alias="from"),
+    to_date: str | None = Query(default=None, alias="to"),
     page: int = 1,
     per_page: int = 50,
     ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
@@ -2430,16 +2717,18 @@ async def list_audit_logs(
     Operator-only, and deliberately not scoped to one account: the trail spans the
     platform, which is the whole point of keeping it. `actor_email` is resolved
     here so an operator can read a row without a second lookup.
+
+    `from`/`to` are inclusive dates (`YYYY-MM-DD`), which is what an incident review
+    asks for — "what happened between these two days" — rather than two instants.
     """
     page, per_page, offset = _clamp_paging(page, per_page)
-
-    filters = []
-    if action:
-        filters.append(models.AuditLog.action == action)
-    if target_type:
-        filters.append(models.AuditLog.target_type == target_type)
-    if actor_account_id is not None:
-        filters.append(models.AuditLog.actor_account_id == actor_account_id)
+    filters = _audit_filters(
+        action=action,
+        target_type=target_type,
+        actor_account_id=actor_account_id,
+        from_date=from_date,
+        to_date=to_date,
+    )
 
     total_rows = (
         await session.execute(
@@ -2471,6 +2760,119 @@ async def list_audit_logs(
             total_pages=(total_rows + per_page - 1) // per_page,
         ).model_dump(),
     }
+
+
+_AUDIT_CSV_HEADER = (
+    "id",
+    "created_at",
+    "action",
+    "actor_account_id",
+    "actor_email",
+    "target_type",
+    "target_id",
+    "details",
+)
+
+
+@router.get("/audit-logs/export")
+async def export_audit_logs(
+    fmt: Literal["csv", "json"] = Query(default="csv", alias="format"),
+    action: str | None = None,
+    target_type: str | None = None,
+    actor_account_id: int | None = None,
+    from_date: str | None = Query(default=None, alias="from"),
+    to_date: str | None = Query(default=None, alias="to"),
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Download the trail, filtered exactly as the view filters it.
+
+    An incident review or a compliance ask wants the rows, not fifty of them: the view
+    pages at 100 and an export that quietly returned the first page would be worse than
+    no export at all, because it looks complete. Both formats carry the same filters
+    through `_audit_filters`, and both say how many rows exist when the cap bites —
+    the counts ride in `X-Total-Rows` / `X-Rows-Returned` rather than in the body, so
+    neither file format needs a marker row that its reader would have to know to skip.
+    """
+    filters = _audit_filters(
+        action=action,
+        target_type=target_type,
+        actor_account_id=actor_account_id,
+        from_date=from_date,
+        to_date=to_date,
+    )
+
+    total_rows = (
+        await session.execute(
+            select(func.count(models.AuditLog.id)).where(*filters)
+        )
+    ).scalar_one() or 0
+
+    rows = (
+        await session.execute(
+            select(models.AuditLog, models.Account.email)
+            .outerjoin(
+                models.Account, models.Account.id == models.AuditLog.actor_account_id
+            )
+            .where(*filters)
+            .order_by(models.AuditLog.created_at.desc(), models.AuditLog.id.desc())
+            .limit(AUDIT_EXPORT_CAP)
+        )
+    ).all()
+    data = [_audit_row(entry, email) for entry, email in rows]
+    stamp = datetime.now(UTC).strftime("%Y%m%d")
+    headers = {
+        "X-Total-Rows": str(total_rows),
+        "X-Rows-Returned": str(len(data)),
+    }
+
+    if fmt == "json":
+        return StreamingResponse(
+            iter([json.dumps({"data": data}, indent=2, default=str)]),
+            media_type="application/json",
+            headers={
+                **headers,
+                "Content-Disposition": f'inline; filename="audit-log-{stamp}.json"',
+            },
+        )
+
+    def _generate() -> Iterator[str]:
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(_AUDIT_CSV_HEADER)
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate()
+        for row in data:
+            writer.writerow(
+                [
+                    row["id"],
+                    row["created_at"],
+                    row["action"],
+                    row["actor_account_id"],
+                    row["actor_email"],
+                    row["target_type"],
+                    row["target_id"],
+                    # `details` is a JSON column and varies by action, so it goes into
+                    # one cell as JSON rather than being flattened into columns that
+                    # would be empty for most rows.
+                    json.dumps(row["details"], default=str)
+                    if row["details"] is not None
+                    else "",
+                ]
+            )
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate()
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/csv",
+        headers={
+            **headers,
+            "Content-Disposition": f'inline; filename="audit-log-{stamp}.csv"',
+        },
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -2657,3 +3059,316 @@ async def set_hq_store_link(
     await session.commit()
     await session.refresh(store)
     return await _hq_store_out(session)
+
+
+# --------------------------------------------------------------------------- #
+# Support queue
+# --------------------------------------------------------------------------- #
+
+
+class SupportMessageRowOut(BaseModel):
+    id: int
+    author_kind: str
+    author_account_id: int
+    body: str
+    created_at: datetime
+
+
+class AdminSupportTicketRowOut(BaseModel):
+    id: str
+    subject: str
+    category: str
+    status: str
+    priority: str
+    account_id: int
+    account_email: str
+    account_name: str
+    assigned_admin_account_id: int | None
+    first_response_at: datetime | None
+    resolved_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    response_target_hours: int | None
+    # Computed server-side so the console highlights a breach without re-deriving the
+    # target from the plan data it would otherwise have to fetch and interpret itself.
+    target_breached: bool
+
+
+class AdminSupportTicketListOut(BaseModel):
+    data: list[AdminSupportTicketRowOut]
+    pagination: Pagination
+
+
+class AdminSupportTicketDetailOut(AdminSupportTicketRowOut):
+    messages: list[SupportMessageRowOut]
+
+
+class AdminSupportReplyIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1, max_length=8000)
+
+
+class AdminSupportPatchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # `pattern` from the constants, the way `AdminAccountPatch.status` is built: an
+    # unknown state is a 422 rather than a row that no filter can ever find.
+    status: str | None = Field(
+        default=None,
+        pattern="^(" + "|".join(models.SUPPORT_STATUSES) + ")$",
+    )
+    # A null here is meaningful — it unassigns — so the route reads
+    # `model_fields_set` to tell "sent as null" from "not sent".
+    assigned_admin_account_id: int | None = None
+
+
+async def _load_support_ticket(
+    session: AsyncSession, public_id: str
+) -> models.SupportRequest:
+    """Load any account's request by public id. The console is unscoped on purpose."""
+    res = await session.execute(
+        select(models.SupportRequest).where(
+            models.SupportRequest.public_id == public_id
+        )
+    )
+    request = res.scalar_one_or_none()
+    if request is None:
+        raise HTTPException(status_code=404, detail="support_request_not_found")
+    return request
+
+
+async def _support_ticket_detail(
+    session: AsyncSession, request: models.SupportRequest
+) -> dict[str, Any]:
+    """One ticket as the console renders it: the header, the account, the thread, the breach."""
+    account = await session.get(models.Account, request.account_id)
+    target_hours = await support_svc.target_hours_for_account(session, request.account_id)
+    messages = await support_svc.load_messages(session, request.id)
+    return {
+        "id": request.public_id,
+        "subject": request.subject,
+        "category": request.category,
+        "status": request.status,
+        "priority": request.priority,
+        "account_id": request.account_id,
+        "account_email": account.email if account is not None else None,
+        "account_name": account.name if account is not None else None,
+        "assigned_admin_account_id": request.assigned_admin_account_id,
+        "first_response_at": request.first_response_at,
+        "resolved_at": request.resolved_at,
+        "created_at": request.created_at,
+        "updated_at": request.updated_at,
+        "response_target_hours": target_hours,
+        "target_breached": support_svc.target_breached(
+            request, target_hours, datetime.now(UTC)
+        ),
+        "messages": [
+            {
+                "id": message.id,
+                "author_kind": message.author_kind,
+                "author_account_id": message.author_account_id,
+                "body": message.body,
+                "created_at": message.created_at,
+            }
+            for message in messages
+        ],
+    }
+
+
+@router.get("/support/requests", response_model=AdminSupportTicketListOut)
+async def list_support_requests(
+    status: str | None = None,
+    priority: str | None = None,
+    account_id: int | None = None,
+    page: int = 1,
+    per_page: int = 25,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """The support queue: priority first, then oldest-unanswered.
+
+    `status`, `priority` and `account_id` narrow it; the ordering comes from
+    `services.support.queue_stmt` so the console and the rules cannot disagree about
+    what "next" means. Targets are resolved once per page rather than once per row.
+    """
+    page, per_page, offset = _clamp_paging(page, per_page)
+
+    filters = []
+    if status:
+        filters.append(models.SupportRequest.status == status)
+    if priority:
+        filters.append(models.SupportRequest.priority == priority)
+    if account_id is not None:
+        filters.append(models.SupportRequest.account_id == account_id)
+
+    total_rows = (
+        await session.execute(
+            select(func.count(models.SupportRequest.id)).where(*filters)
+        )
+    ).scalar_one() or 0
+
+    rows = (
+        await session.execute(
+            support_svc.queue_stmt()
+            .add_columns(models.Account.email, models.Account.name)
+            .join(
+                models.Account,
+                models.Account.id == models.SupportRequest.account_id,
+            )
+            .where(*filters)
+            .limit(per_page)
+            .offset(offset)
+        )
+    ).all()
+
+    target_hours = await support_svc.target_hours_by_account(
+        session, [request.account_id for request, _, _ in rows]
+    )
+    now = datetime.now(UTC)
+    return AdminSupportTicketListOut(
+        data=[
+            AdminSupportTicketRowOut(
+                id=request.public_id,
+                subject=request.subject,
+                category=request.category,
+                status=request.status,
+                priority=request.priority,
+                account_id=request.account_id,
+                account_email=email,
+                account_name=name,
+                assigned_admin_account_id=request.assigned_admin_account_id,
+                first_response_at=request.first_response_at,
+                resolved_at=request.resolved_at,
+                created_at=request.created_at,
+                updated_at=request.updated_at,
+                response_target_hours=target_hours.get(request.account_id),
+                target_breached=support_svc.target_breached(
+                    request, target_hours.get(request.account_id), now
+                ),
+            )
+            for request, email, name in rows
+        ],
+        pagination=Pagination(
+            page=page,
+            per_page=per_page,
+            total_rows=total_rows,
+            total_pages=(total_rows + per_page - 1) // per_page,
+        ),
+    )
+
+
+@router.get("/support/requests/{public_id}", response_model=AdminSupportTicketDetailOut)
+async def get_support_request(
+    public_id: str,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    request = await _load_support_ticket(session, public_id)
+    return await _support_ticket_detail(session, request)
+
+
+@router.post(
+    "/support/requests/{public_id}/reply",
+    response_model=AdminSupportTicketDetailOut,
+)
+async def reply_to_support_request(
+    public_id: str,
+    body: AdminSupportReplyIn,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Append the operator's reply and email the merchant.
+
+    The reply commits before the email is attempted: the thread is the record and the
+    email is a courtesy, so a mailer outage must not roll back an answer an operator has
+    already given. `email_operator_reply` swallows a delivery failure for that reason.
+    """
+    request = await _load_support_ticket(session, public_id)
+    message = await support_svc.record_operator_reply(
+        session, request, ctx.account, body.body
+    )
+    message_id = message.id
+
+    audit.record(
+        session,
+        actor=ctx.account,
+        action="support.replied",
+        target_type="SupportRequest",
+        target_id=request.id,
+        details={"account_id": request.account_id},
+    )
+    await session.commit()
+    await session.refresh(request)
+
+    merchant = await session.get(models.Account, request.account_id)
+    if merchant is not None:
+        await support_svc.email_operator_reply(
+            to=merchant.email,
+            request=request,
+            reply_body=body.body,
+            message_id=message_id,
+        )
+    return await _support_ticket_detail(session, request)
+
+
+@router.patch("/support/requests/{public_id}", response_model=AdminSupportTicketDetailOut)
+async def update_support_request(
+    public_id: str,
+    body: AdminSupportPatchIn,
+    ctx: HybridAuthContext = Depends(get_hybrid_admin_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Change a ticket's status and/or its assignee. Each change is audited separately.
+
+    A resolved status stamps `resolved_at` through the same service the merchant's close
+    route uses; moving back to an open state clears it, because a thread cannot be
+    resolved and open at once. Assignment is validated against a real platform admin so
+    a bad id is a 400 rather than a foreign-key 500.
+    """
+    request = await _load_support_ticket(session, public_id)
+    now = datetime.now(UTC)
+    wrote = False
+
+    if "assigned_admin_account_id" in body.model_fields_set:
+        new_assignee = body.assigned_admin_account_id
+        if new_assignee != request.assigned_admin_account_id:
+            if new_assignee is not None:
+                assignee = await session.get(models.Account, new_assignee)
+                if assignee is None or not assignee.is_platform_admin:
+                    raise HTTPException(status_code=400, detail="invalid_assignee")
+            previous = request.assigned_admin_account_id
+            request.assigned_admin_account_id = new_assignee
+            request.updated_at = now
+            audit.record(
+                session,
+                actor=ctx.account,
+                action="support.assigned",
+                target_type="SupportRequest",
+                target_id=request.id,
+                details={"from": previous, "to": new_assignee},
+            )
+            wrote = True
+
+    if body.status is not None and body.status != request.status:
+        previous = request.status
+        if body.status == models.SUPPORT_RESOLVED:
+            support_svc.resolve_request(session, request, now)
+        else:
+            request.status = body.status
+            request.resolved_at = None
+            request.updated_at = now
+        audit.record(
+            session,
+            actor=ctx.account,
+            action="support.status_changed",
+            target_type="SupportRequest",
+            target_id=request.id,
+            details={"from": previous, "to": body.status},
+        )
+        wrote = True
+
+    if wrote:
+        await session.commit()
+        await session.refresh(request)
+    return await _support_ticket_detail(session, request)

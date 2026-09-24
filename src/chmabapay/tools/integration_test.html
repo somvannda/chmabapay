@@ -119,8 +119,8 @@ footer{color:var(--muted);font-size:12px;margin-top:28px}
       <div>
         <label class="f" for="apiKey">API key</label>
         <input type="password" id="apiKey" class="mono" spellcheck="false" autocomplete="off"
-               placeholder="ck_test_… or ck_live_…">
-        <div class="hint">Held in memory only. A <span class="mono">ck_test_</span> key skips live quota.</div>
+               placeholder="ck_live_…">
+        <div class="hint">Held in memory only. Every key is a live key — there is no test prefix — so the payments this suite creates count against your plan's monthly allowance.</div>
       </div>
       <div>
         <label class="f" for="paywayLink">ABA PayWay link</label>
@@ -166,12 +166,13 @@ footer{color:var(--muted);font-size:12px;margin-top:28px}
     <div class="warnbox">
       This suite <b>writes test data</b> to the target account: test payments (one is driven through
       scan&nbsp;→&nbsp;paid via the dev rail), webhook endpoints, and a disposable store when the workspace has
-      none. Point it at a scratch account, and prefer a <span class="mono">ck_test_</span> key.
+      none. Point it at a scratch account.
     </div>
 
     <div class="warnbox hide" id="liveWarn">
-      A <span class="mono">ck_live_</span> key is in use. The suite creates real test payments and drives the
-      dev rail; destructive cases stay blocked unless you explicitly enable them with a test key.
+      A <span class="mono">ck_live_</span> key is in use, and every key is a live key. The suite creates real
+      test payments and drives the dev rail; destructive cases stay blocked unless you tick
+      <b>Include destructive cases</b>.
     </div>
 
     <section class="tools">
@@ -1089,7 +1090,7 @@ async function runSelected(cases) {
   const err = $("cfgError");
   err.classList.add("hide");
   if (!S.ctx.api_key) {
-    err.textContent = "Paste an API key first (ck_test_… is safest).";
+    err.textContent = "Paste an API key first (ck_live_…).";
     err.classList.remove("hide");
     return;
   }

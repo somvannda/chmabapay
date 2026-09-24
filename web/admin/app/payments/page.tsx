@@ -282,8 +282,6 @@ export default function AdminPaymentsPage() {
         </form>
       </div>
 
-      {errorMsg && <div className="dash-warn">{errorMsg}</div>}
-
       <div className="dash-panel">
         {loading ? (
           <div className="dash-info">Loading payments…</div>
@@ -291,6 +289,8 @@ export default function AdminPaymentsPage() {
           <div className="dash-empty">
             Could not load the payments.
             <div className="dash-empty-desc">
+              {errorMsg}
+              <br />
               The request failed, so this is not an empty result. Reload the page
               to try again.
             </div>

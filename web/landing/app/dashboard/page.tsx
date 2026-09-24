@@ -297,8 +297,9 @@ export default function DashboardOverviewPage() {
         <div>
           <h1 className="dash-page-title">Your stores</h1>
           <div className="dash-page-subtitle">
-            Each store has its own payment link, webhooks, and API keys. Your
-            plan &amp; monthly quota are shared across all of them.
+            Each store has its own payment link. Webhooks and API keys belong to the
+            whole workspace and serve every store &mdash; as do your plan and
+            monthly quota.
           </div>
         </div>
         <div>

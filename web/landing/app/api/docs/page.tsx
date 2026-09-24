@@ -1,40 +1,37 @@
 import { resolveSiteUrl } from "@/lib/siteUrl";
+import CodeBlock from "./CodeBlock";
+import { conventions, errorGroups, rateLimits } from "./reference";
 
+// One icon per step, rather than one icon four times. `setup` draws a target, `link`
+// two joined rings, `payment` a card, `insight` a bar chart — see globals.css.
 const integrationSteps = [
   {
     index: "01",
+    icon: "setup",
     title: "Create your workspace and get an API key",
     body: "Create a workspace, then generate a live API key in the dashboard. Every request is authenticated with that key as a Bearer token. The raw key is shown once.",
   },
   {
     index: "02",
+    icon: "link",
     title: "Register a store and its payment link",
     body: "A store is the merchant, and each store holds one ABA PayWay share link. Money moves from the payer straight into that link's own bank account — ChmabaPay never holds funds.",
   },
   {
     index: "03",
+    icon: "payment",
     title: "Create a payment and show the QR",
     body: "Call the payments API with an amount and a reference id. ABA issues the KHQR, you get a hosted checkout URL, and the code is good for the window ABA sets — about 180 seconds.",
   },
   {
     index: "04",
+    icon: "insight",
     title: "Confirm from the webhook, reconcile from reports",
     body: "Verify the signature on payment.completed, then match it to your order by reference_id. CSV and JSON exports cover finance and disputes.",
   },
 ] as const;
 
 const endpointGroups = [
-  {
-    title: "API Keys",
-    summary:
-      "Manage account API keys. Live keys are prefixed `ck_live_`, and one key authenticates every store on the account.",
-    items: [
-      { method: "GET", path: "/v1/keys", description: "List the account's API keys. The raw key is never returned again after creation." },
-      { method: "POST", path: "/v1/keys", description: "Create a key. name is required (1–64 chars) — it is how the key is told apart in the list. The response includes raw_key once. Capped by your plan: 1 / 3 / 10 keys on Free, Starter and Pro by default. Refused with 403 until the merchant agreement is accepted." },
-      { method: "POST", path: "/v1/keys/{key_id}/revoke", description: "Revoke a key by its numeric id. Any request using it fails from this call on." },
-      { method: "POST", path: "/v1/keys/{key_id}/rotate", description: "Create a replacement and suspend the old key in the same call — the old key stops working at once, so deploy the new one first. The response is the new key, including raw_key once." },
-    ],
-  },
   {
     title: "Stores",
     summary:
@@ -67,37 +64,17 @@ const endpointGroups = [
   {
     title: "Payment Reconciliation",
     summary:
-      "Re-check a payment you created, and have the platform act on what it finds. These are the endpoints to use for confirmation. The Bakong ledger lookups below are a different thing and are not switched on.",
+      "Re-check a payment you created, and have the platform act on what it finds. These are the endpoints to use for confirmation.",
     items: [
       { method: "GET", path: "/v1/transactions/check-status/{payment_public_id}", description: "Authoritative status for one of your payments. Query: prefer_aba_page (default true), aba_slug_hint, mark_paid (default true — when a source reports PAID, the payment row transitions too). Returns status (PAID/PENDING/FAILED/UNKNOWN), source (payway_hosted_checkout when an ABA-hosted session answered, bakong_open_api when the Bakong ledger matched, or null when no source could be reached), matched_amount, transitioned_to_paid, the signals behind the answer, and error when a source could not be reached. 404 payment_not_found if the id is not on your account. Works without Bakong credentials for a payment that has a hosted ABA session." },
       { method: "POST", path: "/v1/transactions/verify-payment/{payment_public_id}", description: "The same reconciliation, returning the underlying Bakong transaction shape instead of a status object. Query: use_hash (default false — forces the Bakong path), prefer_aba_page (default true), aba_slug_hint. When nothing confirms it yet it answers 200 with found:false rather than a 404 — there is simply no transaction to return yet. Bakong credentials are required only for a payment with no hosted session to ask." },
     ],
   },
   {
-    title: "Bakong Ledger Lookup",
-    unavailable: true,
-    summary:
-      "Look a transaction up in Bakong's own ledger, and renew the token those lookups need. These require platform Bakong Open API credentials, which are not configured, so the ledger lookups here answer 503 bakong_not_configured today. They are listed for completeness, not for use — reconcile with the two endpoints above instead.",
-    items: [
-      { method: "POST", path: "/v1/transactions/token/renew", description: "Ask NBC for a fresh short-lived Bakong JWT, used by the ledger lookups below. Body optional {email} — the registered Bakong developer email; 400 email_required when neither the body nor the deployment supplies one, and 400 bakong_error when NBC refuses. 200 returns {token, message}, with token null when one could not be issued." },
-      { method: "POST", path: "/v1/transactions/search", description: "Bakong search by identifier (search_type=hash|md5|short_hash|instruction_ref|external_ref, value, optional amount filter)." },
-      { method: "POST", path: "/v1/transactions/poll", description: "Poll Bakong until the transaction succeeds. Interval and attempts are set with interval_seconds (default 2) and max_attempts (default 60) — there is no timeout_seconds field." },
-      { method: "GET", path: "/v1/transactions/md5/{md5_value}", description: "Lookup by 32-char QR MD5." },
-      { method: "GET", path: "/v1/transactions/hash/{hash_value}", description: "Lookup by full 64-char SHA-256 hash." },
-      { method: "GET", path: "/v1/transactions/short-hash/{short_hash}", description: "Lookup by 8-char truncated short hash. An amount filter is strongly recommended." },
-      { method: "GET", path: "/v1/transactions/instruction-ref/{ref}", description: "Lookup by ISO 20022 instruction reference (EndToEndId / InstrId)." },
-      { method: "GET", path: "/v1/transactions/external-ref/{ref}", description: "Lookup by merchant-supplied external_ref, typically a KHQR bill_number." },
-      { method: "POST", path: "/v1/transactions/bulk", description: "Batch search. Body: {search_type, values: [<string>, …]} — one identifier type, up to 100 values." },
-      { method: "POST", path: "/v1/transactions/verify-receipt", description: "Receipt cascade lookup (md5 → short hash → … → bank statement)." },
-    ],
-  },
-  {
     title: "KHQR Generation",
     summary:
-      "Build KHQR payloads from ABA PayWay links, and render them. Only the PayWay routes here can confirm a payment: a code we build ourselves has no ABA transaction behind it, so no wallet will settle it and there is nothing to poll.",
+      "Mint an ABA-hosted code for a store's payment link, check whether it settled, and render a KHQR payload as SVG. Only the PayWay routes can confirm a payment.",
     items: [
-      { method: "POST", path: "/v1/khqr/from-link", description: "Build a KHQR payload from an ABA PayWay share link, crawling the link for the merchant and amount details. Useful for display; the code it returns is not payable, because ABA has no record of it." },
-      { method: "POST", path: "/v1/khqr/probe-aba-status", description: "Best-effort status probe on a PayWay page. Query params: slug_or_url (required), bill_number, reference_id, expected_amount_usd. It re-fetches ABA's public SSR page and looks for PAID indicators, so it is advisory only — a layout change or a cached page can make it wrong in either direction. POST /v1/khqr/payway/status is the authoritative answer for a hosted session." },
       { method: "POST", path: "/v1/khqr/payway/checkout", description: "Ask ABA to issue a hosted checkout session for a link, and return the code ABA will accept — that is what makes it payable as well as trackable." },
       { method: "POST", path: "/v1/khqr/payway/status", description: "Ask ABA for a hosted session's outcome — approved, paid, and ABA's own receipt URL. This is the only check that is authoritative on ABA's side." },
       { method: "GET", path: "/v1/khqr/render.svg", description: "Render a KHQR payload as SVG. Pass payload (the raw QR string, 8–1500 chars); optional scale (default 8) and ecc (default h). Public and stateless — it encodes what you give it and stores nothing." },
@@ -115,31 +92,6 @@ const endpointGroups = [
       { method: "POST", path: "/v1/webhooks/{endpoint_id}/rotate-secret", description: "Issue a new signing secret and return it once. Deliveries signed with the previous secret will fail verification." },
       { method: "GET", path: "/v1/webhooks/{endpoint_id}/deliveries", description: "Delivery attempt log, newest first: attempt_count, http_status, response_body_preview, and created/completed times. ?limit= (default 200, max 500) and ?page=." },
       { method: "POST", path: "/v1/webhooks/{endpoint_id}/test", description: "Send a synthetic signed event now, so you can validate the whole pipeline before going live." },
-    ],
-  },
-  {
-    title: "Billing & Plans",
-    summary: "Plans, the current subscription, and invoices.",
-    items: [
-      { method: "GET", path: "/v1/billing/plans", description: "Public plans matrix (name, monthly fee, and per-plan limits such as max_stores and max_keys_per_account). No auth needed." },
-      { method: "GET", path: "/v1/billing/subscription", description: "The account's current subscription and plan. Session only." },
-      { method: "POST", path: "/v1/billing/change-plan", description: "Change plan with plan_code=free|starter|pro. A move onto a free tier applies at once. A paid tier is bought rather than granted: the response comes back with payment_required=true, a pending subscription and the invoice for the period, and the plan activates when that invoice is paid — the pending subscription grants nothing until then. One invoice per account per period, so a 409 period_already_invoiced means this month is already billed. 400 plan_unchanged if it is the plan you are on, 404 plan_not_found, 400 plan_not_available if it is retired. Session only." },
-      { method: "GET", path: "/v1/billing/invoices", description: "List the account's plan invoices, filtered by period_month=YYYY-MM. Session only." },
-      { method: "GET", path: "/v1/billing/notices", description: "At most one billing notice, most urgent first: level (info|warning|critical), state (issuance|due_3|due_1|due_today|overdue_1|overdue_3|overdue_final|frozen), server-rendered title and body, due_at, days_until_due, dismissible, and action_url. Empty when nothing is owed. Session only." },
-      { method: "GET", path: "/v1/billing/invoices/{id}/khqr", description: "Mint a live KHQR to settle a plan invoice, through our own payments API. 201 returns payment_id, qr_string and checkout_url. 400 invoice_already_paid, 404 invoice_not_found, and 503 billing_not_open when the platform's own payment destination is not configured yet. Session only." },
-    ],
-  },
-  {
-    title: "Account",
-    summary: "The signed-in account's own profile. Everything here is session-cookie only — an API key is not accepted.",
-    items: [
-      { method: "GET", path: "/v1/me", description: "Your profile: id, email, name, status, whitelabel_enabled, is_platform_admin, has_password, created_at, updated_at, terms acceptance (terms_accepted_at / terms_accepted_version) and the version of the agreement published right now (terms_required_version), plus auth_method (password vs Google). There is no plan field here." },
-      { method: "PATCH", path: "/v1/me", description: "Update name. email is deliberately not accepted here — the schema forbids unknown fields, so sending it is a 422, and moving an address is a verified operation instead (POST /v1/me/email)." },
-      { method: "PATCH", path: "/v1/account", description: "Alias of PATCH /v1/me: update the account name. Only name is accepted; any other field is a 422 because the schema forbids unknown fields." },
-      { method: "POST", path: "/v1/me/password", description: "Rotate the account's password. Body {current_password, new_password}. 401 invalid_password when the current one is wrong, 400 password_unchanged when the new one matches the old, and 409 no_password_set for a Google-only account that has no password to rotate. Session only." },
-      { method: "DELETE", path: "/v1/me", description: "Close and anonymise the account. Body {confirm_email, current_password} — the account's own address echoed back, plus the password when the account has one. 400 confirm_email_does_not_match, 401 invalid_password, and 409 platform_admin_cannot_self_delete for the console's own account. Irreversible: it suspends the account and revokes every key, store and webhook." },
-      { method: "POST", path: "/v1/me/email", description: "Move the account's email. Requires current_password for an account that has one; an account created through Google has no password to prove ownership with, so it is refused and pointed at support. 400 email_already_taken if the address is in use." },
-      { method: "POST", path: "/v1/me/terms", description: "Record acceptance of the merchant agreement. Send the version you displayed; a stale one is refused with 409 terms_version_superseded. Re-accepting the current version is a no-op." },
     ],
   },
   {
@@ -165,7 +117,6 @@ const endpointGroups = [
 function quickStartPanels(baseUrl: string) {
   return [
     {
-      num: 1,
       title: "Set up your key",
       lang: "bash",
       code: `# Dashboard → API keys → Create key. The raw value is shown once.
@@ -173,7 +124,6 @@ export CHMABA_KEY="ck_live_aB3cXyZ..."
 export CHMABA_API="${baseUrl}"`,
     },
     {
-      num: 2,
       title: "Create a store",
       lang: "bash",
       code: `curl -X POST "$CHMABA_API/v1/stores" \\
@@ -187,7 +137,6 @@ export CHMABA_API="${baseUrl}"`,
 # 201 returns the store id (st_…) and status "draft".`,
     },
     {
-      num: 3,
       title: "Attach the PayWay link",
       lang: "bash",
       code: `curl -X PATCH "$CHMABA_API/v1/stores/st_your_store_id" \\
@@ -203,7 +152,6 @@ export CHMABA_API="${baseUrl}"`,
 # The store becomes "active". ABA PayWay is the only supported destination.`,
     },
     {
-      num: 4,
       title: "Create a payment",
       lang: "bash",
       code: `curl -X POST "$CHMABA_API/v1/payments" \\
@@ -224,7 +172,6 @@ export CHMABA_API="${baseUrl}"`,
 # same payment back instead of minting a second one.`,
     },
     {
-      num: 5,
       title: "Wait for settlement",
       lang: "bash",
       code: `# Poll the payment, or simply wait for the payment.completed webhook:
@@ -238,7 +185,6 @@ curl -X POST "$CHMABA_API/v1/payments/kQ7mZx2VaRt9LpBnWc4YsH1u/reissue" \\
 # 201 mints a new payment; 200 returns the live replacement if one exists.`,
     },
     {
-      num: 6,
       title: "Verify the webhook signature (Node.js)",
       lang: "javascript",
       code: `// Server-side only. Never expose the signing secret to browser code.
@@ -313,7 +259,9 @@ function GettingStarted() {
           {integrationSteps.map((item) => (
             <article key={item.index} className="landing-feature-card">
               <div className="landing-feature-top">
-                <div className="landing-feature-icon landing-feature-icon-setup" />
+                <div
+                  className={`landing-feature-icon landing-feature-icon-${item.icon}`}
+                />
                 <div className="landing-feature-index">{item.index}</div>
               </div>
               <h3 className="landing-feature-title">{item.title}</h3>
@@ -329,20 +277,29 @@ function GettingStarted() {
 function QuickStartPanels({ baseUrl }: { baseUrl: string }) {
   return (
     <section id="getting-started-panels" className="docs-qs-section">
-      <h2 className="section-heading">Quick start: six copy-paste steps</h2>
-      <p className="section-subheading">
-        From an empty store to a verified webhook. Every block is runnable as-is — replace your
-        API key and the store id with your own values.
-      </p>
-      <div className="docs-qs-grid">
+      <div className="docs-qs-head">
+        <p className="docs-qs-eyebrow">Quick start</p>
+        <h2 className="docs-qs-heading">Six copy-paste steps to a verified webhook.</h2>
+        <p className="docs-qs-lede">
+          From an empty store to a verified webhook. Every block is runnable as-is — replace
+          your API key and the store id with your own values.
+        </p>
+        <div className="docs-qs-meta">
+          <span className="docs-qs-chip">Copy-paste ready</span>
+          <span className="docs-qs-chip">curl and Node.js</span>
+          <span className="docs-qs-chip">No SDK required</span>
+        </div>
+      </div>
+      <div className="docs-quick-steps">
         {quickStartPanels(baseUrl).map((panel) => (
-          <div className="docs-qs-block" key={panel.num}>
-            <div className="docs-signature-panel-head">
-              <span className="docs-qs-num">({panel.num})</span>
-              <h4 className="docs-label docs-qs-title">{panel.title}</h4>
-            </div>
-            <pre className="docs-signature-code docs-qs-code"><code className={panel.lang}>{panel.code}</code></pre>
-          </div>
+          <CodeBlock
+            key={panel.title}
+            code={panel.code}
+            lang={panel.lang}
+            title={panel.title}
+            langTag
+            className="docs-quick-step"
+          />
         ))}
       </div>
     </section>
@@ -359,31 +316,24 @@ function EndpointSection() {
         </div>
         <div className="docs-endpoint-grid">
           {endpointGroups.map((group) => {
-            // Only one group can be unavailable today, and it is the one whose
-            // routes cannot answer without platform credentials. Rendering it with
-            // the same weight as the working ones would be the documentation
-            // equivalent of the 503 it returns.
-            const isUnavailable = "unavailable" in group && group.unavailable;
             return (
-              <article
-                key={group.title}
-                className={`docs-endpoint-card${isUnavailable ? " is-unavailable" : ""}`}
-              >
+              <article key={group.title} className="docs-endpoint-card">
                 <div className="docs-endpoint-head">
                   <div className="docs-endpoint-title-row">
                     <h3 className="docs-endpoint-title">{group.title}</h3>
-                    {isUnavailable ? (
-                      <span className="docs-endpoint-badge">Not available</span>
-                    ) : null}
                   </div>
-                  <p className="docs-endpoint-summary">{group.summary}</p>
+                  <p className="docs-endpoint-summary">
+                    <RichText text={group.summary} />
+                  </p>
                 </div>
                 <ul className="docs-endpoint-list">
                   {group.items.map((item) => (
                     <li key={`${item.method} ${item.path}`} className="docs-endpoint-row">
                       <span className={`docs-method docs-method-${item.method}`}>{item.method}</span>
                       <code className="docs-path">{item.path}</code>
-                      <p className="docs-description">{item.description}</p>
+                      <p className="docs-description">
+                        <RichText text={item.description} />
+                      </p>
                     </li>
                   ))}
                 </ul>
@@ -421,20 +371,18 @@ function SignatureSection() {
           </ul>
         </div>
         <div className="docs-signature-panel">
-          <div className="docs-signature-panel-head">
-            <span>Request headers</span>
-          </div>
-          <pre className="docs-signature-code">
-{`Content-Type: application/json
+          <CodeBlock
+            title="Request headers"
+            lang="http"
+            code={`Content-Type: application/json
 X-ChmabaPay-Event: payment.completed
 X-ChmabaPay-Signature: t=1757548800,v1=4f3…cd
 User-Agent: ChmabaPay-Webhook/1.0`}
-          </pre>
-          <div className="docs-signature-panel-head">
-            <span>Example: Node.js</span>
-          </div>
-          <pre className="docs-signature-code">
-{`const { createHmac, timingSafeEqual } = require('crypto');
+          />
+          <CodeBlock
+            title="Example: Node.js"
+            lang="javascript"
+            code={`const { createHmac, timingSafeEqual } = require('crypto');
 
 // rawBody must be the exact bytes received, not a re-serialised object.
 function verify(rawBody, header, secret) {
@@ -450,7 +398,264 @@ function verify(rawBody, header, secret) {
 
   return timingSafeEqual(Buffer.from(v1, 'hex'), Buffer.from(expected, 'hex'));
 }`}
-          </pre>
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Renders the catalogue's inline `code` spans.
+ *
+ * The rows live in `reference.ts`, and a data file has no JSX to wrap a token in, so a
+ * pair of backticks is the one convention: text between them renders as code and
+ * everything else is plain text. There is deliberately no markdown support beyond this —
+ * a row that needs more than inline code belongs in prose on the page, not in the table.
+ */
+function RichText({ text }: { text: string }) {
+  const parts = text.split("`");
+  return (
+    <>
+      {parts.map((part, index) =>
+        index % 2 === 1 ? (
+          <code key={index} className="docs-ref-inline">
+            {part}
+          </code>
+        ) : (
+          <span key={index}>{part}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+function AuthenticationSection() {
+  return (
+    <section id="authentication" className="landing-section landing-surface">
+      <div className="landing-shell">
+        <div className="docs-section-head">
+          <p className="landing-section-eyebrow">Before the first call</p>
+          <h2 className="landing-section-title">Authentication and environments</h2>
+        </div>
+        <div className="docs-ref-grid">
+          <article className="docs-ref-card">
+            <div className="docs-endpoint-head">
+              <div className="docs-endpoint-title-row">
+                <h3 className="docs-endpoint-title">
+                  One key authenticates every store
+                </h3>
+              </div>
+              <p className="docs-endpoint-summary">
+                Send the key as a Bearer token on every request. It covers every store on the
+                account, so treat it as a password: the raw value is shown once at creation,
+                only a hash is kept, and a key that leaks is revoked rather than edited.
+              </p>
+            </div>
+            <CodeBlock
+              title="Request headers"
+              lang="http"
+              code={`Authorization: Bearer ck_live_aB3cXyZ…
+Content-Type: application/json`}
+            />
+            <p className="docs-ref-note">
+              Create and revoke keys in the dashboard, under <strong>API keys</strong>. Key
+              management, billing and the account profile are deliberately not part of this
+              API: they are driven by a signed-in session, and an API key is refused there, so
+              a leaked key cannot rewrite the account it was issued from.
+            </p>
+          </article>
+
+          <article className="docs-ref-card">
+            <div className="docs-endpoint-head">
+              <div className="docs-endpoint-title-row">
+                <h3 className="docs-endpoint-title">There is no sandbox</h3>
+              </div>
+              <p className="docs-endpoint-summary">
+                Every key is a live key, and a payment minted with one moves real money into the
+                store&apos;s own ABA PayWay account. There is no test mode to switch to yet.
+              </p>
+            </div>
+            <ul className="docs-signature-list">
+              <li>
+                Point a store at your own ABA PayWay link before anything else, then mint a
+                single payment of 0.01.
+              </li>
+              <li>
+                Pay it from your own wallet and check the signature on the{" "}
+                <code className="docs-ref-inline">payment.completed</code> delivery. That is the
+                whole critical path, and it costs one cent.
+              </li>
+              <li>
+                Only then point the store at the merchant&apos;s link. Until test-mode keys
+                exist, keep anything you are still wiring up away from a real merchant&apos;s
+                link.
+              </li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ConventionsSection() {
+  return (
+    <section id="conventions" className="landing-section">
+      <div className="landing-shell">
+        <div className="docs-section-head">
+          <p className="landing-section-eyebrow">How the API behaves</p>
+          <h2 className="landing-section-title">Conventions worth knowing up front.</h2>
+        </div>
+        <div className="docs-ref-grid">
+          <article className="docs-ref-card docs-ref-card-wide">
+            <ul className="docs-ref-list">
+              {conventions.map((item) => (
+                <li key={item.title}>
+                  <h4>{item.title}</h4>
+                  <p>
+                    <RichText text={item.body} />
+                  </p>
+                  {item.code ? (
+                    <CodeBlock code={item.code} lang="bash" />
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function LimitsSection() {
+  return (
+    <section id="limits" className="landing-section landing-surface">
+      <div className="landing-shell">
+        <div className="docs-section-head">
+          <p className="landing-section-eyebrow">Rate limits</p>
+          <h2 className="landing-section-title">Limits, and what a 429 carries.</h2>
+        </div>
+        <div className="docs-ref-grid">
+          <article className="docs-ref-card">
+            <table className="docs-ref-table">
+              <thead>
+                <tr>
+                  <th>Rule</th>
+                  <th>Scope</th>
+                  <th>Limit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rateLimits.map((row) => (
+                  <tr key={row.rule}>
+                    <td>
+                      <span className="docs-ref-code">{row.rule}</span>
+                      <span className="docs-ref-note">
+                        <RichText text={row.applies} />
+                      </span>
+                    </td>
+                    <td>{row.scope}</td>
+                    <td>{row.limit}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </article>
+
+          <article className="docs-ref-card">
+            <div className="docs-endpoint-head">
+              <div className="docs-endpoint-title-row">
+                <h3 className="docs-endpoint-title">When a limit is reached</h3>
+              </div>
+              <p className="docs-endpoint-summary">
+                The request is refused before it is processed, so nothing was created. Wait the
+                number of seconds the response names, then retry — the rule that fired is in
+                the body, which is what tells you whether to slow down one endpoint or the
+                whole client.
+              </p>
+            </div>
+            <CodeBlock
+              title="Response once a limit is hit"
+              lang="http"
+              code={`HTTP/1.1 429 Too Many Requests
+Retry-After: 12
+X-RateLimit-Limit: 60
+X-RateLimit-Remaining: 0
+
+{ "detail": "rate_limited: payment_create",
+  "limit": 60, "window_seconds": 60, "retry_after": 12 }`}
+            />
+          </article>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ErrorsSection() {
+  return (
+    <section id="errors" className="landing-section">
+      <div className="landing-shell">
+        <div className="docs-section-head">
+          <p className="landing-section-eyebrow">Refusals</p>
+          <h2 className="landing-section-title">Every error code, in one place.</h2>
+          <p className="docs-ref-note">
+            A refusal carries an HTTP status and a <code className="docs-ref-inline">detail</code>{" "}
+            that is a stable machine token. Branch on the token, never on the prose around it.
+            Request-validation failures are the one exception: they answer with FastAPI&apos;s
+            array shape and carry no stable code, which is why the tables below list none.
+          </p>
+          <a className="docs-ref-link" href="/openapi.json">
+            Machine-readable contract (OpenAPI)
+          </a>
+        </div>
+        <div className="docs-ref-grid">
+          {errorGroups.map((group) => (
+            <article key={group.title} className="docs-ref-card">
+              <div className="docs-endpoint-head">
+                <div className="docs-endpoint-title-row">
+                  <h3 className="docs-endpoint-title">{group.title}</h3>
+                </div>
+                <p className="docs-endpoint-summary">
+                  <RichText text={group.summary} />
+                </p>
+              </div>
+              <table className="docs-ref-table">
+                <thead>
+                  <tr>
+                    <th>Status</th>
+                    <th>Code</th>
+                    <th>What it means</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.rows.map((row) => (
+                    <tr key={`${row.status}-${row.code}`}>
+                      <td>
+                        <span
+                          className={
+                            row.status >= 500
+                              ? "docs-ref-status docs-ref-status-server"
+                              : "docs-ref-status"
+                          }
+                        >
+                          {row.status}
+                        </span>
+                      </td>
+                      <td>
+                        <span className="docs-ref-code">{row.code}</span>
+                      </td>
+                      <td>
+                        <RichText text={row.meaning} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </article>
+          ))}
         </div>
       </div>
     </section>
@@ -511,9 +716,13 @@ export default function ApiDocsPage() {
     <main>
       <DocsHeader baseUrl={baseUrl} />
       <GettingStarted />
+      <AuthenticationSection />
       <QuickStartPanels baseUrl={baseUrl} />
       <EndpointSection />
       <SignatureSection />
+      <ConventionsSection />
+      <LimitsSection />
+      <ErrorsSection />
       <CtaSection />
     </main>
   );

@@ -23,6 +23,7 @@ type StoreLink = {
 type StoreSettings = {
   id: string;
   name?: string;
+  city?: string;
   external_id?: string | null;
   support_email?: string | null;
   brand_color?: string | null;
@@ -58,6 +59,7 @@ export default function StoreSettingsPage({
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
+  const [city, setCity] = useState("");
   const [externalId, setExternalId] = useState("");
   const [supportEmail, setSupportEmail] = useState("");
   const [brandColor, setBrandColor] = useState("");
@@ -104,6 +106,7 @@ export default function StoreSettingsPage({
         if (alive) {
           setSettings(data);
           setName(data.name || "");
+          setCity(data.city || "");
           setExternalId(data.external_id || "");
           setSupportEmail(data.support_email || "");
           setBrandColor(data.brand_color || "");
@@ -138,16 +141,27 @@ export default function StoreSettingsPage({
     }
   }, [storeSuccess]);
 
+  // The API refuses a blank name (`StorePatch.name` is `min_length=1`) and answers a
+  // 422 whose body is a list of validation objects — which reads as a broken form
+  // rather than "you cleared a required field". Caught here instead, next to the
+  // input, before the request is made. The city is checked for the same reason and
+  // because the column is NOT NULL.
+  const nameError = name.trim() === "" ? "A store needs a name." : null;
+  const cityError = city.trim() === "" ? "A store needs a city." : null;
+  const storeFormValid = nameError === null && cityError === null;
+
   const handleStoreSave = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
+      if (!storeFormValid) return;
       setStoreSaving(true);
       setStoreError(null);
       setStoreSuccess(null);
       setActionError(null);
       try {
         const body: Record<string, unknown> = {
-          name,
+          name: name.trim(),
+          city: city.trim(),
           external_id: externalId.trim() || null,
           support_email: supportEmail || null,
           redirect_success_url: successRedirect || null,
@@ -174,6 +188,8 @@ export default function StoreSettingsPage({
     },
     [
       name,
+      city,
+      storeFormValid,
       externalId,
       supportEmail,
       brandColor,
@@ -357,19 +373,43 @@ export default function StoreSettingsPage({
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="My store"
+                    maxLength={120}
+                    aria-invalid={nameError !== null}
                   />
+                  {nameError && <div className="dash-field-error">{nameError}</div>}
                 </div>
                 <div className="dash-field">
-                  <label htmlFor="ss-email">Support email</label>
+                  <label htmlFor="ss-city">City</label>
                   <input
-                    id="ss-email"
-                    type="email"
+                    id="ss-city"
+                    type="text"
                     className="dash-input"
-                    value={supportEmail}
-                    onChange={(e) => setSupportEmail(e.target.value)}
-                    placeholder="store@example.com"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    placeholder="Phnom Penh"
+                    maxLength={15}
+                    aria-invalid={cityError !== null}
                   />
+                  {cityError ? (
+                    <div className="dash-field-error">{cityError}</div>
+                  ) : (
+                    <div className="dash-hint">
+                      Up to 15 characters. It appears in the stores export.
+                    </div>
+                  )}
                 </div>
+              </div>
+
+              <div className="dash-field">
+                <label htmlFor="ss-email">Support email</label>
+                <input
+                  id="ss-email"
+                  type="email"
+                  className="dash-input"
+                  value={supportEmail}
+                  onChange={(e) => setSupportEmail(e.target.value)}
+                  placeholder="store@example.com"
+                />
               </div>
 
               <div className="dash-field">
@@ -495,7 +535,7 @@ export default function StoreSettingsPage({
                 <button
                   type="submit"
                   className="dash-btn dash-btn-primary"
-                  disabled={storeSaving}
+                  disabled={storeSaving || !storeFormValid}
                 >
                   {storeSaving ? "Saving…" : "Save store"}
                 </button>

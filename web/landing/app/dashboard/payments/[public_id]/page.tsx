@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useSession } from "@/components/portal/useSession";
 
 type StoreOption = {
   id: string;
@@ -81,14 +80,12 @@ export default function DashboardPaymentDetailPage({
   params: { public_id: string };
 }) {
   const publicId = params.public_id;
-  const { profile } = useSession();
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [payment, setPayment] = useState<Payment | null>(null);
   const [stores, setStores] = useState<StoreOption[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [markingPaid, setMarkingPaid] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [checkoutOrigin, setCheckoutOrigin] = useState("");
   const [copied, setCopied] = useState(false);
@@ -168,34 +165,12 @@ export default function DashboardPaymentDetailPage({
     }
   }
 
-  async function handleMarkPaid() {
-    if (!payment) return;
-    if (!confirm("Simulate marking this payment as PAID?")) return;
-    setMarkingPaid(true);
-    try {
-      const res = await fetch(`/_dev/payments/${payment.id}/pay`, {
-        method: "POST",
-        credentials: "include",
-      });
-      if (res.ok) {
-        setFlash("Payment marked as paid. Refreshing…");
-        setTimeout(() => {
-          setFlash(null);
-          void handleRefresh();
-        }, 800);
-      } else {
-        const err = await res.json().catch(() => ({}));
-        setFlash(err?.detail || "Could not mark payment as paid.");
-        setTimeout(() => setFlash(null), 4000);
-      }
-    } catch {
-      setFlash("Network error.");
-      setTimeout(() => setFlash(null), 4000);
-    } finally {
-      setMarkingPaid(false);
-    }
-  }
-
+  // The dev-only "Test: Mark paid" button that used to sit in the header called
+  // `/_dev/payments/{id}/pay`, a route that exists only when the dev gateway is mounted
+  // — so in production a platform admin was offered a control that answered 404. It is
+  // deleted rather than hidden because the console now carries a supported
+  // `POST /v1/admin/payments/{id}/mark-paid`: same effect, a required reason, and an
+  // audit row naming the operator.
   function storeName(): string {
     if (!payment?.store) return "-";
     const s = stores.find((x) => x.id === payment.store);
@@ -334,32 +309,16 @@ export default function DashboardPaymentDetailPage({
           </h2>
           <div className="dash-page-subtitle">Payment details</div>
         </div>
-        {payment && (payment.status === "paid" || profile?.is_platform_admin) && (
+        {payment && payment.status === "paid" && (
           <div className="dash-toolbar-filters">
-            {payment.status === "paid" && (
-              <button
-                type="button"
-                className="dash-btn dash-btn-secondary"
-                onClick={handleRefund}
-                disabled={refunding}
-              >
-                {refunding ? "Recording…" : "Record a refund"}
-              </button>
-            )}
-            {profile?.is_platform_admin && (
-              <button
-                type="button"
-                className="dash-btn dash-btn-secondary"
-                onClick={handleMarkPaid}
-                disabled={markingPaid || payment.status === "paid"}
-              >
-                {markingPaid
-                  ? "…"
-                  : payment.status === "paid"
-                    ? "Already paid"
-                    : "Test: Mark paid"}
-              </button>
-            )}
+            <button
+              type="button"
+              className="dash-btn dash-btn-secondary"
+              onClick={handleRefund}
+              disabled={refunding}
+            >
+              {refunding ? "Recording…" : "Record a refund"}
+            </button>
           </div>
         )}
       </div>

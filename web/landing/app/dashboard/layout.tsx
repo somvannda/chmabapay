@@ -260,7 +260,7 @@ export default function DashboardLayout({
             PayWay account.
           </p>
           <p className="cp-gate-text">
-            Accept the merchant agreement to open your workspace.
+            Accept the Terms of Service to open your workspace.
           </p>
           {termsError ? <p className="cp-gate-text">{termsError}</p> : null}
           <button
@@ -272,7 +272,7 @@ export default function DashboardLayout({
             {acceptingTerms ? "Saving…" : "Accept and continue"}
           </button>
           <a className="dash-btn" href="/terms" target="_blank" rel="noreferrer">
-            Read the merchant agreement
+            Read the Terms of Service
           </a>
         </div>
       </div>

@@ -23,6 +23,21 @@ const nextConfig = {
         destination: "/dashboard/payments/:pay_id",
         permanent: false,
       },
+      // Webhooks and API keys are workspace-scoped, so the store-scoped URLs stopped
+      // being pages. They used to answer with a page that redirected itself from an
+      // effect, which meant the browser painted the store's chrome and a "Redirecting…"
+      // notice first; here the redirect is decided by the router, before any render.
+      // Same 307 for the same reason as the payment route above.
+      {
+        source: "/dashboard/:public_id/webhooks",
+        destination: "/dashboard/webhooks",
+        permanent: false,
+      },
+      {
+        source: "/dashboard/:public_id/api-keys",
+        destination: "/dashboard/keys",
+        permanent: false,
+      },
       // Two conventional entry points people type or guess. Neither has a page
       // of its own: sign-in is Google OAuth, and pricing is the `#plans`
       // section of the landing page. Without this they are bare 404s, which is

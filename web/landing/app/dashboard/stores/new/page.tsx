@@ -16,6 +16,8 @@ export default function DashboardStoresNewPage() {
   const router = useRouter();
 
   const [name, setName] = useState("");
+  const [city, setCity] = useState("");
+  const [cityTouched, setCityTouched] = useState(false);
   const [externalId, setExternalId] = useState("");
   const [paywayLink, setPaywayLink] = useState("");
   const [paywayMerchantName, setPaywayMerchantName] = useState("");
@@ -25,17 +27,30 @@ export default function DashboardStoresNewPage() {
   const [linkError, setLinkError] = useState<string | null>(null);
   const [upgrade, setUpgrade] = useState(false);
 
+  // The city used to be left out of this form, so every store created here took the
+  // column default and reported as "Phnom Penh" — including stores that are not. It
+  // is required for the same reason the settings page requires it: the column is
+  // NOT NULL and an empty string is not a city. Held back until the field has been
+  // visited, because an error under an untouched input on first paint is noise.
+  const cityError =
+    cityTouched && city.trim() === "" ? "A store needs a city." : null;
+
   // The slug is what PayWay actually resolves, so the pre-flight check is on the
   // slug and not on the length of whatever was pasted. The server still has the
   // final word: it asks PayWay whether the link exists, which no local check can.
   function isFormValid(): boolean {
-    return Boolean(name.trim()) && paywaySlug(paywayLink).length >= 4;
+    return (
+      Boolean(name.trim()) &&
+      city.trim() !== "" &&
+      paywaySlug(paywayLink).length >= 4
+    );
   }
 
   function buildBody(): Record<string, unknown> {
     const link = paywayLink.trim();
     const body: Record<string, unknown> = {
       name: name.trim(),
+      city: city.trim(),
       link: {
         raw_link: link,
         merchant_account_id: paywaySlug(link),
@@ -126,6 +141,30 @@ export default function DashboardStoresNewPage() {
             maxLength={120}
             required
           />
+        </div>
+
+        <div className="dash-field">
+          <label htmlFor="store-city">City</label>
+          <input
+            id="store-city"
+            className="dash-input"
+            type="text"
+            placeholder="Phnom Penh"
+            value={city}
+            onChange={(e) => setCity(e.target.value)}
+            onBlur={() => setCityTouched(true)}
+            maxLength={15}
+            aria-invalid={cityError !== null}
+            required
+          />
+          {cityError ? (
+            <div className="dash-field-error">{cityError}</div>
+          ) : (
+            <div className="dash-hint">
+              Where this store is. It appears in your store list and in the
+              stores CSV export.
+            </div>
+          )}
         </div>
 
         <div className="dash-field">

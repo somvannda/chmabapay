@@ -9,12 +9,15 @@ an incident.
 
 from __future__ import annotations
 
+import csv
+import io
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import pytest
 import pytest_asyncio
-from conftest import make_account, make_key, make_store
+from conftest import make_account, make_key, make_store, session_client
 from sqlalchemy import select, update
 
 from chmabapay import models
@@ -27,6 +30,19 @@ from chmabapay.services.payments import expire_due_payments
 # over plain http — the same reason test_admin_plans.py does this.
 BASE_URL = "http://localhost"
 PASSWORD = "correct horse battery"
+
+# The dashboard's webhook form. Its create payload cannot be exercised from here, so
+# it is read as source — the same approach test_openapi_schema.py takes to the docs
+# page.
+WEBHOOKS_FORM = (
+    Path(__file__).resolve().parents[1]
+    / "web"
+    / "landing"
+    / "app"
+    / "dashboard"
+    / "webhooks"
+    / "page.tsx"
+)
 
 # The surface where a mutation changes a credential, where money is sent, whether
 # money can be taken, or an account's standing. Each entry names the audit action
@@ -127,23 +143,29 @@ def test_each_classified_route_still_exists(method: str, path: str):
 # --------------------------------------------------------------------------- #
 # API keys
 # --------------------------------------------------------------------------- #
-async def test_key_lifecycle_is_attributed_to_the_merchant(client):
+async def test_key_lifecycle_is_attributed_to_the_merchant():
+    """Key management is session-only — the reason is in routers/keys.py.
+
+    This used to mint keys with an API key. A credential that can create credentials
+    can mint its own replacement and outlive its revocation, and can revoke every other
+    key on the account; key management is a dashboard action now. The assertion that an
+    API key is refused there lives in `test_account_security.py`.
+    """
     account = await make_account()
-    raw_key, _ = await make_key(account)
-    headers = bearer(raw_key)
 
-    created = await client.post("/v1/keys", json={"name": "production"}, headers=headers)
-    assert created.status_code == 201
-    key_id = created.json()["id"]
-    issued_secret = created.json()["raw_key"]
+    async with session_client(account) as api:
+        created = await api.post("/v1/keys", json={"name": "production"})
+        assert created.status_code == 201
+        key_id = created.json()["id"]
+        issued_secret = created.json()["raw_key"]
 
-    rotated = await client.post(f"/v1/keys/{key_id}/rotate", headers=headers)
-    assert rotated.status_code == 200
-    rotated_id = rotated.json()["id"]
-    rotated_secret = rotated.json()["raw_key"]
+        rotated = await api.post(f"/v1/keys/{key_id}/rotate")
+        assert rotated.status_code == 200
+        rotated_id = rotated.json()["id"]
+        rotated_secret = rotated.json()["raw_key"]
 
-    revoked = await client.post(f"/v1/keys/{rotated_id}/revoke", headers=headers)
-    assert revoked.status_code == 200
+        revoked = await api.post(f"/v1/keys/{rotated_id}/revoke")
+        assert revoked.status_code == 200
 
     written = {entry.action: entry for entry in await rows()}
     assert {"key.created", "key.rotated", "key.revoked"} <= set(written)
@@ -173,17 +195,16 @@ async def assert_no_secret_in_details(secret: str) -> None:
     assert secret not in str(entries)
 
 
-async def test_revoking_an_already_revoked_key_records_nothing_new(client):
+async def test_revoking_an_already_revoked_key_records_nothing_new():
     """A no-op is not a privileged mutation, so it must not inflate the trail."""
     account = await make_account()
-    raw_key, _ = await make_key(account)
-    headers = bearer(raw_key)
 
-    created = await client.post("/v1/keys", json={"name": "once"}, headers=headers)
-    key_id = created.json()["id"]
+    async with session_client(account) as api:
+        created = await api.post("/v1/keys", json={"name": "once"})
+        key_id = created.json()["id"]
 
-    assert (await client.post(f"/v1/keys/{key_id}/revoke", headers=headers)).status_code == 200
-    assert (await client.post(f"/v1/keys/{key_id}/revoke", headers=headers)).status_code == 200
+        assert (await api.post(f"/v1/keys/{key_id}/revoke")).status_code == 200
+        assert (await api.post(f"/v1/keys/{key_id}/revoke")).status_code == 200
 
     assert len(await rows("key.revoked")) == 1
 
@@ -240,6 +261,61 @@ async def test_webhook_lifecycle_is_attributed_to_the_merchant(client):
     }
     # The previous secret is not kept; the new one must not be either.
     await assert_no_secret_in_details(new_secret)
+
+
+async def test_a_webhook_create_accepts_the_dashboard_payload(client):
+    """The dashboard's create form must send a body `WebhookCreate` accepts.
+
+    The form used to include `enabled`, which belongs to PATCH. `WebhookCreate`
+    forbids unknown fields, so every create from the portal failed with a 422
+    ("Extra inputs are not permitted") and no merchant could register an endpoint.
+    Both halves are pinned here: the payload the form now sends is accepted, and the
+    field that broke it is still refused rather than silently ignored.
+    """
+    account = await make_account()
+    raw_key, _ = await make_key(account)
+    headers = bearer(raw_key)
+
+    accepted = await client.post(
+        "/v1/webhooks",
+        json={"url": "https://sink.example.com/hook", "events": ["*"]},
+        headers=headers,
+    )
+    assert accepted.status_code == 201
+    # Creating always produces an active endpoint, which is why the form no longer
+    # offers a control suggesting the caller can choose otherwise.
+    assert accepted.json()["enabled"] is True
+
+    refused = await client.post(
+        "/v1/webhooks",
+        json={"url": "https://sink.example.com/other", "events": ["*"], "enabled": True},
+        headers=headers,
+    )
+    assert refused.status_code == 422
+
+
+def test_the_webhook_form_sends_the_payload_the_api_accepts():
+    """The other half of the test above: read what the form actually builds.
+
+    Asserting the accepted payload against a literal in this file is what let the bug
+    come back. The form went on posting `enabled` while that assertion stayed green,
+    and every create from the portal answered 422 — invisible, because a merchant
+    creating an endpoint is the only person who would notice. `enabled` is a PATCH
+    field, so it may be set on the edit branch and must not be in the create body.
+    """
+    source = WEBHOOKS_FORM.read_text(encoding="utf-8")
+    marker = "const body: Record<string, unknown> = {"
+    assert marker in source, (
+        f"{WEBHOOKS_FORM} no longer builds its request body the way this test reads "
+        "it — point the test at the new shape rather than deleting the check."
+    )
+    body_literal = source.split(marker, 1)[1].split("};", 1)[0]
+    assert "enabled" not in body_literal, (
+        "the create body must not carry `enabled`: WebhookCreate forbids extra fields "
+        f"and answers 422. The body literal is now:\n{body_literal}"
+    )
+    # PATCH still needs it — the edit form's "Enabled" checkbox round-trips through it.
+    assert "body.enabled = enabled;" in source
 
 
 async def test_a_webhook_patch_that_changes_nothing_is_not_recorded(client):
@@ -487,12 +563,10 @@ async def test_the_audit_view_is_operator_only(client):
     account = await make_account()
     raw_key, _ = await make_key(account)
 
-    # 401 rather than 403 for the key: `get_hybrid_admin_context` resolves the
-    # session dependency first and that dependency raises on a missing cookie, so
-    # the `Bearer ck_` branch below it is unreachable. Either status means the
-    # same thing here — a merchant key does not open the trail. The dead branch
-    # is recorded in docs/production-readiness.md P1-2 rather than fixed here,
-    # because making it reachable would hand platform-admin powers to API keys.
+    # A key is not a credential on the operator console at all: `get_hybrid_admin_context`
+    # has no `Bearer ck_` branch, and `get_current_session_account` raises before the body
+    # runs when there is no cookie. Either status means the same thing here — a merchant
+    # key does not open the trail.
     by_key = await client.get("/v1/admin/audit-logs", headers=bearer(raw_key))
     assert by_key.status_code in (401, 403)
     assert (await client.get("/v1/admin/audit-logs")).status_code == 401
@@ -501,10 +575,12 @@ async def test_the_audit_view_is_operator_only(client):
 async def test_the_audit_view_lists_the_trail_newest_first_with_the_actor(client):
     operator = await make_admin()
     merchant = await make_account(email="sokha@chmaba.test", name="Sokha")
-    merchant_key, _ = await make_key(merchant)
     await client.post("/auth/login", json={"email": operator.email, "password": PASSWORD})
 
-    await client.post("/v1/keys", json={"name": "audited"}, headers=bearer(merchant_key))
+    # Key creation is session-only, so it comes from the merchant's own session — the
+    # operator's console session on `client` must not be the recorded actor.
+    async with session_client(merchant) as merchant_api:
+        await merchant_api.post("/v1/keys", json={"name": "audited"})
     await client.patch(
         f"/v1/admin/accounts/{merchant.id}",
         json={"status": "suspended", "reason": "review"},
@@ -537,3 +613,104 @@ async def test_the_audit_view_lists_the_trail_newest_first_with_the_actor(client
         "/v1/admin/audit-logs", params={"target_type": "ApiKey"}
     )
     assert {row["target_type"] for row in by_type.json()["data"]} == {"ApiKey"}
+
+
+# --------------------------------------------------------------------------- #
+# Incident review: a date range and a downloadable file
+# --------------------------------------------------------------------------- #
+async def test_the_trail_can_be_narrowed_to_a_date_range(client):
+    """`from`/`to` are days, not instants — "what happened between these two days".
+
+    The trail is the only record of who did what, so the question during a review is
+    almost always bounded by time. Without the range the only tool was paging.
+    """
+    operator = await make_admin()
+    merchant = await make_account(email="sokha@chmaba.test", name="Sokha")
+    await client.post("/auth/login", json={"email": operator.email, "password": PASSWORD})
+    await client.patch(
+        f"/v1/admin/accounts/{merchant.id}",
+        json={"status": "suspended", "reason": "review"},
+    )
+
+    today = datetime.now(UTC).date().isoformat()
+    yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
+
+    inside = (await client.get("/v1/admin/audit-logs", params={"from": today, "to": today})).json()
+    assert inside["pagination"]["total_rows"] >= 2  # the sign-in and the suspension
+
+    # `to` is inclusive of its whole day, so a range that ends yesterday cannot
+    # contain anything that happened today.
+    closed = (
+        await client.get(
+            "/v1/admin/audit-logs", params={"from": yesterday, "to": yesterday}
+        )
+    ).json()
+    assert closed["pagination"]["total_rows"] == 0
+
+    # A value that is not a date is refused rather than silently matching nothing.
+    bad = await client.get("/v1/admin/audit-logs", params={"from": "last-tuesday"})
+    assert bad.status_code == 400
+
+
+async def test_the_trail_exports_as_csv_and_json_with_the_view_s_filters(client):
+    """The file has to agree with the page that launched it, and say what it left out.
+
+    An export that returned only the first page would be worse than none: it looks
+    complete. So the filters come from the same builder the view uses, and the counts
+    ride in headers rather than in the body, where they would have to be a marker row
+    the reader knows to skip.
+    """
+    operator = await make_admin()
+    merchant = await make_account(email="sokha@chmaba.test", name="Sokha")
+    await client.post("/auth/login", json={"email": operator.email, "password": PASSWORD})
+    await client.patch(
+        f"/v1/admin/accounts/{merchant.id}",
+        json={"status": "suspended", "reason": "review"},
+    )
+
+    csv_res = await client.get(
+        "/v1/admin/audit-logs/export", params={"action": "account.suspended"}
+    )
+    assert csv_res.status_code == 200
+    assert csv_res.headers["content-type"].startswith("text/csv")
+    assert "audit-log-" in csv_res.headers["content-disposition"]
+
+    header, *body = list(csv.reader(io.StringIO(csv_res.text)))
+    assert header == [
+        "id",
+        "created_at",
+        "action",
+        "actor_account_id",
+        "actor_email",
+        "target_type",
+        "target_id",
+        "details",
+    ]
+    # The filter is the view's filter: no other action may ride along.
+    assert body
+    assert {row[2] for row in body} == {"account.suspended"}
+    assert {row[4] for row in body} == {operator.email}
+    assert "review" in body[0][7]
+
+    returned = int(csv_res.headers["x-rows-returned"])
+    assert returned == len(body)
+    assert int(csv_res.headers["x-total-rows"]) >= returned
+
+    as_json = await client.get(
+        "/v1/admin/audit-logs/export",
+        params={"format": "json", "action": "account.suspended"},
+    )
+    assert as_json.status_code == 200
+    assert as_json.headers["content-type"].startswith("application/json")
+    payload = as_json.json()
+    assert {row["action"] for row in payload["data"]} == {"account.suspended"}
+    assert payload["data"][0]["details"]["reason"] == "review"
+    assert int(as_json.headers["x-rows-returned"]) == len(payload["data"])
+
+    # Operator-only, like the view it exports.
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+    ) as anonymous:
+        assert (
+            await anonymous.get("/v1/admin/audit-logs/export")
+        ).status_code == 401

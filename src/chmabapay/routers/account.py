@@ -14,7 +14,7 @@ from .. import audit, models
 from ..config import get_settings
 from ..db import get_session
 from ..openapi import AUTH_ERRORS, SESSION_SECURITY
-from ..security import hash_password, verify_password
+from ..security import MAX_PASSWORD_BYTES, hash_password, verify_password
 from .auth import get_current_session_account, session_auth_method
 
 router = APIRouter(
@@ -249,6 +249,13 @@ async def change_password(
     _require_ownership(account, body.current_password)
     if verify_password(body.new_password, account.password_hash):
         raise HTTPException(status_code=400, detail="password_unchanged")
+    # The schema bounds the password in *characters*, but bcrypt hashes at most 72
+    # *bytes* and raises on anything longer. A 73-character ASCII password, or any
+    # password whose UTF-8 form passes 72 bytes — 25 Khmer characters is enough —
+    # reached `hash_password` and came back as an unhandled 500. Checked in bytes for
+    # that reason, and answered with a code rather than a validator message.
+    if len(body.new_password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise HTTPException(status_code=400, detail="password_too_long")
 
     account.password_hash = hash_password(body.new_password)
     account.updated_at = datetime.now(UTC)

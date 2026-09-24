@@ -576,14 +576,21 @@ function EditEndpointModal({
       }
       setSubmitting(true);
       try {
+        // `enabled` is a PATCH field only. Creating always produces an active
+        // endpoint, and `WebhookCreate` forbids extra fields, so sending it here is
+        // not merely redundant — it is a 422 that stopped every create from the
+        // portal, with the offending field never named in the message the merchant
+        // sees.
         const body: Record<string, unknown> = {
           url: url.trim(),
-          enabled,
         };
         if (events.length > 0) {
           body.events = events;
         } else {
           body.events = ["*"];
+        }
+        if (isEditing) {
+          body.enabled = enabled;
         }
 
         let res: Response;
@@ -673,17 +680,21 @@ function EditEndpointModal({
               </div>
             </div>
 
-            <div className="dash-field">
-              <div className="dash-toolbar-filters">
-                <input
-                  id="wh-enabled"
-                  type="checkbox"
-                  checked={enabled}
-                  onChange={(e) => setEnabled(e.target.checked)}
-                />
-                <label htmlFor="wh-enabled">Enabled</label>
+            {/* Creating always produces an active endpoint, so this toggle only has
+                an effect when editing an existing one. */}
+            {isEditing && (
+              <div className="dash-field">
+                <div className="dash-toolbar-filters">
+                  <input
+                    id="wh-enabled"
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(e) => setEnabled(e.target.checked)}
+                  />
+                  <label htmlFor="wh-enabled">Enabled</label>
+                </div>
               </div>
-            </div>
+            )}
 
             {error && <div className="dash-form-alert dash-form-alert-error">{error}</div>}
 

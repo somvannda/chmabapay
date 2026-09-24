@@ -153,29 +153,38 @@ export default function AdminDeliveriesPage() {
 
   // The row-level counterpart to the payment page's "re-deliver": one endpoint was
   // down, one event never arrived, and the merchant has already fixed their side.
+  // `includeSuccesses` mirrors the payment-level opt-in: without it the API leaves a
+  // delivery that already succeeded untouched, so the checkbox in the modal is what
+  // actually re-sends one.
   const retry = useCallback(
-    async (row: AdminDeliveryRow) => {
+    async (row: AdminDeliveryRow, includeSuccesses: boolean) => {
       setBusy(row.id);
       try {
-        const res = await apiFetch(`/v1/admin/deliveries/${row.id}/retry`, {
-          method: "POST",
-          credentials: "include",
-        });
+        const res = await apiFetch(
+          `/v1/admin/deliveries/${row.id}/retry${
+            includeSuccesses ? "?include_successes=true" : ""
+          }`,
+          { method: "POST", credentials: "include" },
+        );
         if (!res.ok) throw new Error(await readApiError(res));
         const data = (await res.json()) as { retried: boolean };
         notify(
           data.retried
             ? "Delivery queued — the sender picks it up on its next pass."
-            : "That delivery was already queued to go.",
+            : row.status === "success"
+              ? "Left alone: this delivery had already succeeded."
+              : "That delivery was already queued to go.",
         );
         setRetryTarget(null);
-        setRows((current) =>
-          current.map((item) =>
-            item.id === row.id
-              ? { ...item, status: "retrying", attempts: 0 }
-              : item,
-          ),
-        );
+        if (data.retried) {
+          setRows((current) =>
+            current.map((item) =>
+              item.id === row.id
+                ? { ...item, status: "retrying", attempts: 0 }
+                : item,
+            ),
+          );
+        }
       } catch (e) {
         notify(e instanceof Error ? e.message : String(e), "error");
       } finally {
@@ -276,8 +285,6 @@ export default function AdminDeliveriesPage() {
         </div>
       </div>
 
-      {errorMsg && <div className="dash-warn">{errorMsg}</div>}
-
       <div className="dash-panel">
         {loading ? (
           <div className="dash-info">Loading deliveries…</div>
@@ -285,6 +292,8 @@ export default function AdminDeliveriesPage() {
           <div className="dash-empty">
             Could not load the deliveries.
             <div className="dash-empty-desc">
+              {errorMsg}
+              <br />
               The request failed, so this is not an empty result. Reload the page
               to try again.
             </div>
@@ -427,8 +436,9 @@ export default function AdminDeliveriesPage() {
                   {retryTarget.event_type}
                 </span>{" "}
                 to{" "}
-                <span className="dash-code-mono">{retryTarget.endpoint_url}</span>{" "}
-                is queued to go out now, with its attempt budget reset.
+                <span className="dash-code-mono">{retryTarget.endpoint_url}</span> goes
+                out again on the sender&rsquo;s next pass, with its attempt budget
+                reset.
               </div>
               {retryTarget.status === "success" && (
                 <>
@@ -461,7 +471,7 @@ export default function AdminDeliveriesPage() {
                 <button
                   type="button"
                   className="dash-btn dash-btn-primary"
-                  onClick={() => void retry(retryTarget)}
+                  onClick={() => void retry(retryTarget, retrySuccesses)}
                   disabled={
                     busy !== null ||
                     (retryTarget.status === "success" && !retrySuccesses)

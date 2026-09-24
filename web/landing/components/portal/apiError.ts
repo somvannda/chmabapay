@@ -33,10 +33,18 @@ const ERROR_COPY: Record<string, string> = {
     "White-label checkout is not enabled for this account. Contact ChmabaPay to turn it on.",
   offline_qr_requires_a_confirmation_source:
     "An offline QR code is refused here: this deployment has no way to confirm the payment later, and an unverifiable code is worse than none. Ask for a hosted code instead.",
-  // Raised when a plan change would raise a second invoice for a period that already
-  // has one (billing.py, `period_already_invoiced`).
-  period_already_invoiced:
-    "This account already has an invoice open for this month, so we cannot raise another one. Settle the existing invoice before changing plan again.",
+  // Raised when a plan change is refused because an invoice for the period is still
+  // unpaid (billing.py, `open_invoice_unpaid`). The API appends the invoice id and the
+  // period, which the copy does not repeat — the account only ever has one open.
+  open_invoice_unpaid:
+    "This account already has an unpaid invoice for this period, so another one cannot be raised. Settle the existing invoice on the billing page, or move to the free plan, before changing plan again.",
+  // Raised when the platform's own collection destination is not configured, so a
+  // plan invoice cannot be paid at all (billing.py, `billing_not_open`).
+  billing_not_open:
+    "Plan payments are not switched on yet, so this invoice cannot be paid. Contact support and we will settle it with you.",
+  // Raised when a new password exceeds bcrypt's 72-byte limit (routers/account.py).
+  password_too_long:
+    "That password is too long — 72 bytes at most (fewer characters if you use accented or Khmer text). Choose a shorter one.",
   // Raised when the chosen plan exists but is not public or not active (billing.py).
   plan_not_available:
     "That plan is not available to switch to right now. Choose another plan.",
@@ -63,12 +71,31 @@ const ERROR_COPY: Record<string, string> = {
 function detailOf(body: unknown): string | null {
   const detail = (body as { detail?: unknown } | null)?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
-  if (Array.isArray(detail) && detail.length > 0) {
-    const first = detail[0] as { msg?: string };
-    if (first?.msg) return String(first.msg);
-  }
   return null;
 }
+
+/**
+ * A 422 answers with FastAPI's validation array instead of a `detail` code. Those
+ * entries describe our own schema — "Extra inputs are not permitted", "Input should
+ * be a valid integer" — so showing one tells the merchant about the request we
+ * built, not about the mistake they made, and reads as a bug rather than a
+ * rejection. Recognised here so the caller can say something actionable instead.
+ */
+function isValidationDetail(body: unknown): boolean {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  return Array.isArray(detail) && detail.length > 0;
+}
+
+/**
+ * The codes whose own prose is better copy than anything rewritten here, because it
+ * names the next action. Deliberately a short list rather than "show the prose for
+ * every prefix code": `bakong_error: <upstream text>` and `qr_render_failed: <exc>`
+ * would put exception text in front of a merchant.
+ */
+const PROSE_CODES = new Set([
+  "email_change_requires_password",
+  "platform_admin_cannot_self_delete",
+]);
 
 /**
  * Describe an API `detail` string: the copy to show, whether it is a plan limit, and
@@ -99,12 +126,49 @@ export function describeApiError(detail: string): ApiErrorInfo {
     return { message: detail, upgrade: true, field: null };
   }
 
+  if (PROSE_CODES.has(code)) {
+    return { message: detail.slice(code.length + 1).trim(), upgrade: false, field: null };
+  }
+
+  // Answers with `tx_not_found_yet; signals=…` — a semicolon, not a colon, so it never
+  // reaches the code lookup above and the signals list is a diagnostic, not copy.
+  if (detail.startsWith("tx_not_found_yet")) {
+    return {
+      message: "No transaction confirms this payment yet. Check again in a moment.",
+      upgrade: false,
+      field: null,
+    };
+  }
+
+  // Anything still unmapped is a machine token: a bare `snake_case` code, or one
+  // followed by prose. Neither belongs on screen — the token exposes our vocabulary
+  // and the prose can carry upstream exception detail. A refusal that deserves its own
+  // wording belongs in ERROR_COPY, which is where user-facing copy for a code lives.
+  if (/^[a-z0-9_]+:/.test(detail) || /^[a-z0-9_]+$/.test(detail.trim())) {
+    return {
+      message:
+        "That request was refused. Check the values you sent, and contact support if it keeps happening.",
+      upgrade: false,
+      field: null,
+    };
+  }
+
   return { message: detail, upgrade: false, field: null };
 }
 
 /** The display message for a failed response, plus what kind of failure it was. */
 export async function readApiErrorInfo(res: Response): Promise<ApiErrorInfo> {
   const body = await res.json().catch(() => null);
+
+  if (isValidationDetail(body)) {
+    return {
+      message:
+        "Some of the details in that request were not accepted. Check the values and try again.",
+      upgrade: false,
+      field: null,
+    };
+  }
+
   const detail = detailOf(body);
   if (detail === null) {
     return {

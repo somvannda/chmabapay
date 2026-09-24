@@ -282,6 +282,38 @@ async def test_an_sso_session_cannot_reach_the_admin_api(client):
     assert refused.json()["detail"] == "password_session_required"
 
 
+async def test_an_api_key_cannot_skip_the_password_claim(client):
+    """A key plus any session cookie must not buy a way round the claim check.
+
+    The guard above enforces `amr: password`. Until 2026-09-23 a `Bearer ck_`
+    branch was evaluated *before* it, so a platform admin's own key presented
+    alongside an SSO cookie reached every admin route with no password claim at
+    all — the exact bypass the claim check exists to close, since the console
+    tells operators it is password-only. The key is now not a credential on
+    `/v1/admin/*` in any combination.
+    """
+    account = await make_admin()
+    raw_key, _ = await make_key(account)
+    key_header = {"Authorization": f"Bearer {raw_key}"}
+
+    # A key with no session at all: the session dependency refuses first.
+    assert (await client.get("/v1/admin/overview", headers=key_header)).status_code == 401
+
+    # A key alongside a valid but password-less session: the claim check refuses.
+    async with session_factory() as session:
+        row = await session.get(models.Account, account.id)
+        google_token = _make_session_jwt(row, "google")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url=BASE_URL,
+        cookies={SESSION_COOKIE: google_token},
+    ) as sso_client:
+        bypass = await sso_client.get("/v1/admin/overview", headers=key_header)
+
+    assert bypass.status_code == 403
+    assert bypass.json()["detail"] == "password_session_required"
+
+
 async def test_every_sign_in_attempt_is_audited(client):
     """A sign-in leaves a row whether it worked or not.
 

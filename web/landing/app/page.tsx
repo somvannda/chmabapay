@@ -1,4 +1,13 @@
-import { brandColors } from "@shared/theme";
+import type { Metadata } from "next";
+
+/**
+ * The homepage canonical. Every other public page declares one; without this the
+ * highest-value indexable URL on the site was the only one that did not, so a link
+ * to a filtered or parameterised variant could be indexed as a separate page.
+ */
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 /**
  * The pricing cards are the homepage's only API dependency, and the page is

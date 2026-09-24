@@ -66,6 +66,10 @@ function accountStatusPill(status: string | null | undefined): {
   if (s === "suspended") {
     return { className: "dash-pill dash-pill-failed", label: "suspended" };
   }
+  // The billing freeze has its own standing; it used to read as the green "active".
+  if (s === "restricted") {
+    return { className: "dash-pill dash-pill-pending", label: "restricted" };
+  }
   return { className: "dash-pill dash-pill-paid", label: s || "active" };
 }
 
@@ -148,18 +152,16 @@ export default function AdminAccountsPage() {
           <input
             className="dash-input"
             type="search"
-            placeholder="Search email or name"
+            placeholder="Search email, name, store ID or key prefix"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            aria-label="Search accounts"
+            aria-label="Search accounts by email, name, store ID or key prefix"
           />
           <button type="submit" className="dash-btn dash-btn-secondary">
             Search
           </button>
         </form>
       </div>
-
-      {errorMsg && <div className="dash-warn">{errorMsg}</div>}
 
       <div className="dash-panel">
         {loading ? (
@@ -168,6 +170,8 @@ export default function AdminAccountsPage() {
           <div className="dash-empty">
             Could not load the accounts.
             <div className="dash-empty-desc">
+              {errorMsg}
+              <br />
               The request failed, so this is not an empty result. Reload the page
               to try again.
             </div>

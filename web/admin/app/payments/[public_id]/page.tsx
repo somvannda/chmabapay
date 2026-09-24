@@ -151,6 +151,8 @@ export default function AdminPaymentDetailPage({
   const [busy, setBusy] = useState<string | null>(null);
   const [markOpen, setMarkOpen] = useState(false);
   const [markReason, setMarkReason] = useState("");
+  const [refundOpen, setRefundOpen] = useState(false);
+  const [refundReason, setRefundReason] = useState("");
   const [showRaw, setShowRaw] = useState(false);
   const [redeliverOpen, setRedeliverOpen] = useState(false);
   const [redeliverSuccesses, setRedeliverSuccesses] = useState(false);
@@ -233,6 +235,36 @@ export default function AdminPaymentDetailPage({
       setBusy(null);
     }
   }, [publicId, markReason, notify, load]);
+
+  // The merchant-facing reverse route resolves the payment inside the caller's own
+  // account, so a refund the merchant reports by phone had no console path at all.
+  const recordRefund = useCallback(async () => {
+    const reason = refundReason.trim();
+    if (reason.length < 3) {
+      notify("A reason is required to record a refund.", "error");
+      return;
+    }
+    setBusy("refund");
+    try {
+      const res = await apiFetch(`/v1/admin/payments/${publicId}/reverse`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      if (!res.ok) throw new Error(await readApiError(res));
+      setRefundOpen(false);
+      setRefundReason("");
+      notify(
+        "Refund recorded. The merchant is notified by webhook and the audit trail names you.",
+      );
+      await load();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setBusy(null);
+    }
+  }, [publicId, refundReason, notify, load]);
 
   const redeliver = useCallback(
     async (includeSuccesses: boolean) => {
@@ -467,8 +499,10 @@ export default function AdminPaymentDetailPage({
             <div className="dash-hint">
               Re-reconcile asks the rail again and settles the payment only if the
               rail confirms the money moved. Marking paid credits it with no rail
-              confirmation and is recorded in the audit trail. Re-delivering
-              queues this payment&rsquo;s webhooks for the merchant again.
+              confirmation and is recorded in the audit trail. Recording a refund
+              reverses a settled payment and tells the merchant by webhook.
+              Re-delivering queues this payment&rsquo;s webhooks for the merchant
+              again.
             </div>
             <div className="dash-panel-actions">
               <button
@@ -496,6 +530,19 @@ export default function AdminPaymentDetailPage({
                 }
               >
                 Mark paid manually
+              </button>
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary"
+                onClick={() => setRefundOpen(true)}
+                disabled={busy !== null || !settled}
+                title={
+                  settled
+                    ? undefined
+                    : "Only a settled payment can be refunded — there is nothing to give back."
+                }
+              >
+                Record refund
               </button>
               <button
                 type="button"
@@ -583,7 +630,11 @@ export default function AdminPaymentDetailPage({
             </div>
             <div className="dash-modal-body">
               <div className="dash-hint">
-                This credits the merchant with no confirmation from the rail. Only
+                This credits <span className="dash-code-mono">{detail?.id}</span> —{" "}
+                {detail
+                  ? formatAmount(detail.amount_cents, detail.currency)
+                  : "—"}{" "}
+                for {detail?.store_name} — with no confirmation from the rail. Only
                 do it when a customer&rsquo;s receipt proves the money moved. The
                 reason below is stored in the audit trail against your account.
               </div>
@@ -615,6 +666,66 @@ export default function AdminPaymentDetailPage({
                   disabled={busy !== null || markReason.trim().length < 3}
                 >
                   {busy === "mark-paid" ? "Marking paid…" : "Mark paid"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {refundOpen && detail && (
+        <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="dash-modal">
+            <div className="dash-modal-head">
+              <h2 className="dash-modal-title">Record a refund</h2>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => setRefundOpen(false)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="dash-modal-body">
+              <div className="dash-hint">
+                This reverses{" "}
+                <span className="dash-code-mono">{detail.id}</span> —{" "}
+                {formatAmount(detail.amount_cents, detail.currency)} for{" "}
+                {detail.store_name} — and sends{" "}
+                <span className="dash-code-mono">payment.reversed</span> to the
+                merchant. Only record it once the money has actually gone back: a
+                reversal cannot be undone from here. The reason below is stored in
+                the audit trail against your account.
+              </div>
+              <div className="dash-field">
+                <label htmlFor="refund-reason">Reason</label>
+                <textarea
+                  id="refund-reason"
+                  className="dash-textarea"
+                  value={refundReason}
+                  onChange={(e) => setRefundReason(e.target.value)}
+                  placeholder="e.g. Customer returned the order; refunded at the counter in cash on 2026-09-23."
+                  rows={4}
+                  maxLength={255}
+                />
+              </div>
+              <div className="dash-modal-foot">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={() => setRefundOpen(false)}
+                  disabled={busy !== null}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-danger"
+                  onClick={() => void recordRefund()}
+                  disabled={busy !== null || refundReason.trim().length < 3}
+                >
+                  {busy === "refund" ? "Recording…" : "Confirm and record refund"}
                 </button>
               </div>
             </div>

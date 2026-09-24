@@ -38,6 +38,7 @@ from chmabapay import models  # noqa: E402
 from chmabapay.config import get_settings  # noqa: E402
 from chmabapay.db import engine, session_factory  # noqa: E402
 from chmabapay.main import app  # noqa: E402
+from chmabapay.routers.auth import SESSION_COOKIE, _make_session_jwt  # noqa: E402
 from chmabapay.schemas import LinkIn, StoreCreate  # noqa: E402
 from chmabapay.security import hash_key  # noqa: E402
 from chmabapay.services import stores as store_svc  # noqa: E402
@@ -57,6 +58,26 @@ async def client():
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as c:
         yield c
+
+
+# The host is load-bearing for anything session-authenticated: `_set_session_cookie`
+# marks the cookie `Secure` for any other host, and a Secure cookie is not sent back
+# over plain http.
+BASE_URL = "http://localhost"
+
+
+def session_client(row: models.Account, amr: str = "password") -> httpx.AsyncClient:
+    """A client carrying `row`'s session cookie.
+
+    Shared, because key management, billing and the account routes are session-only:
+    any test that touches them needs this rather than an API key, and each file
+    deriving its own copy is how one of them ends up subtly different.
+    """
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url=BASE_URL,
+        cookies={SESSION_COOKIE: _make_session_jwt(row, amr)},
+    )
 
 
 def remove_test_db() -> None:

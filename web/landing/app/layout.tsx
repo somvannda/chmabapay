@@ -85,7 +85,16 @@ const signInHref = "/auth/google/login";
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
-      <body className="font-sans landing-english landing-body">
+      {/* The script below adds `dash-*` classes to this element during parse, so the
+          DOM React hydrates into already differs from the className rendered here.
+          `suppressHydrationWarning` is the documented opt-out for exactly that — the
+          difference is deliberate, and without it every dashboard route logs a
+          hydration mismatch. It suppresses the warning for this element only, one
+          level deep, so a real mismatch anywhere else still reports. */}
+      <body
+        className="font-sans landing-english landing-body"
+        suppressHydrationWarning
+      >
         <script
           dangerouslySetInnerHTML={{
             __html:

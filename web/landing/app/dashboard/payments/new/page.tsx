@@ -21,6 +21,12 @@ export default function DashboardPaymentsNewPage() {
   const [amount, setAmount] = useState("");
   const [referenceId, setReferenceId] = useState("");
   const [storePublicId, setStorePublicId] = useState("");
+  const [merchant, setMerchant] = useState("");
+  const [idempotencyKey, setIdempotencyKey] = useState("");
+  // "auto" omits the field entirely, which is what lets the API decide: ABA issues the
+  // code whenever the store's link is a PayWay link. The other two are the explicit
+  // answers the API accepts.
+  const [hostedQr, setHostedQr] = useState<"auto" | "hosted" | "offline">("auto");
   const [metaKey1, setMetaKey1] = useState("");
   const [metaVal1, setMetaVal1] = useState("");
   const [metaKey2, setMetaKey2] = useState("");
@@ -83,8 +89,13 @@ export default function DashboardPaymentsNewPage() {
     storePublicId !== "" ||
     (stores.length === 1 && activeStores.length === 1);
 
+  // The API resolves `merchant` (external id) before `store` (public id) and before the
+  // single-active-store fallback, so a form that offers the external id has to accept it
+  // on its own — otherwise the field could be filled in and the submit button still dead.
+  const merchantValid = merchant.trim() !== "";
+
   function isFormValid(): boolean {
-    return amountValid && (storeValid || stores.length === 1);
+    return amountValid && (merchantValid || storeValid || stores.length === 1);
   }
 
   function buildMetadata(): Record<string, string> | undefined {
@@ -112,6 +123,11 @@ export default function DashboardPaymentsNewPage() {
       const metadata = buildMetadata();
       if (metadata) body.metadata = metadata;
       if (storePublicId) body.store = storePublicId;
+      // The same three fields the API documents. Left untouched they are omitted rather
+      // than sent as null, so the request is what the API's own defaults describe.
+      if (merchant.trim()) body.merchant = merchant.trim();
+      if (idempotencyKey.trim()) body.idempotency_key = idempotencyKey.trim();
+      if (hostedQr !== "auto") body.hosted_qr = hostedQr === "hosted";
       const res = await fetch("/v1/payments", {
         method: "POST",
         credentials: "include",
@@ -248,6 +264,76 @@ export default function DashboardPaymentsNewPage() {
               </div>
             )}
           </div>
+        </div>
+
+        <div className="dash-form-row">
+          <div className="dash-field">
+            <label htmlFor="pay-merchant">
+              Store external ID{" "}
+              <span className="dash-badge dash-badge-muted">optional</span>
+            </label>
+            <input
+              id="pay-merchant"
+              className="dash-input"
+              type="text"
+              placeholder="e.g. sokha-cafe"
+              value={merchant}
+              onChange={(e) => setMerchant(e.target.value)}
+              maxLength={255}
+            />
+            <div className="dash-hint">
+              Names the store by your own reference instead of the id above. If both are
+              given the API resolves this one first.
+            </div>
+          </div>
+          <div className="dash-field">
+            <label htmlFor="pay-idempotency">
+              Idempotency key{" "}
+              <span className="dash-badge dash-badge-muted">optional</span>
+            </label>
+            <input
+              id="pay-idempotency"
+              className="dash-input"
+              type="text"
+              placeholder="e.g. ORDER-12345"
+              value={idempotencyKey}
+              onChange={(e) => setIdempotencyKey(e.target.value)}
+              maxLength={255}
+            />
+            <div className="dash-hint">
+              Sending the same key again returns the payment already stored for it
+              instead of creating a second one. Leave it blank to always create a new
+              payment.
+            </div>
+          </div>
+        </div>
+
+        <div className="dash-field">
+          <label htmlFor="pay-hosted-qr">QR source</label>
+          <select
+            id="pay-hosted-qr"
+            className="dash-select"
+            value={hostedQr}
+            onChange={(e) =>
+              setHostedQr(e.target.value as "auto" | "hosted" | "offline")
+            }
+          >
+            <option value="auto">Automatic — ABA issues the QR when the store is on a PayWay link</option>
+            <option value="hosted">ABA PayWay issues the QR</option>
+            <option value="offline">Build the QR ourselves</option>
+          </select>
+          {hostedQr === "offline" ? (
+            <div className="dash-hint">
+              The code is built without an ABA session, so no ABA transaction exists
+              for it. A deployment with no Bakong Open API credentials refuses this
+              outright — a QR nothing can confirm must not be handed to a customer.
+            </div>
+          ) : (
+            <div className="dash-hint">
+              Automatic is what the API default does, and it is what you want: a code we
+              build ourselves for a PayWay store carries no ABA transaction.
+            </div>
+          )}
         </div>
 
         <div className="dash-field">

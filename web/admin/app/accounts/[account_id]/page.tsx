@@ -54,6 +54,9 @@ type PlanLimits = {
 
 type PlanUsage = {
   keys_active: number;
+  // Every key the account holds, active or not — the list below is capped, so this
+  // is what the count is measured against.
+  keys_total: number;
   payments_this_month: number;
 };
 
@@ -77,6 +80,8 @@ type AccountDetail = {
   counts: { stores: number; payments: number };
   limits: PlanLimits;
   usage: PlanUsage;
+  // True when the list below was cut short at the API's cap, so the panel can say so.
+  truncated: { stores: boolean; keys: boolean };
   keys: AccountKey[];
   stores: AccountStore[];
   invoices: AdminInvoice[];
@@ -90,7 +95,7 @@ type PlanOption = {
   is_active: boolean;
 };
 
-type InvoiceAction = "mark-paid" | "waive" | "credit";
+type InvoiceAction = "mark-paid" | "waive" | "credit" | "void";
 
 /**
  * The destructive/standing actions that used to run behind `window.prompt` and
@@ -98,10 +103,12 @@ type InvoiceAction = "mark-paid" | "waive" | "credit";
  * style — and the warning it carries — is the same as every other mutation.
  */
 type ConfirmAction =
-  | { kind: "status"; next: "active" | "suspended" }
+  | { kind: "status"; next: "active" | "suspended" | "restricted" }
   | { kind: "revoke-key"; key: AccountKey }
+  | { kind: "rotate-key"; key: AccountKey }
   | { kind: "disable-store"; store: AccountStore }
-  | { kind: "enable-store"; store: AccountStore };
+  | { kind: "enable-store"; store: AccountStore }
+  | { kind: "internal-store"; store: AccountStore };
 
 const nf = new Intl.NumberFormat("en-US");
 
@@ -120,6 +127,11 @@ const INVOICE_ACTIONS: { value: InvoiceAction; label: string; help: string }[] =
     value: "credit",
     label: "Credit",
     help: "Closes it as credited and puts the plan in force. The amount below is what was forgiven.",
+  },
+  {
+    value: "void",
+    label: "Void",
+    help: "Withdraws the claim and grants nothing: the plan stays as it was, and the next sweep may bill this window again. Use it when the invoice should never have been raised.",
   },
 ];
 
@@ -171,6 +183,12 @@ function accountStatusPill(status: string | null | undefined): {
   const s = (status || "").toLowerCase();
   if (s === "suspended") {
     return { className: "dash-pill dash-pill-failed", label: "suspended" };
+  }
+  // `restricted` is the billing freeze: the account still signs in and reads, but
+  // writes are refused. It rendered as the green "active" pill until now, which is
+  // the opposite of what an operator needs to see.
+  if (s === "restricted") {
+    return { className: "dash-pill dash-pill-pending", label: "restricted" };
   }
   return { className: "dash-pill dash-pill-paid", label: s || "active" };
 }
@@ -250,6 +268,11 @@ export default function AdminAccountDetailPage({
   const [selfId, setSelfId] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
   const [confirmReason, setConfirmReason] = useState("");
+  const [mintOpen, setMintOpen] = useState(false);
+  const [mintName, setMintName] = useState("");
+  // The raw key, held only long enough to be shown and copied. Nothing persists it.
+  const [mintedKey, setMintedKey] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -330,12 +353,18 @@ export default function AdminAccountDetailPage({
   // actions) but nothing in the console called it, so an abuse report had no
   // in-product response. The confirmation and the reason are captured in the styled
   // modal now, like every other mutation here.
-  const openStatusConfirm = useCallback(() => {
-    if (!account) return;
-    const next = account.status === "suspended" ? "active" : "suspended";
-    setConfirmReason("");
-    setConfirm({ kind: "status", next });
-  }, [account]);
+  //
+  // The target is passed in rather than derived from the current standing: with
+  // three standings a toggle has no single "other state" — an active account can be
+  // suspended or frozen, and a frozen one can be suspended or released.
+  const openStatusConfirm = useCallback(
+    (next: "active" | "suspended" | "restricted") => {
+      if (!account) return;
+      setConfirmReason("");
+      setConfirm({ kind: "status", next });
+    },
+    [account],
+  );
 
   // The merchant route *sells* a plan; this puts one in force with no invoice, which
   // is how a comp or an off-platform settlement is recorded. The plan list is fetched
@@ -436,6 +465,54 @@ export default function AdminAccountDetailPage({
     setConfirm({ kind: "revoke-key", key });
   }, []);
 
+  const openRotateConfirm = useCallback((key: AccountKey) => {
+    setConfirmReason("");
+    setConfirm({ kind: "rotate-key", key });
+  }, []);
+
+  // Minting on a merchant's behalf: the merchant route is session-only, which is
+  // correct (no credential may extend itself) but leaves a locked-out merchant with no
+  // way to get a key. The operator is a different actor with a different credential.
+  const mintKey = useCallback(async () => {
+    const name = mintName.trim();
+    if (!name) {
+      notify("Give the key a name — it is how the merchant tells them apart.", "error");
+      return;
+    }
+    setBusy("mint-key");
+    try {
+      const res = await apiFetch(`/v1/admin/accounts/${accountId}/keys`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error(await readApiError(res));
+      const data = (await res.json()) as { raw_key: string | null };
+      setMintedKey(data.raw_key);
+      setMintOpen(false);
+      setMintName("");
+      await load();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e), "error");
+    } finally {
+      setBusy(null);
+    }
+  }, [accountId, mintName, notify, load]);
+
+  const copyMintedKey = useCallback(async () => {
+    if (!mintedKey) return;
+    try {
+      await navigator.clipboard.writeText(mintedKey);
+      setCopiedKey(true);
+      window.setTimeout(() => setCopiedKey(false), 2000);
+    } catch {
+      // Not a secure context, or the permission was refused. Saying so beats a button
+      // that looks like it worked.
+      notify("Could not copy — select the key and copy it by hand.", "error");
+    }
+  }, [mintedKey, notify]);
+
   const openDisableStoreConfirm = useCallback((store: AccountStore) => {
     setConfirmReason("");
     setConfirm({ kind: "disable-store", store });
@@ -446,6 +523,14 @@ export default function AdminAccountDetailPage({
     setConfirm({ kind: "enable-store", store });
   }, []);
 
+  // The route that flips `is_internal` has existed since the flag shipped, and the
+  // console README described it, but nothing called it — so a store marked internal
+  // by the HQ link route (or by hand in SQL) could not be corrected from here.
+  const openInternalStoreConfirm = useCallback((store: AccountStore) => {
+    setConfirmReason("");
+    setConfirm({ kind: "internal-store", store });
+  }, []);
+
   // One handler for every confirm-modal action, so the busy/notify/refresh shape is
   // identical to the plan and invoice modals above.
   const runConfirm = useCallback(async () => {
@@ -453,8 +538,13 @@ export default function AdminAccountDetailPage({
 
     if (confirm.kind === "status") {
       const reason = confirmReason.trim();
-      if (confirm.next === "suspended" && reason.length < 3) {
-        notify("A reason is required to suspend an account.", "error");
+      if (confirm.next !== "active" && reason.length < 3) {
+        notify(
+          confirm.next === "suspended"
+            ? "A reason is required to suspend an account."
+            : "A reason is required to freeze an account.",
+          "error",
+        );
         return;
       }
       setStatusSaving(true);
@@ -472,7 +562,11 @@ export default function AdminAccountDetailPage({
         const updated = (await res.json()) as AccountProfile;
         setDetail((d) => (d ? { ...d, account: { ...d.account, ...updated } } : d));
         notify(
-          confirm.next === "suspended" ? "Account suspended" : "Account activated",
+          confirm.next === "suspended"
+            ? "Account suspended"
+            : confirm.next === "restricted"
+              ? "Account frozen — writes are refused until it is released."
+              : "Account activated",
         );
         setConfirm(null);
         setConfirmReason("");
@@ -495,6 +589,58 @@ export default function AdminAccountDetailPage({
         if (!res.ok) throw new Error(await readApiError(res));
         const data = (await res.json()) as { revoked: boolean };
         notify(data.revoked ? "Key revoked." : "That key was already revoked.");
+        setConfirm(null);
+        await load();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
+
+    if (confirm.kind === "rotate-key") {
+      const key = confirm.key;
+      setBusy(`rotate-${key.id}`);
+      try {
+        const res = await apiFetch(`/v1/admin/keys/${key.id}/rotate`, {
+          method: "POST",
+          credentials: "include",
+        });
+        if (!res.ok) throw new Error(await readApiError(res));
+        const data = (await res.json()) as { raw_key: string | null };
+        // Shown once, in the reveal dialog the caller lands on next.
+        setMintedKey(data.raw_key);
+        setConfirm(null);
+        await load();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
+
+    if (confirm.kind === "internal-store") {
+      const store = confirm.store;
+      const next = !store.is_internal;
+      setBusy(`internal-${store.id}`);
+      try {
+        const res = await apiFetch(`/v1/admin/stores/${store.id}/internal`, {
+          method: "PUT",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_internal: next }),
+        });
+        if (!res.ok) throw new Error(await readApiError(res));
+        const data = (await res.json()) as { changed: boolean };
+        notify(
+          data.changed
+            ? next
+              ? "Store marked as the platform's own."
+              : "Store is a merchant store again."
+            : "That store already held this flag.",
+        );
         setConfirm(null);
         await load();
       } catch (e) {
@@ -712,23 +858,56 @@ export default function AdminAccountDetailPage({
                     </td>
                     <td>
                       <span className={standing.className}>{standing.label}</span>{" "}
-                      <button
-                        type="button"
-                        className="dash-btn dash-btn-secondary dash-btn-sm"
-                        onClick={openStatusConfirm}
-                        disabled={statusSaving}
-                      >
-                        {statusSaving
-                          ? "Saving…"
-                          : account.status === "suspended"
-                            ? "Activate"
-                            : "Suspend"}
-                      </button>
-                      {account.status !== "suspended" && (
+                      {account.status === "active" && (
+                        <>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-secondary dash-btn-sm"
+                            onClick={() => openStatusConfirm("restricted")}
+                            disabled={statusSaving}
+                            title="Freeze billing writes without signing the merchant out."
+                          >
+                            Freeze
+                          </button>{" "}
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-danger dash-btn-sm"
+                            onClick={() => openStatusConfirm("suspended")}
+                            disabled={statusSaving}
+                          >
+                            {statusSaving ? "Saving…" : "Suspend"}
+                          </button>
+                        </>
+                      )}
+                      {account.status !== "active" && (
+                        <>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-primary dash-btn-sm"
+                            onClick={() => openStatusConfirm("active")}
+                            disabled={statusSaving}
+                          >
+                            {statusSaving ? "Saving…" : "Activate"}
+                          </button>
+                          {account.status === "restricted" && (
+                            <button
+                              type="button"
+                              className="dash-btn dash-btn-danger dash-btn-sm"
+                              onClick={() => openStatusConfirm("suspended")}
+                              disabled={statusSaving}
+                            >
+                              Suspend
+                            </button>
+                          )}
+                        </>
+                      )}
+                      {account.status === "active" && (
                         <div className="dash-hint">
                           Suspending signs the account out everywhere, refuses every
-                          key, stops new payment codes and pauses webhooks. To stop one
-                          store instead, use Disable in the Stores panel below.
+                          key, stops new payment codes and pauses webhooks. Freezing
+                          keeps it readable but refuses its writes — the billing hold.
+                          To stop one store instead, use Disable in the Stores panel
+                          below.
                         </div>
                       )}
                     </td>
@@ -786,6 +965,24 @@ export default function AdminAccountDetailPage({
 
           <div className="dash-panel">
             <div className="dash-panel-title">API keys</div>
+            <div className="dash-hint">
+              Keys belong to the account, not to a store. Minting here is for a merchant
+              who cannot sign in — the raw key is shown once, so hand it over before
+              closing the dialog. The merchant&rsquo;s own plan limit is not applied.
+            </div>
+            <div className="dash-panel-actions">
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary"
+                onClick={() => {
+                  setMintName("");
+                  setMintOpen(true);
+                }}
+                disabled={busy !== null}
+              >
+                Mint a key
+              </button>
+            </div>
             {detail.keys.length === 0 ? (
               <div className="dash-empty">
                 No API keys for this account.
@@ -827,6 +1024,19 @@ export default function AdminAccountDetailPage({
                         <td>
                           <button
                             type="button"
+                            className="dash-btn dash-btn-secondary dash-btn-sm"
+                            onClick={() => openRotateConfirm(key)}
+                            disabled={busy !== null || !active}
+                            title={
+                              active
+                                ? "Replace this key with a fresh one — the old key stops working immediately."
+                                : "This key is already revoked."
+                            }
+                          >
+                            {busy === `rotate-${key.id}` ? "Rotating…" : "Rotate"}
+                          </button>{" "}
+                          <button
+                            type="button"
                             className="dash-btn dash-btn-danger dash-btn-sm"
                             onClick={() => openRevokeConfirm(key)}
                             disabled={busy !== null || !active}
@@ -844,6 +1054,13 @@ export default function AdminAccountDetailPage({
                   })}
                 </tbody>
               </table>
+            )}
+            {detail.truncated.keys && (
+              <div className="dash-hint">
+                Showing the first {detail.keys.length} of{" "}
+                {nf.format(detail.usage.keys_total)} keys, oldest first — the most this
+                page loads.
+              </div>
             )}
           </div>
 
@@ -919,12 +1136,35 @@ export default function AdminAccountDetailPage({
                                 : "Enable"}
                             </button>
                           )}
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-secondary dash-btn-sm"
+                            onClick={() => openInternalStoreConfirm(store)}
+                            disabled={busy !== null}
+                            title={
+                              store.is_internal
+                                ? "Stop treating this store as the platform's own."
+                                : "Exempt this store from merchant GMV and quota — only the platform's own storefront qualifies."
+                            }
+                          >
+                            {busy === `internal-${store.id}`
+                              ? "Saving…"
+                              : store.is_internal
+                                ? "Unmark platform"
+                                : "Mark as platform"}
+                          </button>
                         </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
+            )}
+            {detail.truncated.stores && (
+              <div className="dash-hint">
+                Showing the first {detail.stores.length} of{" "}
+                {nf.format(detail.counts.stores)} stores — the most this page loads.
+              </div>
             )}
           </div>
 
@@ -956,7 +1196,9 @@ export default function AdminAccountDetailPage({
                     const pill = invoicePill(inv.status);
                     // Resolving an already-resolved invoice is a 409, so the console
                     // does not offer it: an action that can only fail is not an action.
-                    const open = !["paid", "waived", "credited"].includes(
+                    // `void` belongs on this list — it was missing, so a voided invoice
+                    // still offered Resolve and always answered 409.
+                    const open = !["paid", "waived", "credited", "void"].includes(
                       inv.status.toLowerCase(),
                     );
                     return (
@@ -1000,12 +1242,20 @@ export default function AdminAccountDetailPage({
                 {confirm.kind === "status"
                   ? confirm.next === "suspended"
                     ? "Suspend account"
-                    : "Activate account"
+                    : confirm.next === "restricted"
+                      ? "Freeze account"
+                      : "Activate account"
                   : confirm.kind === "revoke-key"
                     ? "Revoke API key"
-                    : confirm.kind === "disable-store"
+                    : confirm.kind === "rotate-key"
+                      ? "Rotate API key"
+                      : confirm.kind === "disable-store"
                       ? "Disable store"
-                      : "Enable store"}
+                      : confirm.kind === "internal-store"
+                        ? confirm.store.is_internal
+                          ? "Unmark as the platform's own"
+                          : "Mark as the platform's own"
+                        : "Enable store"}
               </h2>
               <button
                 type="button"
@@ -1020,9 +1270,14 @@ export default function AdminAccountDetailPage({
               {confirm.kind === "status" ? (
                 <>
                   <div className="dash-hint">
+                    This applies to{" "}
+                    <span className="dash-code-mono">#{account?.id}</span>{" "}
+                    {account?.email}.{" "}
                     {confirm.next === "suspended"
-                      ? "This signs the account out of every session, refuses every API key, stops new payment codes and pauses webhooks. QR codes already issued stay payable. Use Disable on a single store when only that store is the problem."
-                      : "This clears the suspension: the account can sign in again, its keys work, and new payment codes and webhooks resume."}
+                      ? "Suspending signs the account out of every session, refuses every API key, stops new payment codes and pauses webhooks. QR codes already issued stay payable. Use Disable on a single store when only that store is the problem."
+                      : confirm.next === "restricted"
+                        ? "Freezing keeps the account signed in and readable but refuses every write and holds back new payment codes. Use it for a billing hold, when the merchant must not be locked out."
+                        : "This clears the standing: the account can sign in again, its keys work, and new payment codes and webhooks resume."}
                   </div>
                   {confirm.next === "suspended" &&
                     selfId !== null &&
@@ -1036,7 +1291,7 @@ export default function AdminAccountDetailPage({
                   <div className="dash-field">
                     <label htmlFor="status-reason">
                       Reason
-                      {confirm.next === "suspended" ? "" : " (optional)"}
+                      {confirm.next === "active" ? " (optional)" : ""}
                     </label>
                     <textarea
                       id="status-reason"
@@ -1046,7 +1301,9 @@ export default function AdminAccountDetailPage({
                       placeholder={
                         confirm.next === "suspended"
                           ? "e.g. Payment-destination abuse reported by three customers."
-                          : "e.g. Abuse report was a false positive; cleared."
+                          : confirm.next === "restricted"
+                            ? "e.g. Three invoices overdue; freezing writes until the balance is settled."
+                            : "e.g. Abuse report was a false positive; cleared."
                       }
                       rows={4}
                       maxLength={500}
@@ -1059,18 +1316,47 @@ export default function AdminAccountDetailPage({
                   {confirm.key.key_prefix}…) stop immediately. This cannot be
                   undone — the merchant has to create a new key.
                 </div>
+              ) : confirm.kind === "rotate-key" ? (
+                <div className="dash-hint">
+                  <strong>{confirm.key.name}</strong> ({confirm.key.key_prefix}…) is
+                  replaced with a fresh key of the same name and stops working
+                  immediately. The replacement is shown once, right after this, so
+                  the merchant has to be ready to receive it — rotating without
+                  handing it over takes their integration down.
+                </div>
               ) : confirm.kind === "disable-store" ? (
                 <div className="dash-hint">
                   <strong>{confirm.store.name}</strong> stops accepting new payments
                   immediately. Codes already issued stay payable, and the account&rsquo;s
                   other stores are unaffected.
                 </div>
-              ) : (
+              ) : confirm.kind === "enable-store" ? (
                 <div className="dash-hint">
                   <strong>{confirm.store.name}</strong> starts accepting new payments
                   and webhooks again. It returns to <strong>active</strong> only when it
                   still has a payment link; otherwise it stays a draft until a
                   destination is set.
+                </div>
+              ) : (
+                <div className="dash-hint">
+                  {confirm.store.is_internal ? (
+                    <>
+                      <strong>{confirm.store.name}</strong> (
+                      <code>{confirm.store.id}</code>) stops being treated as the
+                      platform&rsquo;s own: its takings count as merchant volume
+                      again, and they count against this account&rsquo;s monthly
+                      quota and usage ledger from the next sale on.
+                    </>
+                  ) : (
+                    <>
+                      <strong>{confirm.store.name}</strong> (
+                      <code>{confirm.store.id}</code>) is exempted from merchant
+                      volume and from this account&rsquo;s monthly quota, and its
+                      takings are reported as platform revenue instead. Use it for
+                      the platform&rsquo;s own storefront only — an ordinary
+                      merchant&rsquo;s store marked this way stops being billed.
+                    </>
+                  )}
                 </div>
               )}
               <div className="dash-modal-foot">
@@ -1086,6 +1372,7 @@ export default function AdminAccountDetailPage({
                   type="button"
                   className={
                     confirm.kind === "enable-store" ||
+                    confirm.kind === "internal-store" ||
                     (confirm.kind === "status" && confirm.next === "active")
                       ? "dash-btn dash-btn-primary"
                       : "dash-btn dash-btn-danger"
@@ -1095,7 +1382,7 @@ export default function AdminAccountDetailPage({
                     busy !== null ||
                     statusSaving ||
                     (confirm.kind === "status" &&
-                      confirm.next === "suspended" &&
+                      confirm.next !== "active" &&
                       confirmReason.trim().length < 3)
                   }
                 >
@@ -1104,18 +1391,30 @@ export default function AdminAccountDetailPage({
                       ? "Saving…"
                       : confirm.next === "suspended"
                         ? "Suspend"
-                        : "Activate"
+                        : confirm.next === "restricted"
+                          ? "Freeze"
+                          : "Activate"
                     : confirm.kind === "revoke-key"
                       ? busy === `key-${confirm.key.id}`
                         ? "Revoking…"
                         : "Revoke key"
-                      : confirm.kind === "disable-store"
+                      : confirm.kind === "rotate-key"
+                        ? busy === `rotate-${confirm.key.id}`
+                          ? "Rotating…"
+                          : "Confirm and rotate"
+                        : confirm.kind === "disable-store"
                         ? busy === `store-${confirm.store.id}`
                           ? "Disabling…"
                           : "Disable store"
-                        : busy === `store-${confirm.store.id}`
-                          ? "Enabling…"
-                          : "Enable store"}
+                        : confirm.kind === "internal-store"
+                          ? busy === `internal-${confirm.store.id}`
+                            ? "Saving…"
+                            : confirm.store.is_internal
+                              ? "Confirm and unmark"
+                              : "Confirm and mark as platform"
+                          : busy === `store-${confirm.store.id}`
+                            ? "Enabling…"
+                            : "Enable store"}
                 </button>
               </div>
             </div>
@@ -1139,10 +1438,12 @@ export default function AdminAccountDetailPage({
             </div>
             <div className="dash-modal-body">
               <div className="dash-hint">
-                This puts the plan in force immediately, with no invoice and no
-                proration — the account&rsquo;s current subscription is canceled. The
-                reason below is stored in the audit trail against your account, along
-                with the monthly fee that was given up.
+                This puts <span className="dash-code-mono">{planCode || "…"}</span> in
+                force for <span className="dash-code-mono">#{account?.id}</span>{" "}
+                {account?.email} immediately, with no invoice and no proration — the
+                account&rsquo;s current subscription is canceled. The reason below is
+                stored in the audit trail against your account, along with the monthly
+                fee that was given up.
               </div>
               <div className="dash-field">
                 <label htmlFor="plan-code">Plan</label>
@@ -1297,6 +1598,117 @@ export default function AdminAccountDetailPage({
                   disabled={busy !== null || invoiceReason.trim().length < 3}
                 >
                   {busy === "invoice" ? "Resolving…" : "Resolve"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mintOpen && (
+        <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="dash-modal">
+            <div className="dash-modal-head">
+              <h2 className="dash-modal-title">Mint an API key</h2>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => setMintOpen(false)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="dash-modal-body">
+              <div className="dash-hint">
+                Creates a live key for{" "}
+                <span className="dash-code-mono">#{account?.id}</span>{" "}
+                {account?.email}. Use it when the merchant cannot sign in to create
+                one themselves. The key is shown once, straight after this.
+              </div>
+              <div className="dash-field">
+                <label htmlFor="mint-name">Key name</label>
+                <input
+                  id="mint-name"
+                  className="dash-input"
+                  type="text"
+                  value={mintName}
+                  onChange={(e) => setMintName(e.target.value)}
+                  placeholder="e.g. Handed over by phone, 23 Sep"
+                  maxLength={64}
+                />
+                <div className="dash-hint">
+                  The name is all the merchant sees in their own key list, and it is
+                  what the audit trail records.
+                </div>
+              </div>
+              <div className="dash-modal-foot">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={() => setMintOpen(false)}
+                  disabled={busy !== null}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-primary"
+                  onClick={() => void mintKey()}
+                  disabled={busy !== null || mintName.trim().length === 0}
+                >
+                  {busy === "mint-key" ? "Minting…" : "Mint key"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mintedKey && (
+        <div className="dash-modal-backdrop" role="dialog" aria-modal="true">
+          <div className="dash-modal">
+            <div className="dash-modal-head">
+              <h2 className="dash-modal-title">Copy the new key now</h2>
+              <button
+                type="button"
+                className="dash-modal-close"
+                onClick={() => {
+                  setMintedKey(null);
+                  setCopiedKey(false);
+                }}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            <div className="dash-modal-body">
+              <div className="dash-key-reveal">
+                <div className="dash-key-reveal-head">
+                  <div className="dash-key-reveal-copy">
+                    This is the only time the key is shown — only its hash is stored,
+                    so nobody, including us, can display it again.
+                  </div>
+                  <button
+                    type="button"
+                    className="dash-btn dash-btn-primary dash-btn-sm"
+                    onClick={() => void copyMintedKey()}
+                  >
+                    {copiedKey ? "Copied" : "Copy key"}
+                  </button>
+                </div>
+                <code className="dash-code-mono">{mintedKey}</code>
+              </div>
+              <div className="dash-modal-foot">
+                <button
+                  type="button"
+                  className="dash-btn dash-btn-secondary"
+                  onClick={() => {
+                    setMintedKey(null);
+                    setCopiedKey(false);
+                  }}
+                >
+                  Close — I have handed it over
                 </button>
               </div>
             </div>

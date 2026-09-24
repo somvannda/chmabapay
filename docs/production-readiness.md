@@ -28,12 +28,15 @@ limiting and exception reporting were all on it, and all now exist — see P0-1,
 P0-4, P1-1, P1-2 and P1-3.
 
 **Gate in place.** `ruff`, `alembic upgrade head` + `alembic check`, and `pytest`
-(184 selected, 2 `live` deselected, on Postgres 16 and Redis 7) run on every push
-and pull request. Making the suite offline-runnable is what turned it from
-something that only passed on a developer's laptop into a gate. Locally it defaults
-to SQLite, which spends ~13 s per test rebuilding the schema — set
-`CHMABAPAY_TEST_DATABASE_URL` to a Postgres `chmabapay_test` database (as CI does)
-and the same suite goes from ~35 min to ~2.5 min.
+on Postgres 16 and Redis 7 run on every push and pull request. Making the suite
+offline-runnable is what turned it from something that only passed on a developer's
+laptop into a gate. It is **372 selected, 2 `live` deselected** as of 2026-09-23.
+Locally it defaults to SQLite, which spends ~13 s per test rebuilding the schema:
+measured on 2026-09-23, the full suite takes ~28 min that way and ~10 min with
+`CHMABAPAY_TEST_DATABASE_URL` pointed at a Postgres `chmabapay_test` database, as CI
+does. The database is the whole difference — every test drops and recreates the schema
+(`conftest.py::_fresh_db`), because `pytest-asyncio` gives each test its own event loop
+and a pooled connection from the previous test is bound to a dead one.
 
 ---
 
@@ -611,7 +614,7 @@ because it looks complete. Fifteen call sites:
 | API keys | `key.created`, `key.revoked`, `key.rotated` |
 | Webhook endpoints | `webhook.created`, `webhook.updated`, `webhook.deleted`, `webhook.secret_rotated` |
 | Stores | `store.created`, `store.updated`, `store.disabled`, `store.link_set` |
-| Account standing | `account.suspended`, `account.activated`, `account.updated` |
+| Account standing | `account.suspended`, `account.restricted`, `account.activated`, `account.updated` |
 | Payments | `payment.reissued` |
 | *(already present)* | `plan.created`, `plan.updated`, `plan.retired`, `plan.deleted`, `plan.changed` |
 
@@ -664,22 +667,24 @@ the reason; and the view is refused to a merchant key.
 **Exit criteria.** 100% of privileged mutations attributable to an actor and a
 timestamp. ✅ — enforced by the OpenAPI enumeration, not by inspection.
 
-**Found while testing, not fixed here.** `get_hybrid_admin_context` resolves
-`get_current_session_account` before it looks at `Authorization`, and that
+**Found while testing.** `get_hybrid_admin_context` resolved
+`get_current_session_account` before it looked at `Authorization`, and that
 dependency *raises* 401 when no cookie is present — so the `Bearer ck_` branch
-below it is unreachable and `/v1/admin/*` is session-only in practice, whatever
-the name says. Left alone deliberately: making the branch reachable would hand
-platform-admin powers to API keys, which is an authentication decision, not an
-audit one. Worth a separate decision.
+below it was unreachable whenever a key arrived alone. Worse, and missed at the
+time: that branch sat *above* the `amr: password` check, so a platform-admin key
+plus any valid session cookie — an SSO one included — reached every admin route
+with no password claim at all, which is exactly the guarantee the console
+advertises. The key alone was insufficient; the key plus a cookie was not.
 
-**Confirmed at runtime** against the compose stack, after the fact:
-`GET /v1/admin/accounts` with `Authorization: Bearer ck_…` and no cookie answers
-`401 {"detail":"invalid_session"}` — the session sub-dependency's error, not the
-hybrid dependency's own `unauthorized`, which is what proves the branch is
-unreachable rather than merely rejected. `web/admin/README.md` used to claim the
-key worked; that claim is now corrected. The dead branch itself is still here,
-pending the decision above — the fix if machine access is ever wanted is a key
-scope, not simply deleting the sub-dependency.
+**Resolved 2026-09-23 (decision D-6).** The branch is deleted rather than left
+unreachable, so the refusal is structural rather than incidental. A key is not a
+credential on the operator console: a request carrying one with a password-less
+cookie is refused by the claim check (`403 password_session_required`), and one
+carrying a key with no cookie is refused by the session dependency
+(`401 invalid_session`). Pinned by
+`test_an_api_key_cannot_skip_the_password_claim`. If machine access to the admin
+API is ever wanted, the answer is a key scope on the session gate, not a key
+that skips it.
 
 ### P1-3 Observability
 
@@ -1698,3 +1703,152 @@ the same flag. It must be `false` everywhere in production and staging, or
   satisfies `IS NOT NULL` — so a predicate-driven purge reports the same rows as
   purged on every run while appearing to work. If you add another JSON column that
   a sweep is expected to clear, it needs the same setting or an explicit `null()`.
+
+---
+
+## P1-7 — Third production audit (2026-09-23)
+
+Full plan: `.trae/specs/production-audit-2026-09-23/` (`spec.md` findings, `tasks.md`
+action points). The audit re-ran the four tracks of the 2026-09-18 sweep — public site
+and legal text, API docs against the routers, merchant portal, admin console — against
+live production, and added a live browser attempt at the one flow the operator reported
+broken.
+
+**What it found that the earlier sweeps missed.**
+
+- **Webhook creation was broken for every merchant.** The portal's create form sent
+  `enabled`, which `WebhookCreate` forbids (`extra="forbid"`), so `POST /v1/webhooks`
+  answered **422 `Extra inputs are not permitted`** every time. Reproduced live in a
+  browser, response body and all. This broke onboarding step 3 and the acceptance
+  criterion "sign in → accept terms → create a store → create a key → create a payment
+  → receive a signature-verified webhook". It appeared after T-13 fixed the *read* side
+  of the same field: `enabled` was added to `WebhookOut` so the edit modal could
+  round-trip it, and the shared modal then began sending it on create too.
+  **This fix was written up once as shipped and was not in the file.** The 2026-09-23
+  verification pass re-ran the flow in a browser and got the original 422 back, field
+  and all, so C-01 had never actually been closed. Two things were wrong: the edit was
+  lost, and the regression test *could not* have caught it — it asserted the accepted
+  payload against a literal inside `test_audit.py`, pinning what the API takes while the
+  form went on sending something else. The fix is in the form now (create sends
+  `{url, events}`; `enabled` is assigned only under `if (isEditing)`), and it is pinned by
+  `test_the_webhook_form_sends_the_payload_the_api_accepts`, which reads
+  `web/landing/app/dashboard/webhooks/page.tsx` as source the way
+  `test_openapi_schema.py` reads the docs page. The lesson is worth more than the bug:
+  **a test that restates a payload is not a guard on the code that sends it**, and a
+  shipped note is not evidence until the flow is run again.
+- **Validator prose reached merchants.** A 422's FastAPI array was flattened to its first
+  `msg`, so the merchant was shown our schema's complaint rather than anything
+  actionable. Now answered with form-level copy; the array branch was removed from
+  `detailOf` so no caller can re-expose it.
+- **The API reference advertised endpoints that cannot answer.** Ten Bakong ledger
+  lookups were published under a "Not available" badge whose own text admitted they
+  return `503` in production, plus two KHQR helpers documented as "not payable" and
+  "advisory only". All twelve removed. The routes stay mounted; they are simply no
+  longer integration surface.
+- **One audit finding was wrong, and was withdrawn.** A browser observation reported the
+  webhook *event* checkboxes as read-only and misrepresenting the subscription. Source
+  shows they are editable and that the wildcard fallback matches the form's own note.
+  Recorded here because the correction matters as much as the finding: a rendered-page
+  observation is not evidence until it is checked against the code.
+
+**Legal position (decision D-1, 2026-09-23).** `P1-4` is closed by operator decision,
+not by a lawyer, and this file is the record of exactly what that means.
+
+- The published Terms and Privacy are held as **reviewed**. The code comments on both
+  pages that asserted otherwise — "this text has still not been reviewed by a lawyer",
+  "the absence of the banner is not approval" — have been removed, because leaving them
+  would contradict the position.
+- **The platform sets no liability ceiling of its own.** Terms §8 now states that
+  liability is limited to the same extent as the limitations imposed by the underlying
+  rails — ABA PayWay and Bakong, operated under the National Bank of Cambodia — and that
+  ChmabaPay assumes no liability beyond them. This is the operator's decision: the
+  platform is a reporting layer over rails it does not control, so it passes the rail's
+  limits through rather than setting its own.
+- §6 now states the fee position: **no pro-rata refunds**, moving to the free plan stops
+  future billing, and **at least 30 days' notice** before a price change applies.
+- `terms_version` moved `2 → 3`. Sections 6 and 8 changed materially, so an account that
+  accepted version 2 has not agreed to this text and must be asked again.
+- **Resend** was added to the privacy processor list. It has been delivering plan-invoice
+  and payment-reminder email — merchant addresses and invoice contents — since billing
+  shipped, and was simply never disclosed. That was an omission in the page, not a
+  judgement call.
+- The registered district is spelled **"Chbar Ampov"** across Terms, Privacy and Contact
+  (previously "Chmbar Ampov"), and `/contact` now carries the entity and its address.
+
+**Still open, and deliberately not closed by this decision.**
+
+1. **`on-behalf-of`** — whether the platform may query other merchants' transaction
+   status through the Bakong hosted-session path without a written NBC position.
+   `docs/legal/on-behalf-of.md` still records it as an open question; D-1 does not
+   settle it (PA-33b).
+2. **No sandbox (decision D-2).** `create_key` hardcodes `mode="live"`, so merchant #1
+   integrates against real money, hand-held. Test keys stay a Phase-4 item. The dev
+   tooling that told operators to use a `ck_test_` key — which cannot be minted — is
+   corrected rather than left as a trap (PA-31).
+3. **Support ticketing (decision D-4).** Pro advertises priority support and nothing
+   implemented it. The decision is to build it — records, merchant-facing threads, an
+   operator queue, a 24-hour calendar first-response target — and until it ships the
+   target must not be advertised (Wave 9, PA-36…PA-43).
+4. **No admin refund path (D-02)** — *closed since this was written.* See below.
+
+**Closed after the findings above, in the same sweep.**
+
+- **D-02 — the console can resolve a refund dispute.** `POST
+  /v1/admin/payments/{public_id}/reverse` is mounted, calls the same `reverse_payment`
+  service the merchant route calls (so the `409 payment_not_paid` and `409
+  payment_already_reversed` guards, the negative ledger row and the `payment.reversed`
+  webhook are identical), and records `admin.payment_reversed` naming the operator with a
+  required reason. The other day-one operator tools landed with it: an audit-log date
+  range and CSV export, a health/metrics page, key minting and rotation on a merchant's
+  behalf, and search by store public id or key prefix.
+- **Documentation truth.** The public reference no longer lists the platform's own
+  dashboard surface beside the integration API (D-7): API Keys, Billing and Account are
+  out of the public page and into `docs/api.md`, with the drift test recording those paths
+  as withheld so the omission is a decision rather than an oversight. `ck_test_` key
+  instructions are gone from the dev tooling (PA-31) — nothing points at a credential
+  `new_api_key` cannot mint. `CHMABAPAY_HQ_STORE_ID`'s resolution order is written down in
+  `deploy/.env.example` (PA-32).
+- **Admin-key hardening.** `/v1/admin/*` rejects a `ck_` key outright and `/v1/keys` is
+  session-only, so no credential can extend or destroy itself (D-6, D-8).
+
+**Verification pass (2026-09-23, PA-34).** `ruff check src/chmabapay` clean;
+`alembic upgrade head` onto a **fresh empty** Postgres 16 database landing at `0012` with
+14 model tables, `alembic check` reporting no drift; `pytest` against Postgres 16 and
+Redis 7 → **372 passed, 2 `live` deselected**; both `next build`s through
+`web/Dockerfile` → exit 0; the webhook lifecycle verified end to end in a browser, no
+`/v1/*` 4xx or 5xx and no app-level console error on the public pages; and a read-only
+`GET` re-probe of every route touched, in which `/login`, `/pricing` and the store-scoped
+payment URL answered `307` in production as intended.
+
+**Launch gate: all five criteria met**, after Wave 9 shipped the same day. C-01 is closed
+and verified live in a browser; PA-33 has landed; B-01 and B-02 are closed; D-02 is closed;
+the verification protocol passes.
+
+The fifth was **A-08**, and it was closed the right way rather than the cheap way. The gate
+allowed either shipping the ticketing system or withholding the Pro priority-support claim
+until it existed. The operator chose to build it (decision D-4), so what shipped is the
+system the claim describes: a merchant opens a request from `/dashboard/support`, an
+operator answers it from `/support` in the console, `priority` is derived from
+`Plan.priority_support` at open time, and `first_response_at` is written by the first
+operator reply and never moved afterwards. **Pro carries a 24-hour calendar target**,
+stated on `/contact`, on the plan, in the portal and in the console from one number
+(`services.support.PRIORITY_RESPONSE_TARGET_HOURS`); Free and Starter are best-effort with
+no target, and say so.
+
+Two things about that feature are worth carrying forward, because both were learned the hard
+way rather than designed:
+
+- **The queue highlights a breach in words, not in colour.** A priority request past its
+  target is what the whole Pro promise is about, and the console says `BREACH` and "Past the
+  24h target, still unanswered" in the row itself — legible before the request is opened,
+  and legible to someone who cannot distinguish red from grey.
+- **The target had to move onto the list response.** It was published only per request, so a
+  Pro account that had never opened one had nothing to read it from and would have been
+  shown the best-effort copy — the platform's own promise invisible to exactly the merchants
+  who had not needed it yet. Found by the person building the portal, not by a test.
+
+**What Wave 9 did not settle.** The on-behalf-of position is now a recorded risk acceptance
+rather than an open question (`docs/legal/on-behalf-of.md`, PA-33b), which is a decision
+made on secondary sources, not a regulator's answer. There is still no sandbox (D-2). And
+the console's request-assignment control is a numeric admin-account-id field, because no
+endpoint lists platform admins — functional, and the weakest control on that page.

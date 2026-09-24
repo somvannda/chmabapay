@@ -466,7 +466,10 @@ def _setup_cases() -> list[dict[str, Any]]:
             skip_if="payment",
             produces={"payment": "$.id"},
             mutates=True,
-            note="Use a ck_test_ key so this never consumes live quota.",
+            note=(
+                "This mints a real payment, so it spends one of the plan's monthly "
+                "allowance — run the plan against a scratch account."
+            ),
             tags=[KIND_FIXTURE],
         ),
         _case(
@@ -751,9 +754,10 @@ def _auth_cases() -> list[dict[str, Any]]:
         ),
     )
     # `get_hybrid_admin_context` declares `session_account` as an eager dependency,
-    # so a cookie-less API-key request is refused by session auth before the
-    # is_platform_admin gate can answer 403. Failing closed is safe, but the
-    # documented "Bearer ck_ OR session" contract is not actually reachable.
+    # so a cookie-less request is refused by session auth before the
+    # is_platform_admin gate can answer 403. Since 2026-09-23 there is no longer a
+    # `Bearer ck_` branch above that gate either (decision D-6), so a key buys
+    # nothing here in any combination.
     admin_intent = "Intended 403 (is_platform_admin gate); 401 means the session dependency short-circuits first."
     cases.append(
         _case(

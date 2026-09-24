@@ -5,9 +5,11 @@ Base URL `https://pay.chmaba.com/v1` — the API is served from the same origin 
 so there is no separate `api.` host. JSON in/out. Auth: `Authorization: Bearer ck_live_…`.
 
 Only `ck_live_` keys are issued: `POST /v1/keys` always mints live mode, and there is no
-`ck_test_` issuance path. Most `/v1/me` and `/v1/billing/*` endpoints are session-cookie
-only and an API key is not accepted there; the one exception is `GET /v1/billing/plans`,
-which is public. Those are marked below.
+`ck_test_` issuance path. `POST /v1/keys` is also session-cookie only as of 2026-09-23 — a key
+must not be able to mint, revoke or rotate keys, or a leaked one could replace itself and
+outlive its own revocation (decision D-8). The rest of `/v1/me` and `/v1/billing/*` are
+session-cookie only too, except `GET /v1/billing/plans`, which is public. Those surfaces are
+in the second section below.
 
 ## Endpoints
 
@@ -22,22 +24,40 @@ which is public. Those are marked below.
 | GET | `/pay/:id/qr.svg` | **Public** QR image; `410` once the code is dead |
 | GET | `/v1/khqr/render.svg` | KHQR SVG renderer (no auth), `ecc`/`scale` params |
 | PUT | `/v1/stores/:id` | Update a store (alias of `PATCH /v1/stores/:id`) |
-| PATCH | `/v1/account` | Update the account name (alias of `PATCH /v1/me`) |
-| POST | `/v1/me/password` | Rotate the account password (session only) |
-| DELETE | `/v1/me` | Close and anonymise the account (session only) |
 | POST | `/v1/transactions/token/renew` | Request a fresh short-lived Bakong JWT |
 
-Keys, stores, webhooks, billing, reports and the account profile are all real HTTP endpoints on
-this same API (`/v1/keys`, `/v1/stores`, `/v1/webhooks`, `/v1/billing`, `/v1/reports`, `/v1/me`);
-they are documented on the public API page rather than repeated here. The five operations added
-to the table above are the ones that page had omitted: `PUT /v1/stores/:id` and `PATCH /v1/account`
-are write aliases, `POST /v1/me/password` rotates the password (`401 invalid_password` when the
-current one is wrong, `400 password_unchanged`, `409 no_password_set`), `DELETE /v1/me` closes and
-anonymises the account (`400 confirm_email_does_not_match`, `401 invalid_password`,
-`409 platform_admin_cannot_self_delete`), and `POST /v1/transactions/token/renew` asks NBC for a
-Bakong JWT (`400 email_required`, `400 bakong_error`). The platform-admin routes
-(`/v1/admin/*`) and the dev rail (`/_dev/*`, mounted only when `ENABLE_DEV_GATEWAY=true`) are
-internal and are not part of the public surface.
+## Two surfaces, and why they are separate
+
+The public page is the **integration API** and nothing else: the routes a merchant's backend
+calls with `ck_live_…` — stores, payments, reconciliation, webhooks, reports, the hosted
+checkout pages and the KHQR helpers.
+
+This document is that plus the **dashboard API**: the routes the platform's own web dashboard
+drives with a session cookie. They are not integration surface — an API key is refused on all of
+them — and they were removed from the public page on 2026-09-23 (decision D-7), because listing
+them advertised a surface an integrator has no credential for.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/v1/keys` | List the account's API keys; the raw key is never returned again |
+| POST | `/v1/keys` | Create a key — session only, `name` required (1–64 chars), `raw_key` returned once, `403 terms_not_accepted` until the Terms are accepted, capped by the plan (`400 Max API keys (n) reached…`) |
+| POST | `/v1/keys/:id/revoke` | Revoke a key; any request using it fails from this call on (`404 key_not_found`) |
+| POST | `/v1/keys/:id/rotate` | Create a replacement and suspend the old key in the same call |
+| PATCH | `/v1/account` | Update the account name (alias of `PATCH /v1/me`) |
+| POST | `/v1/me/password` | Rotate the password (`401 invalid_password`, `400 password_unchanged`, `409 no_password_set`, `400 password_too_long` past bcrypt's 72 bytes) |
+| POST | `/v1/me/email` | Move the account's email (`400 email_already_taken`, `409 email_change_requires_password` for a Google-only account) |
+| DELETE | `/v1/me` | Close and anonymise the account (`400 confirm_email_does_not_match`, `401 invalid_password`, `409 platform_admin_cannot_self_delete`) |
+| POST | `/v1/me/terms` | Record Terms acceptance (`409 terms_version_superseded`) |
+| GET | `/v1/billing/subscription` | The current subscription and plan |
+| POST | `/v1/billing/change-plan` | Change plan; a paid tier is bought, so the plan activates when its invoice is paid (`409 open_invoice_unpaid`, `400 plan_unchanged`, `404 plan_not_found`, `400 plan_not_available`) |
+| GET | `/v1/billing/invoices` | List plan invoices, filtered by `period_month=YYYY-MM` |
+| GET | `/v1/billing/invoices/:id/khqr` | Mint a KHQR to settle a plan invoice (`400 invoice_already_paid`, `404 invoice_not_found`, `503 billing_not_open`) |
+| GET | `/v1/billing/notices` | The most urgent billing notice, or empty when nothing is owed |
+
+`POST /v1/transactions/token/renew` is withheld from the public page with the rest of the Bakong
+ledger group (decision D-3). The platform-admin routes (`/v1/admin/*`) and the dev rail
+(`/_dev/*`, mounted only when `ENABLE_DEV_GATEWAY=true`) are internal and are not part of any
+public surface.
 
 ## POST /v1/payments
 

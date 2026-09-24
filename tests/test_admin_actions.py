@@ -661,6 +661,47 @@ async def test_retrying_a_delivery_reschedules_it_and_records_why(client):
     assert entries[0].details["endpoint_id"] == delivery.endpoint_id
 
 
+async def test_retrying_a_delivered_webhook_needs_the_opt_in(client):
+    """A `success` row is left alone unless the caller asks for it explicitly.
+
+    Re-sending an event the merchant already processed can double-process the sale on
+    their side, which is why the payment-level route makes it opt-in. The row route
+    took no such parameter, so a direct caller got the re-send without asking — while
+    the console's checkbox, which says it does that, sent nothing at all.
+    """
+    operator = await make_operator()
+    merchant = await make_merchant()
+    store = await make_store(merchant, name="Sokha Cafe")
+    delivery = await make_failed_delivery(client, merchant, store)
+
+    async with session_factory() as session:
+        row = await session.get(models.EventDelivery, delivery.id)
+        row.status = models.DELIVERY_SUCCESS
+        row.attempts = 1
+        await session.commit()
+
+    async with signed_in(operator) as admin:
+        skipped = await admin.post(f"/v1/admin/deliveries/{delivery.id}/retry")
+        assert skipped.status_code == 200, skipped.text
+        assert skipped.json()["retried"] is False
+
+        async with session_factory() as session:
+            row = await session.get(models.EventDelivery, delivery.id)
+            assert row is not None
+            assert row.status == models.DELIVERY_SUCCESS
+            assert row.attempts == 1
+
+        sent = await admin.post(
+            f"/v1/admin/deliveries/{delivery.id}/retry?include_successes=true"
+        )
+        assert sent.status_code == 200
+        assert sent.json()["retried"] is True
+        assert sent.json()["attempts"] == 0
+
+    # Only the call that changed something is recorded.
+    assert len(await rows("admin.delivery_retried")) == 1
+
+
 # --------------------------------------------------------------------------- #
 # Gating
 # --------------------------------------------------------------------------- #
@@ -670,15 +711,21 @@ async def test_every_operator_action_is_admin_gated(client):
     store = await make_store(merchant, name="Sokha Cafe")
     _raw_key, api_key = await make_key(merchant)
     delivery = await make_failed_delivery(client, merchant, store)
+    paid = await make_paid_payment(client, merchant, store, amount_cents=1250)
 
     calls = [
         ("PATCH", f"/v1/admin/accounts/{merchant.id}/plan"),
         ("POST", f"/v1/admin/invoices/{invoice_id}/resolve"),
         ("POST", f"/v1/admin/keys/{api_key.id}/revoke"),
+        ("POST", f"/v1/admin/keys/{api_key.id}/rotate"),
+        ("POST", f"/v1/admin/accounts/{merchant.id}/keys"),
         ("POST", f"/v1/admin/stores/{store.public_id}/disable"),
         ("POST", f"/v1/admin/deliveries/{delivery.id}/retry"),
+        ("POST", f"/v1/admin/payments/{paid['id']}/reverse"),
+        ("GET", "/v1/admin/health"),
+        ("GET", "/v1/admin/audit-logs/export?format=csv"),
     ]
-    body = {"plan_code": "pro", "action": "waive", "reason": "trying it on"}
+    body = {"plan_code": "pro", "action": "waive", "reason": "trying it on", "name": "lateral"}
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url=BASE_URL
@@ -699,6 +746,17 @@ async def test_every_operator_action_is_admin_gated(client):
         key = await session.get(models.ApiKey, api_key.id)
         assert key is not None
         assert key.status == models.ACCOUNT_ACTIVE
+        # Minting is an *action*, not a read: the named key was never created, by
+        # either refused caller.
+        smuggled = (
+            await session.execute(
+                select(func.count(models.ApiKey.id)).where(
+                    models.ApiKey.account_id == merchant.id,
+                    models.ApiKey.name == "lateral",
+                )
+            )
+        ).scalar_one()
+        assert smuggled == 0
         row = await session.get(models.EventDelivery, delivery.id)
         assert row is not None
         assert row.status == models.DELIVERY_FAILED
@@ -917,3 +975,325 @@ async def test_the_internal_toggle_is_admin_gated(client):
         assert res.status_code == 403
 
     assert await rows("store.internal_changed") == []
+
+
+# --------------------------------------------------------------------------- #
+# Reversing a merchant's payment — the refund dispute raised by telephone
+# --------------------------------------------------------------------------- #
+async def event_types(public_id: str) -> list[str]:
+    async with session_factory() as session:
+        return list(
+            (
+                await session.execute(
+                    select(models.Event.type)
+                    .join(models.Payment, models.Payment.id == models.Event.payment_id)
+                    .where(models.Payment.public_id == public_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+async def test_an_operator_can_reverse_a_merchants_paid_payment(client):
+    """A refund the merchant reports by phone has to be recordable from the console.
+
+    The merchant-facing route resolves the payment inside the caller's own account,
+    so an operator could reconcile, mark paid and redeliver but not give money back.
+    That is not cosmetic: a refunded payment stayed `paid` in every report built on
+    it for the rest of its retention window, overstating revenue permanently.
+    """
+    operator = await make_operator()
+    merchant = await make_merchant()
+    store = await make_store(merchant, name="Sokha Cafe")
+    created = await make_paid_payment(client, merchant, store, amount_cents=1250)
+
+    async with signed_in(operator) as admin:
+        res = await admin.post(
+            f"/v1/admin/payments/{created['id']}/reverse",
+            json={"reason": "customer returned the order"},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["status"] == models.PAYMENT_REVERSED
+        assert res.json()["reversed_at"] is not None
+
+        # The money is already back with the customer, so a second click is a
+        # conflict rather than a second refund.
+        again = await admin.post(
+            f"/v1/admin/payments/{created['id']}/reverse",
+            json={"reason": "trying it twice"},
+        )
+        assert again.status_code == 409
+        assert again.json()["detail"] == "payment_already_reversed"
+
+    # Collected, then given back: the ledger keeps both rows so the correction is
+    # visible as a give-back rather than a sale that never happened.
+    ledger = await ledger_rows(merchant.id)
+    assert [row.amount_cents_delta for row in ledger] == [1250, -1250]
+
+    # The merchant's own reports are built on this webhook, so it has to fire.
+    assert set(await event_types(created["id"])) == {
+        models.EVENT_COMPLETED,
+        models.EVENT_REVERSED,
+    }
+
+    entries = await rows("admin.payment_reversed")
+    assert len(entries) == 1
+    assert entries[0].actor_account_id == operator.id
+    assert entries[0].target_type == "Payment"
+    assert entries[0].details["amount_cents"] == 1250
+    assert entries[0].details["reason"] == "customer returned the order"
+
+
+async def test_reversing_a_payment_that_never_settled_is_refused_and_records_nothing(
+    client,
+):
+    """Only settled money can be given back, and a refusal leaves no trace.
+
+    The audit row is written into the same transaction the reversal commits, so a
+    refused reversal — a pending payment, or a missing reason — must leave neither.
+    """
+    operator = await make_operator()
+    merchant = await make_merchant()
+    store = await make_store(merchant, name="Sokha Cafe")
+    raw_key, _ = await make_key(merchant)
+    created = (
+        await client.post(
+            "/v1/payments",
+            json={
+                "amount": 12.5,
+                "reference_id": "order_unpaid",
+                "store": store.public_id,
+                "hosted_qr": False,
+            },
+            headers={"Authorization": f"Bearer {raw_key}"},
+        )
+    ).json()
+
+    async with signed_in(operator) as admin:
+        res = await admin.post(
+            f"/v1/admin/payments/{created['id']}/reverse",
+            json={"reason": "nothing arrived yet"},
+        )
+        assert res.status_code == 409
+        assert res.json()["detail"] == "payment_not_paid"
+
+        # A reason is mandatory: this is the only record of why money was given back.
+        missing = await admin.post(
+            f"/v1/admin/payments/{created['id']}/reverse", json={}
+        )
+        assert missing.status_code == 422
+
+    assert await rows("admin.payment_reversed") == []
+
+
+# --------------------------------------------------------------------------- #
+# The billing freeze — a standing the API accepted but the console could not set
+# --------------------------------------------------------------------------- #
+async def test_an_operator_can_freeze_an_account_without_locking_it_out(client):
+    """`restricted` is the hold, not the lockout: the merchant keeps working, in read.
+
+    The API accepted `{status: "restricted"}` since the dunning sweep shipped, but
+    nothing in the console sent it and a restricted account rendered as the green
+    "active" pill — so the one standing that exists to be seen was invisible, and the
+    only way to apply it was to write the column by hand.
+    """
+    operator = await make_operator()
+    merchant = await make_merchant()
+    store = await make_store(merchant, name="Sokha Cafe")
+    raw_key, _key = await make_key(merchant)
+
+    async with signed_in(operator) as admin:
+        frozen = await admin.patch(
+            f"/v1/admin/accounts/{merchant.id}",
+            json={"status": "restricted", "reason": "three invoices overdue"},
+        )
+        assert frozen.status_code == 200, frozen.text
+        assert frozen.json()["status"] == "restricted"
+
+    # The freeze is real rather than a label: a key is not a read-only instrument —
+    # it is the integration that mints payment codes — so it is refused in full.
+    denied = await client.post(
+        "/v1/payments",
+        json={
+            "amount": 12.5,
+            "reference_id": "order_frozen",
+            "store": store.public_id,
+            "hosted_qr": False,
+        },
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "account_restricted"
+
+    async with signed_in(operator) as admin:
+        released = await admin.patch(
+            f"/v1/admin/accounts/{merchant.id}",
+            json={"status": "active", "reason": "balance settled"},
+        )
+        assert released.status_code == 200
+        assert released.json()["status"] == "active"
+
+    entries = await rows("account.restricted")
+    assert len(entries) == 1
+    assert entries[0].actor_account_id == operator.id
+    assert entries[0].details["changes"]["status"] == {
+        "from": "active",
+        "to": "restricted",
+    }
+    assert entries[0].details["reason"] == "three invoices overdue"
+
+
+# --------------------------------------------------------------------------- #
+# Day-one tools: a key for a locked-out merchant, and a lookup that starts
+# anywhere but an email address
+# --------------------------------------------------------------------------- #
+async def test_an_operator_can_mint_a_key_for_a_merchant_who_cannot_sign_in(client):
+    """`/v1/keys` is session-only — no credential may extend itself — which is right
+    and leaves the merchant who lost their credential with no way back in. The
+    operator holds a different credential, so this is the route for them."""
+    operator = await make_operator()
+    merchant = await make_merchant()
+    store = await make_store(merchant, name="Sokha Cafe")
+
+    async with signed_in(operator) as admin:
+        res = await admin.post(
+            f"/v1/admin/accounts/{merchant.id}/keys",
+            json={"name": "Handed over by phone"},
+        )
+        assert res.status_code == 200, res.text
+        minted = res.json()
+        raw = minted["raw_key"]
+        assert raw.startswith("ck_live_")
+        assert minted["name"] == "Handed over by phone"
+        assert minted["mode"] == "live"
+        # Shown once and never again, so the response is the whole point of the call.
+        assert minted["key_prefix"] == raw[:12]
+
+    # A working credential, not a row: the merchant can integrate with it now.
+    created = await client.post(
+        "/v1/payments",
+        json={
+            "amount": 5,
+            "reference_id": "order_minted",
+            "store": store.public_id,
+            "hosted_qr": False,
+        },
+        headers={"Authorization": f"Bearer {raw}"},
+    )
+    assert created.status_code == 201, created.text
+
+    entries = await rows("key.created")
+    assert len(entries) == 1
+    # One action, two actors: the trail names the operator *and* the account the
+    # credential was handed to, which is the first question asked when a key leaks.
+    assert entries[0].actor_account_id == operator.id
+    assert entries[0].details["account_id"] == merchant.id
+    assert entries[0].details["via"] == "admin_console"
+    # And never the secret.
+    assert raw not in str(entries[0].details)
+
+
+async def test_an_operator_can_rotate_a_key_and_the_old_one_dies_at_once(client):
+    operator = await make_operator()
+    merchant = await make_merchant()
+    raw_key, api_key = await make_key(merchant)
+
+    async with signed_in(operator) as admin:
+        res = await admin.post(f"/v1/admin/keys/{api_key.id}/rotate")
+        assert res.status_code == 200, res.text
+        rotated = res.json()
+        assert rotated["id"] != api_key.id
+        assert rotated["name"] == api_key.name
+        replacement = rotated["raw_key"]
+
+        missing = await admin.post("/v1/admin/keys/999999/rotate")
+        assert missing.status_code == 404
+        assert missing.json()["detail"] == "key_not_found"
+
+    # The replacement works and the superseded key is already dead: rotating is the
+    # one repair for a key that leaked, so it cannot be a two-step handover.
+    assert (
+        await client.get(
+            "/v1/payments", headers={"Authorization": f"Bearer {replacement}"}
+        )
+    ).status_code == 200
+    assert (
+        await client.get(
+            "/v1/payments", headers={"Authorization": f"Bearer {raw_key}"}
+        )
+    ).status_code == 401
+
+    async with session_factory() as session:
+        superseded = await session.get(models.ApiKey, api_key.id)
+        assert superseded is not None
+        # `suspended`, not `revoked`: it is what tells a rotation and a revocation
+        # apart when the two rows are read side by side.
+        assert superseded.status == "suspended"
+        assert superseded.revoked_at is not None
+
+    entries = await rows("key.rotated")
+    assert len(entries) == 1
+    assert entries[0].actor_account_id == operator.id
+    assert entries[0].details["replaces_id"] == api_key.id
+    assert entries[0].details["via"] == "admin_console"
+    assert replacement not in str(entries[0].details)
+
+
+async def test_the_health_report_answers_for_the_deployment_without_secrets():
+    """`/health` answers "is the process up"; an operator needs to know whether the
+    database answers and whether the workers are draining."""
+    operator = await make_operator()
+
+    async with signed_in(operator) as admin:
+        res = await admin.get("/v1/admin/health")
+        assert res.status_code == 200, res.text
+        body = res.json()
+
+    assert body["database"] == "ok"
+    assert isinstance(body["expected_queues"], list)
+    assert body["heartbeat_max_age_seconds"] > 0
+    assert "workers" in body
+    # A console page is not the place for a connection string, so the payload says
+    # whether the scrape is secured rather than how to reach anything.
+    assert set(body) == {
+        "app",
+        "database",
+        "worker_transport",
+        "dev_gateway",
+        "metrics_scrape_secured",
+        "expected_queues",
+        "heartbeat_max_age_seconds",
+        "workers",
+    }
+
+
+async def test_an_account_can_be_found_by_store_id_or_key_prefix(client):
+    """Support is handed a store id from a failing integration or the key the merchant
+    says stopped working — rarely an email address."""
+    operator = await make_operator()
+    store_account = await make_merchant()
+    store = await make_store(store_account, name="Sokha Cafe")
+
+    key_account = await make_account(email="dara@chmaba.test", name="Dara Mart")
+    raw_key, api_key = await make_key(key_account)
+
+    async with signed_in(operator) as admin:
+        by_store = await admin.get(f"/v1/admin/accounts?q={store.public_id}")
+        assert by_store.status_code == 200, by_store.text
+        assert [r["id"] for r in by_store.json()["data"]] == [store_account.id]
+
+        # A prefix typed by hand, and the whole key pasted from the merchant's
+        # message: both resolve, because a pasted key is sliced to its prefix.
+        by_prefix = await admin.get(f"/v1/admin/accounts?q={api_key.key_prefix}")
+        assert [r["id"] for r in by_prefix.json()["data"]] == [key_account.id]
+        pasted = await admin.get(f"/v1/admin/accounts?q={raw_key}")
+        assert [r["id"] for r in pasted.json()["data"]] == [key_account.id]
+
+        # Identity search still works, and an unrelated query still matches nothing —
+        # a widened filter that matched everything would be worse than no filter.
+        by_email = await admin.get("/v1/admin/accounts?q=dara@chmaba.test")
+        assert [r["id"] for r in by_email.json()["data"]] == [key_account.id]
+        nothing = await admin.get("/v1/admin/accounts?q=no-such-thing")
+        assert nothing.json()["data"] == []
+

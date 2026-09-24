@@ -101,7 +101,8 @@ All share one DB and one Redis. Deploy as containers.
 
 ## 5. Security
 
-- API keys stored as SHA-256 hash only; full key shown once (`ck_live_…` / `ck_test_…`).
+- API keys stored as SHA-256 hash only; full key shown once (`ck_live_…` — live mode is the
+  only mode that can be minted; see decision D-2).
 - Webhook signatures: `X-...-Signature: t=<ts>,v1=<hmac>` HMAC-SHA256 over `t.<rawBody>`
   with a per-endpoint secret; constant-time compare; reject stale `t`.
 - Store secrets (Bakong creds per merchant) encrypted at rest (KMS/AES-GCM envelope), never logged.

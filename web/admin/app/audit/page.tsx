@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { readApiError } from "@/lib/apiError";
 import { apiFetch } from "@/lib/apiFetch";
+import { useToast } from "@/components/Toast";
 
 type AuditEntry = {
   id: number;
@@ -25,6 +26,18 @@ type Pagination = {
 };
 
 const nf = new Intl.NumberFormat("en-US");
+
+/** Save the response body as a file, the same way the merchant reports page does. */
+function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 const TARGET_OPTIONS = [
   { value: "", label: "Any target" },
@@ -73,7 +86,11 @@ export default function AdminAuditPage() {
   const [action, setAction] = useState("");
   const [appliedAction, setAppliedAction] = useState("");
   const [targetType, setTargetType] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [exporting, setExporting] = useState(false);
   const [page, setPage] = useState(1);
+  const { notify } = useToast();
 
   useEffect(() => {
     let alive = true;
@@ -84,6 +101,8 @@ export default function AdminAuditPage() {
         const params = new URLSearchParams();
         if (appliedAction) params.set("action", appliedAction);
         if (targetType) params.set("target_type", targetType);
+        if (fromDate) params.set("from", fromDate);
+        if (toDate) params.set("to", toDate);
         params.set("page", String(page));
         params.set("per_page", "50");
         const res = await apiFetch(`/v1/admin/audit-logs?${params.toString()}`, {
@@ -103,7 +122,7 @@ export default function AdminAuditPage() {
     return () => {
       alive = false;
     };
-  }, [appliedAction, targetType, page]);
+  }, [appliedAction, targetType, fromDate, toDate, page]);
 
   const onSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -112,6 +131,45 @@ export default function AdminAuditPage() {
       setAppliedAction(action.trim());
     },
     [action],
+  );
+
+  // The view pages at 50; an incident review wants the rows. The API reports how many
+  // matched, so a file cut off at the export cap says so rather than looking complete.
+  const exportTrail = useCallback(
+    async (format: "csv" | "json") => {
+      setExporting(true);
+      try {
+        const params = new URLSearchParams();
+        if (appliedAction) params.set("action", appliedAction);
+        if (targetType) params.set("target_type", targetType);
+        if (fromDate) params.set("from", fromDate);
+        if (toDate) params.set("to", toDate);
+        params.set("format", format);
+        const res = await apiFetch(
+          `/v1/admin/audit-logs/export?${params.toString()}`,
+          { credentials: "include" },
+        );
+        if (!res.ok) throw new Error(await readApiError(res));
+        const total = Number(res.headers.get("X-Total-Rows") ?? "0");
+        const returned = Number(res.headers.get("X-Rows-Returned") ?? "0");
+        triggerDownload(
+          await res.blob(),
+          `audit-log-${new Date().toISOString().slice(0, 10)}.${format}`,
+        );
+        notify(
+          total > returned
+            ? `Exported ${nf.format(returned)} of ${nf.format(total)} rows — narrow the dates for the rest.`
+            : `Exported ${nf.format(returned)} ${returned === 1 ? "row" : "rows"}.`,
+        );
+      } catch (e) {
+        // A failed export is not a failed read: the table on screen is still good, so
+        // this reports as a toast rather than replacing the page with an error state.
+        notify(e instanceof Error ? e.message : String(e), "error");
+      } finally {
+        setExporting(false);
+      }
+    },
+    [appliedAction, targetType, fromDate, toDate, notify],
   );
 
   const showPagination = pagination !== null && pagination.total_pages > 1;
@@ -153,13 +211,51 @@ export default function AdminAuditPage() {
               </option>
             ))}
           </select>
+          <input
+            className="dash-input"
+            type="date"
+            value={fromDate}
+            max={toDate || undefined}
+            onChange={(e) => {
+              setFromDate(e.target.value);
+              setPage(1);
+            }}
+            aria-label="From date"
+          />
+          <input
+            className="dash-input"
+            type="date"
+            value={toDate}
+            min={fromDate || undefined}
+            onChange={(e) => {
+              setToDate(e.target.value);
+              setPage(1);
+            }}
+            aria-label="To date"
+          />
           <button type="submit" className="dash-btn dash-btn-secondary">
             Search
           </button>
         </form>
+        <div className="dash-toolbar-filters">
+          <button
+            type="button"
+            className="dash-btn dash-btn-secondary dash-btn-sm"
+            onClick={() => void exportTrail("csv")}
+            disabled={exporting || loading}
+          >
+            {exporting ? "Exporting…" : "Export CSV"}
+          </button>
+          <button
+            type="button"
+            className="dash-btn dash-btn-secondary dash-btn-sm"
+            onClick={() => void exportTrail("json")}
+            disabled={exporting || loading}
+          >
+            Export JSON
+          </button>
+        </div>
       </div>
-
-      {errorMsg && <div className="dash-warn">{errorMsg}</div>}
 
       <div className="dash-panel">
         {loading ? (
@@ -168,6 +264,8 @@ export default function AdminAuditPage() {
           <div className="dash-empty">
             Could not load the audit trail.
             <div className="dash-empty-desc">
+              {errorMsg}
+              <br />
               The request failed, so this is not an empty result. Reload the page
               to try again.
             </div>

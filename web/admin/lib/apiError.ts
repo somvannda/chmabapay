@@ -24,6 +24,9 @@ const ERROR_COPY: Record<string, string> = {
     "This invoice was already waived. Nothing was changed, and the audit trail is untouched.",
   invoice_already_credited:
     "This invoice was already credited. Nothing was changed, and the audit trail is untouched.",
+  invoice_already_void:
+    "This invoice was already voided. Nothing was changed, and the audit trail is untouched.",
+  invoice_not_found: "That invoice no longer exists. Reload the page to see the current invoices.",
   key_not_found: "That API key no longer exists. Reload the page to see the current keys.",
   store_not_found: "That store no longer exists. Reload the page to see the current stores.",
   payment_already_paid:
@@ -38,6 +41,8 @@ const ERROR_COPY: Record<string, string> = {
     "This payment has no webhook deliveries to re-send. Nothing was queued.",
   delivery_not_found:
     "That delivery no longer exists. Reload the page to see the current deliveries.",
+  invalid_assignee:
+    "That account is not a platform admin, so it cannot hold a support request. Check the account ID — only an admin can be assigned one.",
   too_many_features:
     "That plan has too many feature bullets. Use at most 12.",
   feature_too_long:

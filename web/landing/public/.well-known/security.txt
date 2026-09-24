@@ -1,0 +1,14 @@
+Contact: mailto:duke@chmaba.com
+Expires: 2027-09-23T00:00:00.000Z
+Preferred-Languages: en, km
+Canonical: https://pay.chmaba.com/.well-known/security.txt
+
+# OPERATOR: swap the Contact above for a role address (security@chmaba.com) once
+# that mailbox exists and is monitored. Until then this points at the one address
+# this deployment is known to receive mail at, because a security contact that
+# silently swallows reports is worse than no security.txt at all — a researcher who
+# gets no reply has no way to tell a quiet inbox from a decision to ignore them.
+#
+# There is deliberately no `Policy:` line. That field is for a published
+# vulnerability-disclosure policy, and none exists yet; pointing it at /terms would
+# claim a commitment the platform has not made.
