@@ -3,26 +3,16 @@ import type { Metadata } from "next";
 /**
  * Terms of Service.
  *
- * Two things to know before editing this file.
+ * **`terms_version` in the backend must move with this page.** The recorded
+ * acceptance stores the version the merchant was shown, so the two are a pair: a
+ * substantive edit here without bumping `terms_version` in
+ * `src/chmabapay/config.py` would silently attribute agreement to this text to
+ * merchants who only ever saw the previous one.
  *
- * 1. **This text has still not been reviewed by a lawyer.** Every page carrying
- *    terms, privacy or merchant-agreement language in this repository was written
- *    from the system's actual behaviour as a first draft, so there is a concrete
- *    artifact for a Cambodian lawyer to edit rather than a blank page — and that
- *    review is still outstanding (`P1-4` in `docs/production-readiness.md`).
- *
- *    A visible "Draft / not yet binding" banner used to sit at the top of this
- *    page. It was removed on 2026-09-18 by an explicit product decision to open
- *    the service to real merchant traffic, **not** because the text was
- *    reviewed. Do not read its absence as approval. When the review does happen,
- *    replace this comment and the same one in `privacy/page.tsx` at the same time
- *    as the text they describe.
- *
- * 2. **`TERMS_VERSION` in the backend must move with this page.** The recorded
- *    acceptance stores the version the merchant was shown, so the two are a pair:
- *    a substantive edit here without bumping `terms_version` in
- *    `src/chmabapay/config.py` would silently attribute agreement to this text to
- *    merchants who only ever saw the previous one.
+ * On liability (section 8): the platform sets no ceiling of its own. It relies on
+ * the limits imposed by the rails it depends on — ABA PayWay and Bakong, operated
+ * under the National Bank of Cambodia — and assumes no liability beyond them. That
+ * is a decision, recorded in `docs/production-readiness.md`, not an omission.
  */
 export const metadata: Metadata = {
   title: "Terms of Service — ChmabaPay",
@@ -60,11 +50,11 @@ export default function TermsPage() {
           <p className="legal-lede">
             These terms govern your use of ChmabaPay, a payment status platform for
             KHQR, Bakong and ABA PayWay. They are between you and Chmaba, whose
-            registered address is #62, Street P-10D, Sangkat Veal Sbov, Khan Chmbar
+            registered address is #62, Street P-10D, Sangkat Veal Sbov, Khan Chbar
             Ampov, Phnom Penh, Cambodia.
           </p>
           <div className="legal-meta">
-            Version 2 · Last updated 21 September 2026
+            Version 3 · Last updated 23 September 2026
           </div>
 
           <div className="legal-body">
@@ -226,11 +216,24 @@ export default function TermsPage() {
                 there is nothing to collect. Each period is invoiced when it begins.
               </p>
               <p>
-                An invoice is issued once per account per calendar month, so a second
-                move to a paid plan in the same month cannot be billed and is
-                refused. We do not charge a fee per transaction: ChmabaPay is a
-                subscription service, and your customers&apos; payments never pass
-                through us to be deducted from.
+                While an invoice for a period is unpaid, a further plan change
+                covering that same period cannot be billed and is refused — settle
+                the open invoice first. We do not charge a fee per transaction:
+                ChmabaPay is a subscription service, and your customers&apos;
+                payments never pass through us to be deducted from.
+              </p>
+              <p>
+                <strong>Fees are not refundable.</strong> A period you have paid for
+                is not refunded part-way through, whether you stop using the service
+                or move to a smaller plan. Moving to the free plan stops future
+                billing: you are not charged again after the period you have already
+                paid for. You may cancel at any time by moving to the free plan or
+                closing your account.
+              </p>
+              <p>
+                We may change plan prices. We will give at least 30 days&apos; notice
+                before a new price applies to you, and you may move to another plan or
+                cancel before it takes effect.
               </p>
             </section>
 
@@ -253,6 +256,15 @@ export default function TermsPage() {
                 payment that was not confirmed or not reported, from a notification
                 that was not delivered, or from the acts or omissions of ABA,
                 Bakong or the National Bank of Cambodia.
+              </p>
+              <p>
+                <strong>We set no liability ceiling of our own.</strong> Our
+                liability is limited to the same extent as the limitations and caps
+                that apply to the underlying payment rails we depend on — ABA PayWay
+                and the Bakong system operated by the National Bank of Cambodia — and
+                we assume no liability beyond those limits. This follows from what
+                the service is: we do not hold or move funds, so we cannot make good
+                an amount a rail declines, reverses, delays or fails to settle.
               </p>
               <p>
                 Nothing in these terms excludes liability that cannot lawfully be

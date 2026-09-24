@@ -158,7 +158,13 @@ class Settings(BaseSettings):
     # address. That is the one change in this document that alters *who* the merchant
     # is contracting with, so an account that accepted version 1 has not agreed to
     # this text and must be asked again.
-    terms_version: str = "2"
+    #
+    # `3` (2026-09-23): sections 6 and 8 changed materially — the fee position (no
+    # pro-rata refunds, 30 days' notice before a price change) and the liability
+    # clause, which now states that the platform sets no ceiling of its own and relies
+    # on the ABA PayWay and Bakong rail limits. Both alter what a merchant agrees to,
+    # so re-acceptance is required.
+    terms_version: str = "3"
 
     # Retention of raw gateway payloads. `payments.gateway_status_raw` holds the
     # ABA PayWay response verbatim, which includes the hosted-checkout session
