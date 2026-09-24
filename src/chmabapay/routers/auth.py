@@ -161,6 +161,7 @@ async def _upsert_account(
     email: str,
     name: str,
     google_sub: str | None = None,
+    rename_existing: bool = True,
 ) -> models.Account:
     res = await session.execute(
         select(models.Account).where(models.Account.email == email)
@@ -182,7 +183,7 @@ async def _upsert_account(
         if google_sub is not None and account.google_sub != google_sub:
             account.google_sub = google_sub
             changed = True
-        if name and account.name != name:
+        if rename_existing and name and account.name != name:
             account.name = name
             changed = True
         if changed:
@@ -807,7 +808,9 @@ if settings.enable_dev_gateway:
         email: str = "sokha@example.com",
         session: AsyncSession = Depends(get_session),
     ) -> Response:
-        account = await _upsert_account(session, email=email, name=email.split("@")[0])
+        account = await _upsert_account(
+            session, email=email, name=email.split("@")[0], rename_existing=False
+        )
         # Same promotion the Google callback does, so CHMABAPAY_ADMIN_EMAILS
         # accounts can reach /v1/admin and the admin UI in dev too.
         await _maybe_promote_admin_and_seed_hq(session, account)
@@ -823,7 +826,9 @@ if settings.enable_dev_gateway:
         email: str = Form(default="sokha@example.com"),
         session: AsyncSession = Depends(get_session),
     ) -> Response:
-        account = await _upsert_account(session, email=email, name=email.split("@")[0])
+        account = await _upsert_account(
+            session, email=email, name=email.split("@")[0], rename_existing=False
+        )
         await _maybe_promote_admin_and_seed_hq(session, account)
         await session.refresh(account)
         jwt = _make_session_jwt(account, "dev")
