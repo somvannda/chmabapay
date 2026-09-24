@@ -1254,6 +1254,39 @@ the production deploy proved the row counts unchanged across it.
    is inert because the sign-in bootstrap only seeds a store that does not exist. A paid plan
    change therefore reaches a real link instead of `503 billing_not_open`.
 
+**Deployed to `0013`** (2026-09-24), from `e7b0f6f`. The largest deploy this project has
+taken: 70 files, 11,032 insertions, 1,206 deletions, carrying the whole of the
+2026-09-23 audit's repairs, Wave 9's support system, and the backup job. It is also the
+first deploy to carry a migration since `0010` — `0013` adds `support_requests` and
+`support_messages` — so the ritual in `docs/deploy.md` §14 applied for the first time,
+and the pre-migration snapshot was taken by a script rather than by hand: 58,645 bytes at
+`0012`, drilled before the migration and again after it, at `0013` (67,505 bytes, 17
+tables).
+
+The deploy itself was the routine one — snapshot, `rm deploy/backup.sh`, `git pull
+--ff-only`, `up -d --build`. `migrate` exited **0**; the schema moved `0012` → `0013`;
+public tables went **15 → 17**; both support tables exist. The `rm` was necessary because
+`backup.sh` had been installed by hand an hour earlier, while it was still untracked, and
+git refuses to overwrite an untracked file rather than compare it. It came back from the
+pull with its executable bit intact (`create mode 100755` — the bit has to be in the
+index, since git does not take it from the working tree) and an unchanged md5, so the
+cron entry pointing at it needed no attention.
+
+Verified from outside afterwards: `/health` 200; `/.well-known/security.txt` **200**,
+having been 404 ninety minutes earlier; `/contact` carries both the 24-hour target and
+the best-effort wording; `/v1/support` appears **four times** in the published OpenAPI;
+`/v1/support/requests` answers **401** to an anonymous caller rather than 404 or 500; and
+`/metrics`, `/docs` and `/auth/_dev/login` are still **404** from the public internet.
+The POS stack was untouched — `deploy-front-1`, `deploy-api-1` and `deploy-db-1` all up
+**2 weeks** — and neither this stack's `db` nor its `proxy` was recreated.
+
+One thing worth recording, because the tree was briefly self-inconsistent: the portal's
+Support nav item was committed in `1a3a1bd` while the page it points at was not, so any
+deploy of `edee3f6` would have shipped a Support link that 404s. The support commit closed
+that window before this deploy went out; nothing ever ran in that state, and it is the
+reason the audit's own ledger insists a change is not landed until the tree that carries
+it is consistent.
+
 ---
 
 ## P2 — Scale and polish
