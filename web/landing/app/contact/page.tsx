@@ -33,7 +33,7 @@ const CHANNELS = [
   {
     title: "Legal",
     email: "legal@chmaba.com",
-    copy: "The merchant agreement, terms of service, and contracts.",
+    copy: "Terms of Service, contracts and legal notices.",
   },
   {
     title: "Privacy",
@@ -67,17 +67,27 @@ export default function ContactPage() {
           </div>
 
           <p className="contact-note">
-            Support is email only — there is no phone line and no live chat, and there is no
-            public status page yet. We answer as quickly as we can, but we deliberately do not
-            promise a response time and the terms offer no service level agreement
-            (see section 7, Availability); what we can promise is that a payment id is enough
-            to trace what the rail told us and what we recorded.
+            Support runs through your dashboard — there is no phone line, no live chat and no
+            public status page yet. <strong>Pro carries a 24-hour first-response
+            target</strong>, counted in calendar hours from the moment a request is opened,
+            weekends included. <strong>Free and Starter are best-effort email with no target
+            at all</strong>: we answer as quickly as we can and we will not publish a number
+            we do not hold ourselves to. That target is stated on the plan, here, and on the
+            Support page of your dashboard, so the three cannot drift apart. The terms offer
+            no service level agreement beyond it (see section 7, Availability); what we can
+            promise is that a payment id is enough to trace what the rail told us and what we
+            recorded.
           </p>
 
           <p className="contact-note">
             ChmabaPay never holds funds and cannot move money back out of a bank account, so we
             cannot process a refund on your behalf — refunds settle between the payer and your
             bank. What we can do is reverse the record so your reporting is correct.
+          </p>
+
+          <p className="contact-note">
+            ChmabaPay is operated by Chmaba, whose registered address is #62, Street P-10D,
+            Sangkat Veal Sbov, Khan Chbar Ampov, Phnom Penh, Cambodia.
           </p>
         </div>
       </section>
