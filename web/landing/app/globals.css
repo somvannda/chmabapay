@@ -3051,6 +3051,12 @@ body {
   background: #faf9ff;
 }
 .dash-btn {
+  /* Belt-and-suspenders appearance reset: the root `button { appearance: none }`
+     rule covers this, but adding it directly on .dash-btn means this class is
+     self-contained regardless of cascade order with Tailwind Preflight. */
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;

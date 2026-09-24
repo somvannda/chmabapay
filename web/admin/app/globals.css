@@ -2105,6 +2105,9 @@ body {
   background: #faf9ff;
 }
 .dash-btn {
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
