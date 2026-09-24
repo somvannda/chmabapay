@@ -1438,11 +1438,17 @@ groups was reachable with an API key.
   02:15 so the two dumps never share the host's single core. The POS project is not this
   audit's to change and is revenue-generating, so nothing was touched; recorded as a
   decision for whoever owns it.
-- **Not done**: `BACKUP_REMOTE` is unconfigured and `rclone` is not installed on the host,
-  so every dump is on the same disk as the database — the remaining gap, and a destination
-  decision rather than a code change. The `15 2` schedule has not fired yet (the 05:22 fire
-  used the temporary line, proving the command and not the time). `--restore` has had only
-  its guard exercised, and the prune path cannot have fired.
+- **Not done**: `BACKUP_REMOTE` is unconfigured. `rclone` **is** now installed on the host
+  (v1.60.1, which reaches R2 through the `s3` backend with `provider = Cloudflare` rather
+  than a native `r2` backend), but no remote and no bucket exist, so every dump is on the
+  same disk as the database — the remaining gap, and a destination decision plus a
+  credential rather than a code change. The `15 2` schedule has not fired yet (the 05:22
+  fire used the temporary line, proving the command and not the time). `--restore` has had
+  only its guard exercised, and the prune path cannot have fired.
+- **Also deployed**: this work went to production on 2026-09-24 with the rest of the audit
+  (`e7b0f6f`); the migration `0013` that accompanied it is the first to have used the §14
+  ritual, and `migrate` exited 0 with the schema moving `0012` → `0013`. See the deploy
+  record in `docs/production-readiness.md`.
 - **Note**: the alert-path test sent real messages to the operator Telegram chat, which is
   shared with the application's own alerts.
 

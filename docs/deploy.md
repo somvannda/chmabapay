@@ -1079,9 +1079,35 @@ worth a decision by whoever owns it.
 Then make the copy leave the machine, or say out loud that it has not:
 
 ```bash
-rclone config     # or drop an existing config at /root/.config/rclone/rclone.conf
-# and add BACKUP_REMOTE=... to the cron line above
+apt-get install -y rclone          # done on the host: v1.60.1
 ```
+
+**Cloudflare R2, scoped to one bucket.** Worth writing out because the rclone on this
+host is 1.60.1, which has **no native `r2` backend** — that arrived later. R2 is reached
+through the `s3` backend with `provider = Cloudflare`, and the remote's *name* is
+arbitrary: calling it `r2` is what makes the cron line read naturally, not a claim about
+the backend type.
+
+```bash
+rclone config create r2 s3 \
+    provider Cloudflare \
+    access_key_id "$R2_ACCESS_KEY_ID" \
+    secret_access_key "$R2_SECRET_ACCESS_KEY" \
+    endpoint "https://<account-id>.r2.cloudflarestorage.com"
+rclone lsf r2:                        # proves the credential, before it matters
+```
+
+Then add the destination to the cron line:
+
+```
+BACKUP_REMOTE=r2:chmabapay-backups
+```
+
+**Scope the token to that one bucket, with Object Read & Write, and never to the
+account.** The config archive in every night's run contains `deploy/.env`, so a
+credential that can reach the whole account can read the JWT signing key from a
+backup — a backup is a copy of your secrets, and the place it lands has to be
+trusted accordingly.
 
 Until `BACKUP_REMOTE` is set, every night's dump is on the same disk as the database
 it came from. That survives a bad migration and a dropped table. It does not survive
@@ -1178,7 +1204,10 @@ curl -fsS https://pay.chmaba.com/health
 - Available memory went from 915 MB to 930 MB across the drill, and the POS stack was
   untouched — `deploy-front-1`, `deploy-api-1` and `deploy-db-1` all still up **2
   weeks**, `chmabapay-prod-*` all healthy.
-- Two dumps are held: 05:18 by hand, 05:22 from cron, both 58,645 bytes.
+- **Four dumps are held**, all mode `600`: 05:18 by hand, 05:22 from cron, 06:32 as the
+  pre-migration snapshot for the `0013` deploy (58,645 bytes each, schema `0012`), and
+  06:48 after it — 67,505 bytes, **17 tables, schema `0013`**, drilled the moment it was
+  written.
 
 Run end-to-end on 2026-09-24 against the development stack (Postgres 16, schema
 `0013`) before any of that, which is where the bugs below were found:
@@ -1205,10 +1234,11 @@ Run end-to-end on 2026-09-24 against the development stack (Postgres 16, schema
 **Not verified:**
 
 - **`BACKUP_REMOTE` is unconfigured, and that is now the only gap that matters.**
-  Every dump — including the two on the host today — is on the same disk as the
-  database it came from. It needs a destination decision (`rclone` is not installed
-  on the host yet either), and until it has one, "we have backups" is a statement about
-  a bad migration, not about the disk.
+  `rclone` v1.60.1 is installed on the host, but there is no remote and no bucket, so
+  every dump — all four on the host so far — is on the same disk as the database it came
+  from. Until a destination exists, "we have backups" is a statement about a bad
+  migration, not about the disk. This is a decision and a credential, not code: the
+  script already takes `BACKUP_REMOTE`, and the recipe above is written out.
 - **The 02:15 schedule has not fired yet.** What was proven is the command line with
   cron's environment, at 05:22; the time itself is a line in a file until tomorrow
   morning. Check `/var/log/chmabapay-backup.log` after 02:15 UTC.
