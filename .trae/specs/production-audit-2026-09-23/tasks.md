@@ -1462,3 +1462,58 @@ groups was reachable with an API key.
 - **Note**: the alert-path test sent real messages to the operator Telegram chat, which is
   shared with the application's own alerts.
 
+### OP-05 — The signed webhook had never actually been received
+- **Status**: `complete` · **Found**: 2026-09-24, finishing the live-money work · **Not
+  previously numbered, because a claim in the docs said it was already done**
+- **Problem**: `docs/deploy.md` §12 described `webhook_endpoints.id = 1` as "left over from
+  the signed-delivery verification", which reads as a completed check. It was not one. The
+  endpoint URL was `http://host.docker.internal:9000/hook`, and on this workstation that name
+  resolves to **`192.168.100.221`** while the machine itself is **`192.168.100.222`**. The
+  development API runs natively, not in Docker, so nothing it sent could ever have reached a
+  sink here: delivery rows 3–6 had burned all 8 attempts, `last_error` empty because a
+  connection that is refused by *another host* reads as a network error with no message. So
+  the sending half of the webhook path was exercised and the **receiving** half — the part
+  an integrator has to implement — was never once proven. This is the failure mode worth
+  remembering: the name resolved, it just resolved to somebody else's machine, so the
+  endpoint looked healthy while every event disappeared.
+- **Shipped**: nothing. Repointing one dev row and running the verification the docs claimed.
+- **Verified (2026-09-24, development stack, schema `0013`)**: delivery 8 —
+  `payment.completed` for the real 0.10 USD payment `wpQNKWbsPXXhk09AoT0g-vBf` — reached a
+  local sink on `127.0.0.1:9000` and moved to `success`, HTTP `200`, on attempt 6. Delivery 7
+  (`payment.expired`) followed it to `success` on **attempt 8 of a ceiling of 8**: it only
+  landed because the endpoint was repointed that same hour, and would otherwise have been
+  marked `failed` permanently. **14 signed deliveries** were captured with their bodies
+  base64-encoded so the exact bytes survived, and every one verified:
+  - `verify_signature(raw_bytes, secret, header)` → **True 14/14**;
+  - `sign_payload(raw_bytes, secret, t)` reproduced the `v1` in the header — so the header is
+    not merely accepted, it is reproducible from the bytes;
+  - the same call against a **pretty-printed re-dump** of the parsed body → **False 0/14**.
+    That is the integrator's trap, stated as an executable check: the signature is over the
+    bytes as sent, and `json.dumps(json.loads(body), indent=2)` is a different string. Parse
+    only after verifying.
+- **A second trap, this one about retries**: across every retry of the same event the body was
+  **byte-identical** — one distinct SHA-256 per event, `432aac3a4e48b548…` for the
+  `payment.completed` one throughout — while `t` advanced each retry and therefore `v1`
+  changed with it. So an integrator may dedup on the envelope's `id` (the `event_id`) and
+  **must not** dedup on `t` or on the signature. Retries re-send the same event, and a
+  receiver that treats a new `t` as a new event double-counts a sale. With one live payment
+  there was nothing to double-count; with merchant #1's money there is.
+- **Payload shape, confirmed on the wire**: two events arrived, and the envelope's `financial`
+  flag separated them exactly as intended — `payment.completed` carried `financial: true` with
+  `data.payment` holding `id`, `status: paid`, `amount: "0.10"` as a **string**, `currency`,
+  `approved_at`, `created_at`, `settled_late: false`, plus `data.store` and
+  `data.merchant.external_id`; `payment.expired` carried `financial: false`. So an integrator
+  can filter reconciliation on `financial` rather than on a list of event names. 644 bytes,
+  `Content-Type: application/json`, `User-Agent: ChmabaPay-Webhook/1.0`.
+- **Found while doing it**: `PATCH /v1/webhooks/1` through the landing dev server's rewrite
+  returned **`HTTP 000`** with nothing at all in the API log — the request never left Next.
+  Worth knowing before blaming the API for a dev-server failure; the repoint was done at the
+  database. Reaching the sink from the worker only works because the API is native; if it is
+  ever run in a container again, this endpoint must go back to a host-reachable name **and
+  that name must be checked on the machine in question**.
+- **Docs corrected**: `docs/deploy.md` §12 now states the current URL, records
+  `host.docker.internal` as never having delivered here and why, and gives the corrected
+  `UPDATE … WHERE url LIKE 'http://127.0.0.1:9000%'`. The claim that two successful
+  `event_deliveries` rows were evidence of a working signature was replaced — successful
+  rows now exist, but the evidence is the byte-level verification above, not a row count.
+

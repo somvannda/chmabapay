@@ -719,17 +719,25 @@ it is worth knowing what is *not* there: no accounts, no stores, no API keys, no
 webhook endpoints, and no payments.
 
 In particular, the development database has a webhook endpoint at
-`http://host.docker.internal:9000/hook` (`webhook_endpoints.id = 1`, left over from
-the signed-delivery verification). Nothing listens there. Production will not have
-it, so nothing needs cleaning for launch. If you keep testing against ABA on the
-development stack, disable it so the deliveries stop failing:
+`http://127.0.0.1:9000/hook` (`webhook_endpoints.id = 1`, left over from the
+signed-delivery verification). It read `http://host.docker.internal:9000/hook` until
+2026-09-24 and had **never once delivered**: on this workstation that name resolves
+to `192.168.100.221`, while the machine itself is `192.168.100.222`. The name is a
+Docker Desktop fixture and the development API runs natively, so no sink here could
+ever have received it. Note the failure mode — the name *resolved*, it just resolved
+to somebody else's host, so the endpoint looked healthy and the deliveries simply
+never arrived. Distrust it on any machine you have not checked.
+
+Nothing listens on 9000 unless the sink is running. Production will not have this
+endpoint, so nothing needs cleaning for launch. If you keep testing against ABA on
+the development stack, disable it so the deliveries stop failing:
 
 ```sql
-UPDATE webhook_endpoints SET status = 'disabled' WHERE url LIKE 'http://host.docker.internal%';
+UPDATE webhook_endpoints SET status = 'disabled' WHERE url LIKE 'http://127.0.0.1:9000%';
 ```
 
 `disabled` rather than `DELETE`: the fan-out only targets `status = 'active'`
-endpoints, so this stops the deliveries, and it keeps the two successful
+endpoints, so this stops the deliveries, and it keeps the successful
 `event_deliveries` rows that are the evidence the signed webhook actually landed.
 Deleting the endpoint would take those with it.
 
