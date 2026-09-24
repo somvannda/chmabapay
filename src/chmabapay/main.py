@@ -38,6 +38,7 @@ from .routers import (
     payments,
     reports,
     stores,
+    support,
     transactions,
     webhooks,
 )
@@ -252,6 +253,7 @@ def create_app() -> FastAPI:
     app.include_router(account.router)
     app.include_router(keys.router)
     app.include_router(webhooks.router)
+    app.include_router(support.router)
     app.include_router(billing.router)
     app.include_router(admin.router)
     app.include_router(reports.router)

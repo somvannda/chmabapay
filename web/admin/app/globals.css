@@ -1364,302 +1364,6 @@ body {
   color: #92939d;
 }
 
-.docs-hero {
-  padding-top: 88px;
-  padding-bottom: 64px;
-}
-
-.docs-hero-copy {
-  margin: 20px 0 0;
-  max-width: 640px;
-  font-size: 16px;
-  line-height: 28px;
-  color: var(--muted);
-}
-
-.docs-hero-actions {
-  margin-top: 28px;
-  gap: 12px;
-}
-
-.docs-quick-box {
-  margin-top: 40px;
-  display: grid;
-  gap: 20px 28px;
-  grid-template-columns: max-content minmax(0, 1fr);
-  align-items: center;
-  padding: 24px;
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  background: #ffffff;
-}
-
-.docs-quick-label {
-  font-size: 11px;
-  line-height: 1;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.docs-quick-label-auth {
-  grid-row: 2;
-}
-
-.docs-quick-value {
-  display: inline-flex;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: #111217;
-  color: #ffffff;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
-.docs-section-head {
-  max-width: 620px;
-}
-
-.docs-endpoint-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
-  margin-top: 48px;
-}
-
-.docs-endpoint-card {
-  padding: 24px;
-  border: 1px solid #e9e9ef;
-  border-radius: 16px;
-  background: #ffffff;
-}
-
-.docs-endpoint-head {
-  padding-bottom: 16px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid #f1f1f5;
-}
-
-.docs-endpoint-title {
-  margin: 0;
-  font-size: 16px;
-  line-height: 1.25;
-  font-weight: 800;
-  letter-spacing: -0.025em;
-  color: var(--ink);
-}
-
-.docs-endpoint-summary {
-  margin: 8px 0 0;
-  max-width: 540px;
-  font-size: 13px;
-  line-height: 1.75;
-  color: var(--muted);
-}
-
-.docs-endpoint-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 10px;
-}
-
-.docs-endpoint-row {
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  column-gap: 12px;
-  row-gap: 4px;
-  align-items: start;
-}
-
-.docs-method {
-  grid-row: 1 / span 2;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 28px;
-  border-radius: 8px;
-  font-size: 10px;
-  line-height: 1;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.docs-method-GET {
-  background: #eaf6ef;
-  color: #2f7d4b;
-}
-
-.docs-method-POST {
-  background: #efefff;
-  color: #5b45d6;
-}
-
-.docs-method-DELETE {
-  background: #fdecec;
-  color: #a13c3c;
-}
-
-.docs-method-PUT {
-  background: #fff8e6;
-  color: #9a6b08;
-}
-
-.docs-method-PATCH {
-  background: #eaf2ff;
-  color: #1e56a8;
-}
-
-.docs-label {
-  margin: 0;
-  color: var(--ink);
-  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
-}
-
-.docs-path {
-  grid-column: 2;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--ink);
-  background: #f7f7fb;
-  padding: 6px 8px;
-  border-radius: 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.docs-description {
-  grid-column: 2;
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--muted);
-}
-
-.docs-signature-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
-  gap: 32px;
-  align-items: start;
-}
-
-.docs-signature-list {
-  margin: 20px 0 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 10px;
-}
-
-.docs-signature-list li {
-  position: relative;
-  padding-left: 24px;
-  font-size: 14px;
-  line-height: 24px;
-  color: #555663;
-}
-
-.docs-signature-list li::before {
-  content: "";
-  position: absolute;
-  top: 10px;
-  left: 4px;
-  width: 12px;
-  height: 2px;
-  background: var(--violet);
-}
-
-.docs-signature-panel {
-  border-radius: 20px;
-  border: 1px solid var(--border);
-  background: #0f1015;
-  padding: 18px 18px 20px;
-}
-
-.docs-signature-panel-head {
-  display: inline-flex;
-  align-items: center;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 9999px;
-  background: #1c1e27;
-  color: #b0b2bf;
-  font-size: 10px;
-  line-height: 1;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  margin-bottom: 12px;
-}
-
-.docs-signature-code {
-  margin: 0 0 12px;
-  padding: 14px 14px 16px;
-  border-radius: 12px;
-  background: #111217;
-  color: #e9e9f2;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.7;
-  overflow: auto;
-}
-
-.docs-signature-code:last-child {
-  margin-bottom: 0;
-}
-
-.docs-cta-card {
-  max-width: 920px;
-  margin: 0 auto;
-}
-
-@media (max-width: 1024px) {
-  .docs-endpoint-grid,
-  .docs-signature-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .docs-quick-box {
-    grid-template-columns: 1fr;
-  }
-
-  .docs-quick-label-auth {
-    grid-row: auto;
-  }
-}
-
-@media (max-width: 768px) {
-  .docs-endpoint-grid {
-    margin-top: 36px;
-  }
-
-  .docs-endpoint-row {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto;
-  }
-
-  .docs-method {
-    grid-row: auto;
-    width: fit-content;
-  }
-
-  .docs-path,
-  .docs-description {
-    grid-column: 1;
-  }
-}
-
 @media (min-width: 1024px) {
   section#product {
     box-sizing: border-box;
@@ -1826,111 +1530,6 @@ body {
   }
 }
 
-/* API Docs — Quick Start panels */
-.docs-qs-section {
-  width: 100%;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 80px 24px;
-}
-
-.docs-qs-section .section-heading {
-  font-size: 36px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  margin-bottom: 8px;
-}
-
-.docs-qs-section .section-subheading {
-  font-size: 16px;
-  color: var(--landing-text-muted);
-  line-height: 1.6;
-  margin-bottom: 48px;
-  max-width: 720px;
-}
-
-.docs-qs-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 24px;
-}
-
-@media (min-width: 900px) {
-  .docs-qs-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-@media (min-width: 1200px) {
-  .docs-qs-grid {
-    grid-template-columns: 1fr 1fr;
-    column-gap: 32px;
-    row-gap: 28px;
-  }
-}
-
-.docs-qs-block {
-  background: #0c0d10;
-  border: 1px solid var(--landing-border);
-  border-radius: 12px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.docs-qs-block .docs-signature-panel-head {
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--landing-border);
-  background: linear-gradient(180deg, rgba(105,87,245,0.08) 0%, transparent 100%);
-}
-
-.docs-qs-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  background: var(--landing-accent);
-  color: #ffffff;
-  font-size: 13px;
-  font-weight: 600;
-  margin-right: 12px;
-  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
-}
-
-.docs-qs-title {
-  display: inline-block;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  vertical-align: middle;
-}
-
-.docs-qs-code {
-  margin: 0;
-  padding: 20px;
-  overflow-x: auto;
-  font-size: 13px;
-  line-height: 1.65;
-  min-height: 220px;
-  max-height: 420px;
-}
-
-.docs-qs-code code.bash,
-.docs-qs-code code.javascript {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  color: #e2e4e8;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* Color palette accents for quick start (match violet #6957F5 accent system) */
-.docs-qs-code code.bash::selection,
-.docs-qs-code code.javascript::selection {
-  background: rgba(105,87,245,0.3);
-}
-
 /* ==========================================================
    Dashboard user portal (BRD §7 — post-login redirect target)
    ========================================================== */
@@ -2057,6 +1656,9 @@ body {
 .dash-signout-form { margin: 0; }
 .dash-signout-btn {
   all: unset;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   box-sizing: border-box;
   display: block;
   width: 100%;
@@ -2661,6 +2263,9 @@ body {
 }
 .dash-modal-close {
   all: unset;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   width: 32px;
   height: 32px;
   display: inline-flex;
@@ -2671,6 +2276,7 @@ body {
   color: #64748b;
   font-size: 18px;
   box-sizing: border-box;
+  background: transparent;
 }
 .dash-modal-close:hover {
   background: #f3f1fb;
@@ -2732,25 +2338,39 @@ body {
   display: flex;
   gap: 2px;
   padding: 4px;
-  background: #f3f2f8;
+  background: #f0eff6;
   border-radius: 12px;
   width: fit-content;
   margin-bottom: 20px;
+  border: 1px solid #e8e7f0;
 }
 .dash-tab {
   all: unset;
-  padding: 8px 16px;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
+  background: transparent;
+  padding: 7px 18px;
   border-radius: 9px;
   font-size: 13px;
   font-weight: 600;
-  color: #475569;
+  color: var(--muted);
   cursor: pointer;
   box-sizing: border-box;
+  line-height: 1.3;
+  transition: color 0.12s ease;
+  white-space: nowrap;
+}
+.dash-tab:hover:not(.dash-tab-active) {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 9px;
 }
 .dash-tab-active {
   background: #fff;
   color: var(--violet);
-  box-shadow: 0 2px 6px -2px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 1px 4px -1px rgba(15, 23, 42, 0.10), 0 0 0 1px rgba(105, 87, 245, 0.12);
+  font-weight: 700;
 }
 .dash-toast-container {
   position: fixed;
@@ -3313,9 +2933,8 @@ body.dash-hide-landing-chrome > .landing-footer {
 }
 
 .dash-tab-active {
-  border: 1px solid #d4ccff !important;
-  font-weight: 700 !important;
-  box-shadow: 0 2px 8px -2px rgba(105, 87, 245, 0.25) !important;
+  box-shadow: 0 1px 4px -1px rgba(15, 23, 42, 0.10), 0 0 0 1px rgba(105, 87, 245, 0.12);
+  font-weight: 700;
 }
 
 .dash-btn {
@@ -3647,16 +3266,20 @@ body.dash-path-dashboard > .landing-footer {
 .cp-menu { position: relative; }
 .cp-menu-btn {
   all: unset;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-1);
-  padding: 2px var(--sp-2) 2px 2px;
+  gap: var(--sp-2);
+  padding: 3px var(--sp-2) 3px 3px;
   border: 1px solid var(--line);
   border-radius: var(--r-pill);
   background: var(--surface-card);
   cursor: pointer;
   box-sizing: border-box;
   margin-left: var(--sp-1);
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
 .cp-menu-btn:hover {
   border-color: #d8d6e6;
@@ -3733,6 +3356,9 @@ body.dash-path-dashboard > .landing-footer {
 }
 .cp-menu-item {
   all: unset;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   display: block;
   width: 100%;
   box-sizing: border-box;
@@ -3744,6 +3370,7 @@ body.dash-path-dashboard > .landing-footer {
   cursor: pointer;
   text-align: left;
   font-family: inherit;
+  background: transparent;
 }
 .cp-menu-item:hover {
   background: #f6f6f9;
@@ -3827,6 +3454,9 @@ body.dash-path-dashboard > .landing-footer {
 .cp-switcher { position: relative; }
 .cp-switcher-btn {
   all: unset;
+  -webkit-appearance: none;
+  appearance: none;
+  forced-color-adjust: none;
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
@@ -4263,6 +3893,10 @@ body.dash-path-dashboard > .landing-footer {
   font-size: var(--fs-14);
   padding: var(--sp-2) var(--sp-4);
   border-radius: var(--r-xs);
+  /* Explicit appearance reset to match the base definition above. */
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
 }
 
 /* Modals */
@@ -4645,7 +4279,7 @@ body.dash-path-dashboard > .landing-footer {
 
 /* Brand-token cleanups for shared control + status colours */
 .dash-btn-secondary { color: var(--ink); }
-.dash-tab { color: var(--ink-2); }
+.dash-tab { color: var(--muted); }
 .dash-pill-pending {
   background: var(--line-soft);
   color: var(--ink-2);
@@ -4766,4 +4400,80 @@ body.dash-path-dashboard > .landing-footer {
   font-size: var(--fs-13);
   line-height: var(--lh-snug);
   color: var(--ink-2);
+}
+
+/* Support queue: the first-response breach is the one thing on this screen an
+   operator must not miss, so it is carried by words — a flag that names it and a
+   banner that repeats it — with the row tint only reinforcing what the text
+   already says. Colour is not available to everyone, so it is never the only
+   signal. */
+.dash-table tbody tr.is-breach {
+  background: #fef2f2;
+  box-shadow: inset 3px 0 0 #dc2626;
+}
+.dash-table tbody tr.is-breach:hover { background: #fee2e2; }
+.dash-breach-flag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: var(--r-xs);
+  background: #dc2626;
+  color: #ffffff;
+  font-size: var(--fs-12);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.dash-breach {
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-left: 4px solid #dc2626;
+  color: #991b1b;
+  font-size: var(--fs-14);
+  line-height: var(--lh-body);
+}
+.dash-breach strong { font-weight: 800; }
+
+/* Support thread: merchant and operator messages are told apart by a labelled
+   header, not by alignment or colour alone. */
+.dash-thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.dash-thread-msg {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface-card);
+}
+.dash-thread-msg.is-operator {
+  background: var(--violet-soft);
+  border-color: #ddd6fe;
+}
+.dash-thread-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.dash-thread-author {
+  font-size: var(--fs-12);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.dash-thread-msg.is-operator .dash-thread-author { color: var(--violet); }
+.dash-thread-time { font-size: var(--fs-12); color: var(--muted); }
+.dash-thread-body {
+  font-size: var(--fs-14);
+  line-height: var(--lh-body);
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
 }

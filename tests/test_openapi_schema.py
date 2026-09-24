@@ -76,6 +76,67 @@ INTERNAL_PATHS = (
     "/health",
 )
 
+# Mounted, credentialed, and deliberately **not** advertised on the API page
+# (decision D-3, 2026-09-23). These were published until this date, under a
+# "Not available" badge whose own copy said to use something else:
+#
+#   * the Bakong ledger lookups answer `503 bakong_not_configured` in a deployment
+#     with no platform Bakong credentials, which is the production configuration;
+#   * `POST /v1/khqr/from-link` returns a code ABA has no record of, so nothing can
+#     settle it, and `POST /v1/khqr/probe-aba-status` is explicitly advisory and can
+#     be wrong in either direction.
+#
+# They are not disabled — an integrator who has already built against them keeps
+# working — but a reference that lists unusable endpoints as integration surface is
+# worse than one that omits them. Named here so the omission stays a decision.
+UNDOCUMENTED_PATHS = (
+    "/v1/khqr/from-link",
+    "/v1/khqr/probe-aba-status",
+    "/v1/transactions/search",
+    "/v1/transactions/poll",
+    "/v1/transactions/bulk",
+    "/v1/transactions/verify-receipt",
+    "/v1/transactions/md5/{md5_value}",
+    "/v1/transactions/hash/{hash_value}",
+    "/v1/transactions/short-hash/{short_hash}",
+    "/v1/transactions/instruction-ref/{ref}",
+    "/v1/transactions/external-ref/{ref}",
+    "/v1/transactions/token/renew",
+)
+
+# The dashboard's own surface (decision D-7, 2026-09-23). Session-cookie only, and not
+# something an integrator calls with an API key: key management is where a credential is
+# issued or destroyed, billing is how the platform charges the merchant, and the account
+# routes are the profile. They were published on the API page until this date, which told
+# integrators about a surface they cannot reach with the credential they were given.
+#
+# They are mounted and working — the dashboard depends on every one of them — and they are
+# documented in `docs/api.md` for our own use. Named here so the omission stays a decision.
+DASHBOARD_PATHS = (
+    "/v1/keys",
+    "/v1/keys/{key_id}/revoke",
+    "/v1/keys/{key_id}/rotate",
+    "/v1/billing/plans",
+    "/v1/billing/subscription",
+    "/v1/billing/change-plan",
+    "/v1/billing/invoices",
+    "/v1/billing/notices",
+    "/v1/billing/invoices/{invoice_id}/khqr",
+    "/v1/me",
+    "/v1/account",
+    "/v1/me/email",
+    "/v1/me/password",
+    "/v1/me/terms",
+    # Support is the dashboard's own surface too (decision D-7, F-03): a merchant opens
+    # and reads their threads from `/dashboard/support`, not with an API key from an
+    # integration, so it is withheld from the public reference for the same reason as the
+    # keys, billing and account routes above.
+    "/v1/support/requests",
+    "/v1/support/requests/{public_id}",
+    "/v1/support/requests/{public_id}/reply",
+    "/v1/support/requests/{public_id}/close",
+)
+
 
 def _normalize_path(path: str) -> str:
     """`/v1/billing/invoices/{invoice_id}/khqr` and `{id}` are the same route."""
@@ -205,31 +266,57 @@ def test_every_published_path_is_documented_or_declared_internal(
     and `{id}` are the same route, so parameter names are normalized away.
     """
     documented = {path for _, path in _documented_operations()}
-    internal = {_normalize_path(path) for path in INTERNAL_PATHS}
+    withheld = {
+        _normalize_path(path)
+        for path in INTERNAL_PATHS + UNDOCUMENTED_PATHS + DASHBOARD_PATHS
+    }
     published = {_normalize_path(path) for path in schema["paths"]}
 
-    undocumented = sorted(published - documented - internal)
+    undocumented = sorted(published - documented - withheld)
     assert undocumented == [], (
-        f"published but neither documented nor declared internal: {undocumented}"
+        "published but neither documented nor declared internal/withheld: "
+        f"{undocumented}"
     )
 
 
 def test_the_previously_omitted_endpoints_are_on_the_docs_page() -> None:
-    """The five routes that existed in the schema and in neither document."""
+    """The routes that existed in the schema and in neither document.
+
+    Three have left `required` since, for the same reason: they are now deliberately
+    withheld rather than previously forgotten. `POST /v1/transactions/token/renew` went
+    with the Bakong ledger group (D-3), and `PATCH /v1/account`, `POST /v1/me/password`
+    and `DELETE /v1/me` went with the dashboard surface (D-7). What remains is the one the
+    test was really written to protect: a route a caller can use that no document
+    describes.
+    """
     operations = _documented_operations()
-    required = (
-        ("PUT", "/v1/stores/{public_id}"),
-        ("PATCH", "/v1/account"),
-        ("POST", "/v1/me/password"),
-        ("DELETE", "/v1/me"),
-        ("POST", "/v1/transactions/token/renew"),
-    )
+    required = (("PUT", "/v1/stores/{public_id}"),)
     missing = [
         f"{method} {path}"
         for method, path in required
         if (method, _normalize_path(path)) not in operations
     ]
     assert missing == [], f"missing from the docs page: {missing}"
+
+
+def test_the_docs_page_documents_no_route_that_does_not_exist(
+    schema: dict[str, Any],
+) -> None:
+    """The other direction from the test above, and the one nothing checked.
+
+    A documented route that is not in the schema is a reader's first `404` with no
+    explanation — they copied it from the reference. The page is hand-written, so this
+    is the assertion that notices a rename or a deletion on the API side.
+    """
+    documented = _documented_operations()
+    published = {
+        (method.upper(), _normalize_path(path))
+        for path, method, _ in _operations(schema)
+    }
+
+    assert published, "expected the schema to describe the API"
+    invented = sorted(f"{method} {path}" for method, path in documented - published)
+    assert invented == [], f"documented but not served: {invented}"
 
 
 def _api_doc_text() -> str:

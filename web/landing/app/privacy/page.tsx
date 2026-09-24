@@ -6,14 +6,10 @@ import type { Metadata } from "next";
  * The data inventory below is written from the schema in
  * `src/chmabapay/models.py` and the behaviour of the retention sweep in
  * `src/chmabapay/services/retention.py`, not from a template. If a column is
- * added, removed, or starts being purged, this page is part of that change.
- *
- * The draft banner worked the same way as on /terms: it was the flag that this text
- * had not been reviewed, and removing it was meant to be the deliberate act that
- * says review happened. It was removed on 2026-09-18 by a product decision to open
- * the service to real merchant traffic — **not** because the text was reviewed, which
- * is still outstanding (`P1-4` in `docs/production-readiness.md`). The absence of the
- * banner is not approval.
+ * added, removed, or starts being purged, this page is part of that change — and
+ * the same applies to the processor list in section 5: a new third party that
+ * receives personal data belongs there in the same change that starts sending to
+ * it.
  */
 export const metadata: Metadata = {
   title: "Privacy Policy — ChmabaPay",
@@ -53,7 +49,7 @@ export default function PrivacyPage() {
             the software really does rather than what a policy template assumes.
           </p>
           <div className="legal-meta">
-            Version 2 · Last updated 21 September 2026
+            Version 3 · Last updated 23 September 2026
           </div>
 
           <div className="legal-body">
@@ -62,7 +58,7 @@ export default function PrivacyPage() {
               <p>
                 Chmaba operates ChmabaPay, a payment status platform for KHQR,
                 Bakong and ABA PayWay. Our registered address is #62, Street P-10D,
-                Sangkat Veal Sbov, Khan Chmbar Ampov, Phnom Penh, Cambodia. We are
+                Sangkat Veal Sbov, Khan Chbar Ampov, Phnom Penh, Cambodia. We are
                 not a bank or a payment service provider: money moves directly
                 between the payer and the merchant, and never through us. We
                 therefore hold no balances, and we hold no card, bank account or
@@ -173,6 +169,26 @@ export default function PrivacyPage() {
                 </li>
               </ul>
 
+              <h3>About support requests</h3>
+              <ul>
+                <li>
+                  the subject and category you choose, and every message on the
+                  thread — your words and ours. Support threads are read by our
+                  operators to answer you; they are not used for advertising, not
+                  profiled, and not shared beyond the delivery and hosting providers
+                  in section 5;
+                </li>
+                <li>
+                  the thread&apos;s administrative record: its status, the priority
+                  your plan gives it, who it is assigned to, and when it was first
+                  answered and resolved;
+                </li>
+                <li>
+                  the message that notifies you of a reply, which is sent through the
+                  email processor in section 5.
+                </li>
+              </ul>
+
               <h3>About actions taken in your account</h3>
               <ul>
                 <li>
@@ -266,6 +282,12 @@ export default function PrivacyPage() {
                 <li>
                   <strong>Telegram</strong> — only if you enable store alerts, and
                   only to deliver the alert you configured;
+                </li>
+                <li>
+                  <strong>Resend</strong> — delivers the platform&apos;s own
+                  transactional email to you, such as plan-invoice and
+                  payment-reminder notices. It therefore handles your email address
+                  and the contents of that message;
                 </li>
                 <li>
                   <strong>Our hosting and database providers</strong> — who store

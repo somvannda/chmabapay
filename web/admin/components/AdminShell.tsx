@@ -75,6 +75,17 @@ const I = {
       <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.7 8.9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
     </>
   ),
+  health: (
+    <>
+      <path d="M3 12h3.5l2-5 3 10 2.5-5H21" />
+    </>
+  ),
+  support: (
+    <>
+      <path d="M4 5h16v10H8l-4 3.5V5Z" />
+      <path d="M8 9.5h8" />
+    </>
+  ),
 } as const;
 
 const NAV_GROUP: { label: string; items: NavItem[] } = {
@@ -89,9 +100,11 @@ const NAV_GROUP: { label: string; items: NavItem[] } = {
       label: "Deliveries",
       icon: I.deliveries,
     },
+    { key: "support", href: "/support", label: "Support", icon: I.support },
     { key: "plans", href: "/plans", label: "Plans", icon: I.plans },
     { key: "invoices", href: "/invoices", label: "Invoices", icon: I.invoices },
     { key: "audit", href: "/audit", label: "Audit trail", icon: I.audit },
+    { key: "health", href: "/health", label: "Health", icon: I.health },
     { key: "settings", href: "/settings", label: "Settings", icon: I.settings },
   ],
 };
@@ -101,9 +114,11 @@ const SECTION_LABELS: Record<string, string> = {
   accounts: "Accounts",
   payments: "Payments",
   deliveries: "Deliveries",
+  support: "Support",
   plans: "Plans",
   invoices: "Invoices",
   audit: "Audit trail",
+  health: "Health",
   settings: "Settings",
 };
 
@@ -337,8 +352,18 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             </nav>
 
             <div className="cp-topbar-actions">
-              <a className="cp-toplink" href="/openapi.json">
-                OpenAPI
+              {/* The public schema, not the console's own. `routers/admin.py` sets
+                  `include_in_schema=False`, so `/openapi.json` documents no admin route;
+                  labelled "OpenAPI" from inside the console it read as this console's
+                  contract and answered a question the operator was not asking. */}
+              <a
+                className="cp-toplink"
+                href="/openapi.json"
+                target="_blank"
+                rel="noreferrer"
+                title="The merchant-facing API schema. Console routes are not published."
+              >
+                Merchant API schema
               </a>
               <div className="cp-menu" ref={menuRef}>
                 <button

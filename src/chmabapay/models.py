@@ -93,6 +93,41 @@ DELIVERY_RETRYING = "retrying"
 DELIVERY_SUCCESS = "success"
 DELIVERY_FAILED = "failed"
 
+# Support tickets (decision D-4). Three states, not four: `resolved` is what both
+# "an operator answered it" and "the merchant closed it" end up as, because from the
+# platform's side they are the same fact — nothing further is owed on this thread.
+# A separate `closed` alongside `resolved` would be two words for one state, which is
+# the mistake `billing.py` records having made with `draft`/`issued`.
+SUPPORT_OPEN = "open"
+SUPPORT_PENDING = "pending"
+SUPPORT_RESOLVED = "resolved"
+SUPPORT_STATUSES = (SUPPORT_OPEN, SUPPORT_PENDING, SUPPORT_RESOLVED)
+
+# Derived from the account's plan at open time, never set by hand — see
+# `services.support.priority_for_account`. This is the whole of what makes the Pro
+# "priority support" claim more than decoration.
+SUPPORT_PRIORITY_STANDARD = "standard"
+SUPPORT_PRIORITY_HIGH = "priority"
+SUPPORT_PRIORITIES = (SUPPORT_PRIORITY_STANDARD, SUPPORT_PRIORITY_HIGH)
+
+SUPPORT_AUTHOR_MERCHANT = "merchant"
+SUPPORT_AUTHOR_OPERATOR = "operator"
+
+# A closed set rather than free text: the operator queue filters on it, and a category
+# nobody can filter by is a field that gets filled with "other" forever.
+SUPPORT_CATEGORY_BILLING = "billing"
+SUPPORT_CATEGORY_PAYMENT = "payment"
+SUPPORT_CATEGORY_INTEGRATION = "integration"
+SUPPORT_CATEGORY_ACCOUNT = "account"
+SUPPORT_CATEGORY_OTHER = "other"
+SUPPORT_CATEGORIES = (
+    SUPPORT_CATEGORY_BILLING,
+    SUPPORT_CATEGORY_PAYMENT,
+    SUPPORT_CATEGORY_INTEGRATION,
+    SUPPORT_CATEGORY_ACCOUNT,
+    SUPPORT_CATEGORY_OTHER,
+)
+
 
 class Account(Base):
     __tablename__ = "accounts"
@@ -477,4 +512,65 @@ class AuditLog(Base):
     target_type: Mapped[str] = mapped_column(String(32), nullable=False)
     target_id: Mapped[int] = mapped_column(Integer, nullable=False)
     details: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SupportRequest(Base):
+    """A merchant's support thread header, and what the operator queue sorts on.
+
+    `priority` is copied from the account's plan at open time rather than read live,
+    so a request keeps the promise made when it was opened: an account that downgrades
+    next month does not retroactively lose the queue position it was given, and one
+    that upgrades does not jump ahead of requests that arrived before it paid.
+    """
+
+    __tablename__ = "support_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    public_id: Mapped[str] = mapped_column(String(40), unique=True, nullable=False, index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), nullable=False, index=True)
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    category: Mapped[str] = mapped_column(
+        String(32), default=SUPPORT_CATEGORY_OTHER, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default=SUPPORT_OPEN, index=True)
+    priority: Mapped[str] = mapped_column(
+        String(16), default=SUPPORT_PRIORITY_STANDARD, index=True
+    )
+    assigned_admin_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id"), nullable=True, index=True
+    )
+    # Written once, by the first *operator* reply, and never moved afterwards — see
+    # `services.support.record_operator_reply`. A merchant's own reply must not count:
+    # the target is a promise about how long the platform takes to answer, so starting
+    # the clock on the merchant's own message would let the platform mark its own
+    # homework.
+    first_response_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class SupportMessage(Base):
+    """One message in a thread. The opening message is stored as message #1.
+
+    The first message is a row like any other rather than a `body` column on the
+    request, so the thread has one order and one shape: reading a request is reading
+    its messages, and nothing has to special-case "the subject's text".
+    """
+
+    __tablename__ = "support_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    request_id: Mapped[int] = mapped_column(
+        ForeignKey("support_requests.id"), nullable=False, index=True
+    )
+    # The operator is an account too (a platform admin), so one column holds both
+    # sides and `author_kind` says which. Two nullable columns would make "who wrote
+    # this" a pair of columns that can both be null, or both be set.
+    author_account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), nullable=False)
+    author_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

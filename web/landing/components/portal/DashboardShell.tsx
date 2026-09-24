@@ -86,6 +86,13 @@ const I = {
       <path d="M12 17h.01" />
     </>
   ),
+  support: (
+    <>
+      <path d="M20.5 11.5a8.5 8.5 0 0 1-11.9 7.9L3.5 20.5l1.1-5.1A8.5 8.5 0 1 1 20.5 11.5Z" />
+      <path d="M8.5 10.5h7" />
+      <path d="M8.5 13.5h4.5" />
+    </>
+  ),
 } as const;
 
 const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
@@ -110,6 +117,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { key: "billing", href: "/dashboard/billing", label: "Billing", icon: I.billing },
       { key: "settings", href: "/dashboard/settings", label: "Settings", icon: I.settings },
+      { key: "support", href: "/dashboard/support", label: "Support", icon: I.support },
       { key: "help", href: "/dashboard/help", label: "Help", icon: I.help },
     ],
   },
@@ -123,6 +131,7 @@ const KNOWN_SECTIONS = new Set([
   "webhooks",
   "billing",
   "settings",
+  "support",
   "help",
 ]);
 
@@ -135,6 +144,7 @@ const SECTION_LABELS: Record<string, string> = {
   webhooks: "Webhooks",
   billing: "Billing",
   settings: "Settings",
+  support: "Support",
   help: "Help",
 };
 
@@ -387,6 +397,9 @@ export function DashboardShell({
                 >
                   <span className="cp-menu-avatar" aria-hidden="true">
                     {initials}
+                  </span>
+                  <span className="cp-menu-name" title={email || displayName}>
+                    {displayName}
                   </span>
                   <span className="cp-menu-chevron" aria-hidden="true">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
