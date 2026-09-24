@@ -346,6 +346,10 @@ docker compose up -d --build          # rebuild and recreate what changed
 docker compose exec proxy nginx -s reload   # only if you edited deploy/nginx/*
 ```
 
+**Before a deploy that carries a migration, take a backup and drill it — §14.** A
+migration that drops a column is the one deploy that redeploying the previous commit
+does not undo.
+
 The nginx config is bind-mounted. Compose does not recreate `proxy` when only the
 config file changes, so a config edit needs the reload (or a restart).
 
@@ -512,6 +516,10 @@ docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --
 From the repository root. Three files carry it: `deploy/docker-compose.prod.yml`,
 `deploy/nginx/nginx.prod.conf`, and `deploy/.env` (gitignored — it holds the JWT
 signing key and the database password).
+
+**Install the backup job before this stack carries a real payment — §14.** The
+production database is one Docker volume on one disk, and a `pg_dump` taken by hand
+before a migration is not a backup.
 
 **On this VPS it lives at `/opt/chmabapay`** — verified on the host, not assumed:
 
@@ -795,6 +803,10 @@ docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env exec -T 
 # PGDMP magic present, and 14 TABLE DATA entries listed by pg_restore -l
 ```
 
+That was hand-rolled, and hand-rolling it twice is what §14 exists to stop. The
+equivalent today is one command, `deploy/backup.sh` — which takes the same dump,
+verifies it the same way, and has a drill that proves it restores.
+
 Then `git pull --ff-only` and `up -d --build`. Verified afterwards, on the host:
 
 - `alembic current` → **`0008 (head)`**; 14 public tables, so the drops removed
@@ -960,3 +972,263 @@ One operational note for whoever rotates credentials: `deploy/.env` is the only 
 these three values live, and the monitoring service re-reads them on start. After
 changing the token, `docker compose ... --profile monitoring up -d --force-recreate
 prometheus` is enough — the rest of the stack does not need to move.
+
+## 14. Backups, and the restore that proves them
+
+Until this section existed, this stack had no backup. The only two dumps in the
+project's history were taken by hand, immediately before a destructive migration, and
+kept in `/root` — on the same disk as the database they came from. Everything that
+follows from losing `pgdata` — accounts, stores, API keys, and every payment the
+platform has ever seen — was, in the honest reading, uninsured.
+
+That matters more from launch than it did before it. A dump of a development database
+protects nothing anyone would miss. A dump of the first merchant's transaction history
+is the difference between a bad week and telling a customer their payments are gone.
+
+### The job
+
+`deploy/backup.sh`. POSIX `sh`, no dependencies beyond the Docker CLI already on the
+host, and nothing that needs a virtualenv or the repository's toolchain — because it
+runs from cron, where neither exists.
+
+| Command | What it does |
+|---|---|
+| `deploy/backup.sh` | take a backup, verify it, prune, copy off-host |
+| `deploy/backup.sh --drill` | restore the newest backup **twice** and compare it against the live database |
+| `deploy/backup.sh --restore FILE` | restore `FILE` over the live database, behind `I_MEAN_IT=yes` |
+
+One run, in order:
+
+1. `pg_dump -Fc` from the `db` container, written to a hidden `.incoming.$$` name and
+   renamed only after it verifies — so an interrupted run cannot leave a
+   plausible-looking zero-byte dump inside the rotation.
+2. Verified before publishing: the first five bytes must be the `PGDMP` magic,
+   `pg_restore -l` must be able to list it, and that listing must contain at least one
+   `TABLE DATA` entry. That is the difference between "a file exists" and "an archive
+   can be read", and only the second one is a backup.
+3. A `<dump>.meta` sidecar recording the Alembic revision, the timestamp and the table
+   count. The revision is the first question asked during a restore and it is not in
+   the archive's name.
+4. `deploy/.env` and `deploy/certs/` archived to `chmabapay-config-*.tar.gz`, mode
+   `600`. See "What the dump does not contain" below for why this is not an extra.
+5. Copied to `BACKUP_REMOTE` if that is set — **and loudly warned about if it is not**
+   — then pruned locally and remotely to `RETENTION_DAYS`.
+6. Non-zero exit on any failure, with an alert to the operator chat that reads
+   Telegram's response body rather than trusting the HTTP status.
+
+Configuration is entirely from the environment, so nothing needs editing on the host:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `COMPOSE_FILE` | `deploy/docker-compose.prod.yml` | which stack to dump |
+| `ENV_FILE` | `deploy/.env` | the compose env file, and where the Telegram credentials are read from |
+| `BACKUP_DIR` | `/var/backups/chmabapay` | created if absent |
+| `RETENTION_DAYS` | `14` | local and remote |
+| `BACKUP_REMOTE` | empty | an `rclone` destination, e.g. `r2:chmabapay-backups` |
+
+### Install it on the VPS
+
+```bash
+chmod +x deploy/backup.sh          # once, after the clone
+
+cat >/etc/cron.d/chmabapay-backup <<'EOF'
+# Daily ChmabaPay Postgres backup at 02:15 UTC (09:15 Phnom Penh).
+#
+# 02:15 rather than 03:00 on purpose: /etc/cron.d/chmabapos-backup dumps the POS
+# database at 03:00, and this host has one core. The two must not overlap.
+#
+# PATH is not optional. cron's PATH is nearly empty, docker is not on it, and the
+# script exits 1 with a named reason rather than half-running without it.
+15 2 * * * root PATH=/usr/local/bin:/usr/bin:/bin COMPOSE_FILE=/opt/chmabapay/deploy/docker-compose.prod.yml ENV_FILE=/opt/chmabapay/deploy/.env BACKUP_DIR=/var/backups/chmabapay /opt/chmabapay/deploy/backup.sh >>/var/log/chmabapay-backup.log 2>&1
+EOF
+```
+
+The commit has to carry the executable bit, or a deploy delivers a script cron cannot
+run — git records permissions from the index, not from the working tree:
+
+```bash
+git update-index --chmod=+x deploy/backup.sh
+```
+
+And because this script was installed by hand before it was in git, the **first**
+`git pull` on the host refuses to overwrite it:
+
+```
+error: The following untracked working tree files would be overwritten by merge:
+        deploy/backup.sh
+```
+
+`rm deploy/backup.sh` first and let the pull bring it back, then `chmod +x` again.
+(The content is identical either way — md5 `82333eade98846529a6378c093d3065d` on
+both sides — so nothing is lost; git is comparing paths, not contents.)
+
+Run as `root` because the database is reached through the Docker socket, which is
+root's. The log is one line a day, so it is not rotated — a year of it is a few
+kilobytes.
+
+**There is already a nightly backup on this host, and it is worth reading for what it
+does not do.** `/etc/cron.d/chmabapos-backup` runs `/opt/chmabapos/backup.sh` at 03:00
+UTC: 7-day retention, dumps to `/opt/chmabapos/backups/`, and sends its output to
+`/dev/null`. It works — there is a file per night for the last week. But its dumps are
+on the **same disk as its database**, and a night that fails leaves no trace anywhere.
+This job deliberately differs on both counts: the log is kept and a failure alerts the
+operator chat. The POS project is not this document's to change, and it is
+revenue-generating, so nothing here touches it — but the exposure is the same shape and
+worth a decision by whoever owns it.
+
+Then make the copy leave the machine, or say out loud that it has not:
+
+```bash
+rclone config     # or drop an existing config at /root/.config/rclone/rclone.conf
+# and add BACKUP_REMOTE=... to the cron line above
+```
+
+Until `BACKUP_REMOTE` is set, every night's dump is on the same disk as the database
+it came from. That survives a bad migration and a dropped table. It does not survive
+the disk.
+
+A destination holding this archive is a destination holding `deploy/.env`, which
+contains `JWT_SECRET_KEY`, `POSTGRES_PASSWORD` and the Bakong credentials. It has to
+be somewhere trusted, and `rclone` should be configured with a bucket-scoped
+credential rather than a whole-account one.
+
+### The drill is a ritual, not a cron job
+
+A dump that has never been restored is a file of unknown value. `--drill` restores the
+newest one into a database of its own and compares five row counts against the live
+database — but it is deliberately **not** scheduled, because on a host with one core
+and 1.9GB shared with a live POS stack a restore is the most expensive thing either
+project does. Run it by hand, watched:
+
+- after any change to `deploy/backup.sh`;
+- before any migration that drops or rewrites anything;
+- after any migration, when the point is to know the dump and the schema agree.
+
+It restores twice, and the second pass is the one worth having: restoring into an
+*empty* database and restoring *over a full one* are different paths in `pg_restore`,
+and only `--clean --if-exists` makes the second work. The drill runs that flag set
+against the drill database, which is the only place it can be run without risk. The
+drill database is dropped at the end; the live database is never written to.
+
+### Restoring for real
+
+```bash
+ls -lt /var/backups/chmabapay/*.meta          # pick a point in time
+I_MEAN_IT=yes deploy/backup.sh --restore /var/backups/chmabapay/chmabapay-<stamp>.dump
+```
+
+It stops `api` first so nothing writes mid-restore, uses `--clean --if-exists` because
+a restore into a populated database is the entire point, and starts `api` again after.
+Without `I_MEAN_IT=yes` it refuses and exits — and, deliberately, does not alert: an
+alert channel that also fires on a typo is one that gets muted, and then the real
+failure at 03:00 is muted too.
+
+Two things to know before you trust the result:
+
+- **The restore is only as good as the last dump.** `pg_dump` is a logical snapshot,
+  not WAL archiving. There is no point-in-time recovery here: the best case is
+  "yesterday's 02:15", and everything written since is gone. That is a real answer to
+  a real question and it should be given honestly when a merchant asks.
+- **The database is not the whole deployment.** A restore into a *new* host also needs
+  `deploy/.env` out of the config archive. Without the original `JWT_SECRET_KEY`, every
+  session and every API key in the restored database becomes unverifiable — the data
+  comes back and nobody can sign in to it.
+
+After a restore, verify rather than assume:
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env exec -T db \
+  psql -U chmaba -d chmabapay -c 'SELECT version_num FROM alembic_version'
+curl -fsS https://pay.chmaba.com/health
+```
+
+### What the dump does not contain
+
+- **The credentials.** `pg_dump` does not include `JWT_SECRET_KEY`,
+  `POSTGRES_PASSWORD` or the Bakong credentials. They exist only in `deploy/.env`, and
+  §13 already notes that these values have exactly one copy. That is why the config
+  archive is taken every run rather than being left to be remembered during an
+  incident.
+- **The WAL.** See above. No point-in-time recovery.
+- **`pgdata` itself.** Nothing here snapshots the volume. A logical dump of a few
+  tens of kilobytes is the right shape for a database this size; a host that grows
+  into tens of gigabytes should revisit that decision rather than assume it still
+  holds.
+- **The POS database.** `/opt/chmabapos` is a separate project with its own volume and
+  its own backups. This job neither reads nor protects it.
+
+### Verified, and not
+
+**Installed and verified on the real host** (2026-09-24), on `163.245.204.122`:
+
+- `deploy/backup.sh` sits at `/opt/chmabapay/deploy/backup.sh`, mode `755`, md5
+  `82333eade98846529a6378c093d3065d` — byte-identical to the repository copy.
+- The cron entry was **proven by letting it fire**, not by reasoning about PATH. A
+  temporary `22 5` line was installed, and at **05:22:02 UTC** cron produced a
+  **58,645-byte** dump with **15 tables with data at schema `0012`**, the config
+  archive, and the two `BACKUP_REMOTE is unset` warnings — all in
+  `/var/log/chmabapay-backup.log`. The entry then took its real 02:15 schedule.
+- `--drill` against the production cluster: restored the newest dump twice in **5.2s
+  wall clock** and reported **2 accounts, 1 store, 1 payment, 0 webhook endpoints,
+  1 schema revision** on both sides. `chmabapay_restore_drill` was dropped afterwards
+  and `SELECT datname FROM pg_database` lists only `chmabapay`, `postgres`,
+  `template0`, `template1`.
+- The live database was not written to: `alembic_version` still reads `0012` and the
+  counts read `2|1|1` when queried directly, independently of the script.
+- Available memory went from 915 MB to 930 MB across the drill, and the POS stack was
+  untouched — `deploy-front-1`, `deploy-api-1` and `deploy-db-1` all still up **2
+  weeks**, `chmabapay-prod-*` all healthy.
+- Two dumps are held: 05:18 by hand, 05:22 from cron, both 58,645 bytes.
+
+Run end-to-end on 2026-09-24 against the development stack (Postgres 16, schema
+`0013`) before any of that, which is where the bugs below were found:
+
+- a full run produced `chmabapay-<stamp>.dump` at **72,981 bytes, 17 tables with
+  data**, from a database of 9 accounts and 5 payments;
+- the `PGDMP` magic, the `pg_restore -l` listing and the `TABLE DATA` count all passed
+  on that dump, and each was observed being evaluated rather than assumed to pass;
+- the `.meta` sidecar read `alembic_revision=0013`, `taken_at=…`, `tables_with_data=17`;
+- the config archive listed `deploy/.env` and
+  `deploy/certs/{chmabapay.csr,fullchain.pem,privkey.pem}` — so `deploy/certs/` is
+  populated on the development machine and a private key does ride in that archive;
+- `--drill` restored the newest dump both ways and reported **9 accounts, 13 stores,
+  5 payments, 1 webhook endpoint, 1 schema revision** on both sides — a match;
+- the drill database was dropped afterwards and the live database was untouched;
+- `--restore` without `I_MEAN_IT=yes` refused and exited 1, an unknown argument exited
+  1, and neither alerted;
+- a deliberately broken run exited 1 and the alert **was delivered** — Telegram
+  answered `"ok":true`, so the operator chat is genuinely reachable from this code
+  path and not merely configured. That test sent real messages to the operator chat;
+  the channel is shared with the application's own alerts, so they arrived looking
+  like a genuine 09:15 failure and are worth ignoring.
+
+**Not verified:**
+
+- **`BACKUP_REMOTE` is unconfigured, and that is now the only gap that matters.**
+  Every dump — including the two on the host today — is on the same disk as the
+  database it came from. It needs a destination decision (`rclone` is not installed
+  on the host yet either), and until it has one, "we have backups" is a statement about
+  a bad migration, not about the disk.
+- **The 02:15 schedule has not fired yet.** What was proven is the command line with
+  cron's environment, at 05:22; the time itself is a line in a file until tomorrow
+  morning. Check `/var/log/chmabapay-backup.log` after 02:15 UTC.
+- `--restore` has only had its guard exercised. The restore itself is the drill's
+  second pass with the same flags against a throwaway database, not a restore over
+  production. Running it against production is a drill nobody should rehearse on the
+  only copy.
+- The prune path has not been observed firing: `RETENTION_DAYS=14` and a working
+  rotation is a fortnight away.
+
+Two bugs were found by running it rather than reading it, which is the reason this
+section says what was executed:
+
+- **GNU tar refuses to append to a compressed archive** (`Cannot update compressed
+  archives`), so the config archive is built in a single `tar` invocation with both
+  members. The first version appended `deploy/certs` second and produced an archive
+  with no certificates in it — the failure that would have been discovered during the
+  recovery it was meant for.
+- **A second `trap … EXIT` replaces the first**, silently. The original had one in
+  `backup()` to remove half-written files and one at the top level to send the failure
+  alert; the inner trap won, and the alert would never have fired. Cleanup is now a
+  variable consumed by the single trap.
+
