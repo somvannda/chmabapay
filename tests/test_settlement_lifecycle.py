@@ -686,3 +686,55 @@ async def _payment_at(store, *, age_seconds: int) -> str:
         )
         await session.commit()
         return public_id
+
+
+async def test_verify_payment_answers_for_a_hosted_sale_with_no_bakong_tx(client, monkeypatch):
+    """Confirming a hosted ABA sale must work, and it used to raise instead.
+
+    A hosted checkout has no Bakong transaction object, so this branch synthesizes the
+    shape callers expect. It left `found` unset — the one field with no default — and
+    passed a float where `amount` is a string, so `POST /v1/transactions/verify-payment/
+    {id}` answered **500** for exactly the payments it exists to confirm: every sale on
+    the hosted rail, which is the platform's primary one until Bakong credentials are
+    configured. Had the construction succeeded, the synthesized object was handed to
+    `from_service()`, which reads a *service* object's attributes (`created_date_ms`,
+    `amount`) and would have raised AttributeError next.
+
+    Found on 2026-09-24 by settling a real 0.10 USD payment and asking ABA to confirm
+    it. The reconciler is faked here on purpose: what is under test is that this branch
+    returns a well-formed answer, not whether ABA is reachable.
+    """
+    from chmabapay.routers import transactions as tx_router
+
+    async def hosted_paid(payment, **kwargs):  # noqa: ARG001
+        return ReconcileResult(
+            payment_id=payment.id,
+            payment_public_id=payment.public_id,
+            status="PAID",  # type: ignore[arg-type]
+            source="payway_hosted_checkout",
+            matched_amount=0.10,
+            signals=["hosted_action:approved", "resolved_via:payway_hosted"],
+            bakong_tx=None,
+        )
+
+    monkeypatch.setattr(tx_router, "reconcile_payment", hosted_paid)
+
+    account = await make_account()
+    store = await make_store(account, name="Hosted Verify")
+    public_id = await _payment_at(store, age_seconds=30)
+    raw_key, _ = await make_key(account)
+
+    resp = await client.post(
+        f"/v1/transactions/verify-payment/{public_id}",
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["found"] is True
+    assert body["status"] == "Success"
+    # The type is half the bug: `amount` is a string on this model, and a float
+    # raised ValidationError before it ever reached the response.
+    assert body["amount"] == "0.10"
+    assert isinstance(body["amount"], str)
+    assert body["currency"] == "USD"
+    assert body["instruction_ref"] == public_id

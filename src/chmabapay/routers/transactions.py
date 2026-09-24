@@ -387,27 +387,34 @@ async def verify_internal_payment(
     # Legacy return: return the BakongTx shape if we found one; otherwise synthesize
     tx = rec.bakong_tx
     if tx is None and rec.status == "PAID":
-        # No Bakong tx object, but ABA page said PAID. Return a synthesized
-        # BakongTransactionOut so callers still get status=Success.
-        return schemas.BakongTransactionOut.from_service(
-            schemas.BakongTransactionOut(  # type: ignore[arg-type]
-                hash=payment.bakong_ref or rec.aba_status.matched_bill if rec.aba_status else None,
-                short_hash=_md5_of_qr(payment.qr_string)[:16] if payment.qr_string else None,
-                md5=_md5_of_qr(payment.qr_string) if payment.qr_string else None,
-                from_account_id=None,
-                to_account_id=None,
-                from_account_name=None,
-                to_account_name=None,
-                currency=payment.currency or "USD",
-                amount=rec.matched_amount or (payment.amount_cents / 100),
-                description=None,
-                created_date_ms=None,
-                acknowledged_date_ms=None,
-                instruction_ref=getattr(payment, "bill_number", None),
-                external_ref=getattr(payment, "reference_id", None),
-                status="Success" if rec.status == "PAID" else rec.status,
-                raw=None,
-            )
+        # No Bakong tx object, but ABA's page said PAID. Synthesize the shape
+        # callers expect so they still get status=Success.
+        #
+        # Built as a schema directly, NOT wrapped in `from_service`. That helper
+        # reads a *service* object's attributes (`created_date_ms`, `amount`), and
+        # this branch used to hand it a schema instance — so it could never have
+        # worked, in two ways at once: the construction raised `found` missing plus
+        # a float where `amount` is a string, and had it succeeded, `from_service`
+        # would have raised AttributeError on `created_date_ms`. Three of the
+        # kwargs it passed (`created_date_ms`, `acknowledged_date_ms`, `raw`) are
+        # not fields of this model either, so Pydantic discarded them silently.
+        #
+        # Nothing caught it because it is the *hosted* branch: it is reached exactly
+        # when ABA answered for a session and no Bakong tx exists, which is every
+        # payment on the platform's primary rail until Bakong credentials are
+        # configured. Found on 2026-09-24 by settling a real 0.10 USD payment and
+        # asking ABA to confirm it — the endpoint answered 500.
+        return schemas.BakongTransactionOut(
+            found=True,
+            hash=payment.bakong_ref or (rec.aba_status.matched_bill if rec.aba_status else None),
+            short_hash=_md5_of_qr(payment.qr_string)[:16] if payment.qr_string else None,
+            md5=_md5_of_qr(payment.qr_string) if payment.qr_string else None,
+            currency=payment.currency or "USD",
+            amount=f"{rec.matched_amount or (payment.amount_cents / 100):.2f}",
+            instruction_ref=getattr(payment, "bill_number", None),
+            external_ref=getattr(payment, "reference_id", None),
+            status="Success",
+            created_at=payment.created_at,
         )
     if tx is None:
         # Still no info: return a pending Bakong shape
