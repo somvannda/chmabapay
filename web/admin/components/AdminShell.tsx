@@ -334,7 +334,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <div className="cp-body">
+      <div className="cp-app-body">
         <header className="cp-topbar">
           <div className="cp-topbar-inner">
             <nav className="cp-crumbs" aria-label="Breadcrumb">

@@ -4191,8 +4191,12 @@ body.dash-path-dashboard > .landing-footer {
   white-space: nowrap;
 }
 
-/* ---------- Content column ---------- */
-.cp-body {
+/* ---------- Content column ----------
+   Named `cp-app-body` rather than `cp-body` on purpose. `cp-body` is a generic name
+   that the "Color Picker for Chrome" extension also uses in the stylesheet it injects
+   into every page, where `.cp-body button { background: #2BB673 }` painted every
+   button in this shell green. Renaming keeps our buttons ours. */
+.cp-app-body {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -5551,7 +5555,7 @@ body.dash-path-dashboard > .landing-footer {
 /* ---------- Billing notice (shell banner) ----------
    Driven by GET /v1/billing/notices. The three levels reuse the exact colours of the form alert
    trio above, so "something needs you" looks the same wherever a merchant meets it. The banner
-   sits in `.cp-body` above `<main>`, inside its own container so its text lines up with the
+   sits in `.cp-app-body` above `<main>`, inside its own container so its text lines up with the
    topbar and the page below rather than running edge to edge. */
 .cp-notice {
   border-bottom: 1px solid var(--line);
