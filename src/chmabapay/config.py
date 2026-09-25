@@ -27,6 +27,17 @@ class Settings(BaseSettings):
     # `assert_runtime_matches_configuration` is the guard.
     chmabapay_runtime: str | None = None
 
+    # A host process is refused the stack's *published* Postgres (55432) and Redis
+    # (56379), because reaching into a container's volumes from the host is how two
+    # environments end up disagreeing about the same row without either one erroring.
+    # That stays the default. Set this true when the sharing is the point — running
+    # `uv run uvicorn` on the host against the same database and schema the containers
+    # use — and the refusal lifts for those two ports and nothing else.
+    #
+    # A switch rather than a looser rule, deliberately: it keeps the accident the guard
+    # was written for distinguishable from a decision somebody made on purpose.
+    chmabapay_allow_stack_db: bool = False
+
     # A fake Bakong rail mounted at /_dev where POST /_dev/payments/{id}/pay marks a
     # payment paid without money moving, and GET /auth/_dev/login mints a real session
     # cookie for any email you name. Neither is behind a credential, so this defaults
@@ -509,6 +520,11 @@ def assert_runtime_matches_configuration(settings: Settings) -> None:
     the only time it is read: its default is deliberately a host address, and
     checking it on the in-process transport would refuse every container for a
     variable nothing consults.
+
+    One case is decidable rather than wrong: a host run sharing the stack's own
+    database. `CHMABAPAY_ALLOW_STACK_DB=true` lifts the published-port refusal, and
+    only that rule — a host process still cannot resolve a compose service name, and
+    a container still cannot use `localhost`.
     """
     declared = (settings.chmabapay_runtime or "").strip().lower() or None
     if declared is not None and declared not in _DECLARED_RUNTIMES:
@@ -557,10 +573,16 @@ def assert_runtime_matches_configuration(settings: Settings) -> None:
                 f"{name} points at '{host}', a compose service name that only exists "
                 "on the compose network"
             )
-        elif not container and host in _LOCAL_HOSTS and port in _COMPOSE_HOST_PORTS:
+        elif (
+            not container
+            and host in _LOCAL_HOSTS
+            and port in _COMPOSE_HOST_PORTS
+            and not settings.chmabapay_allow_stack_db
+        ):
             problems.append(
                 f"{name} points at a container's published port ({host}:{port}); "
-                "that database belongs to the Docker stack"
+                "that database belongs to the Docker stack. Set "
+                "CHMABAPAY_ALLOW_STACK_DB=true to share it on purpose"
             )
 
     if not problems:
@@ -580,7 +602,8 @@ def assert_runtime_matches_configuration(settings: Settings) -> None:
             "or give the host run a database of its own (DATABASE_URL with no host, "
             "e.g. sqlite+aiosqlite:///./chmabapay.db) and set CHMABAPAY_RUNTIME=local. "
             "Reaching *into* the container's database from the host is the mix this "
-            "refuses."
+            "refuses — unless CHMABAPAY_ALLOW_STACK_DB=true, which says the sharing "
+            "is deliberate."
         )
     )
 

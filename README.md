@@ -159,8 +159,12 @@ the configuration belongs to the other runtime. The two failures worth knowing:
   and neither one errors.
 
 `deploy/.env.local` and the root `.env` are therefore not interchangeable, and the failure
-is a boot refusal naming the variable and the file to use. `docs/deploy.md` §2 has the
-full picture.
+is a boot refusal naming the variable and the file to use.
+
+The second failure mode can be a decision instead of an accident: set
+`CHMABAPAY_ALLOW_STACK_DB=true` and a host run may use the stack's own Postgres and
+Redis, on those published ports only. That is what a host `uv run uvicorn` against the
+same database the containers use requires. `docs/deploy.md` §2 has the full picture.
 
 ### The dev rail
 

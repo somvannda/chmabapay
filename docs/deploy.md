@@ -95,6 +95,12 @@ the guard exists:
   the same rows the containers do, so two environments disagree about the same data
   without either one erroring.
 
+The second of those can be a decision rather than an accident: set
+`CHMABAPAY_ALLOW_STACK_DB=true` and a host run may use the stack's own Postgres and
+Redis on those published ports. One switch rather than a looser rule, so that the
+accident the guard exists to catch stays distinguishable from an arrangement somebody
+chose on purpose.
+
 `--env-file` is therefore not optional, and the reason it is a flag rather than a
 default is Compose's own behaviour: without it, interpolation reads the *project
 directory's* `.env` — the host file — so `PUBLIC_ORIGIN=http://localhost:3001` (the host

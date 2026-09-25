@@ -37,6 +37,7 @@ def _no_ambient_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for name in (
         "CHMABAPAY_RUNTIME",
+        "CHMABAPAY_ALLOW_STACK_DB",
         "DATABASE_URL",
         "REDIS_URL",
         "WORKER_TRANSPORT",
@@ -277,6 +278,47 @@ def test_a_host_pointed_at_the_containers_published_port_is_refused(on_host: Non
         )
 
     assert "55432" in str(refused.value)
+
+
+def test_the_stack_database_can_be_shared_on_purpose(on_host: None) -> None:
+    """The opt-in, for the one arrangement the refusal was in the way of.
+
+    A host `uv run uvicorn` against the stack's own Postgres is a decision rather than
+    an accident: one dataset, one schema, and the same engine production runs. The
+    default stays a refusal — this only stops the guard arguing with a choice that has
+    been made explicitly, out loud, in an environment variable.
+    """
+    assert (
+        assert_runtime_matches_configuration(
+            Settings(
+                _env_file=None,
+                chmabapay_runtime="local",
+                database_url="postgresql+asyncpg://chmaba:chmaba@localhost:55432/chmabapay",
+                chmabapay_allow_stack_db=True,
+            )
+        )
+        is None
+    )
+
+
+def test_the_opt_in_lifts_the_published_port_rule_and_nothing_else(on_host: None) -> None:
+    """`db` still does not resolve from the host, opt-in or not.
+
+    The switch is narrower than "allow anything on loopback": a compose service name
+    fails here as a DNS error whatever the intent was, so excusing it would trade a
+    clear refusal for a confusing one.
+    """
+    with pytest.raises(MixedRuntimeError) as refused:
+        assert_runtime_matches_configuration(
+            Settings(
+                _env_file=None,
+                chmabapay_runtime="local",
+                database_url=CONTAINER_DB,
+                chmabapay_allow_stack_db=True,
+            )
+        )
+
+    assert "'db'" in str(refused.value)
 
 
 def test_the_redis_url_is_only_checked_when_redis_is_the_transport(in_container: None) -> None:
