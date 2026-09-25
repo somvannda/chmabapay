@@ -909,6 +909,37 @@ Then `git pull --ff-only` and `up -d --build`. Verified afterwards, on the host:
 > without the bearer token answers **401**, and `curl -f` treats an expected `404`
 > as a failure. Both cost a minute here and neither is a defect.
 
+**Redeployed to the runtime guard** (2026-09-25), from commit `1560735` — the first
+deploy to carry `assert_runtime_matches_configuration`:
+
+- `db`, `api`, `landing`, `admin` and `proxy` all **healthy**, `migrate` exited **0**,
+  and `alembic current` reads **`0013 (head)`**. Nothing was migrated, so by §14's rule
+  no snapshot was taken first — a boot guard is not a schema change.
+- **The guard is a no-op here by construction, not by luck.** `deploy/.env` sets no
+  `CHMABAPAY_RUNTIME`, so there is no declaration to disagree with; `DATABASE_URL`
+  reaches Postgres as `db:5432` *from inside* the container; and `WORKER_TRANSPORT` is
+  `inprocess`, the one setting under which `REDIS_URL` is never examined. Adding
+  `CHMABAPAY_RUNTIME=docker` to `deploy/.env` is therefore optional — but if it is ever
+  added, the boot has to be in a container: `docker exec api …` is fine, a host
+  `uv run` is not.
+- Alerts still leave this deployment: neither `ALERT NOT SENT` nor
+  `delivery is suppressed` appears in `docker logs chmabapay-prod-api-1`. That is the
+  check that the new `delivery_allowed` guard (§5) has not muted production —
+  `PUBLIC_ORIGIN` is the public hostname and `ENABLE_DEV_GATEWAY` is `false`, so
+  neither signal reads as "development".
+- Verified from the public internet: `/health` → `{"status":"ok"}`, `/` → **200** with
+  the new account-menu markup in the served HTML, `admin-pay.chmaba.com/` → **200**,
+  and `/auth/_dev/login` → **404**, so the refusals of §6 still hold.
+
+**The first thing the guard caught was a developer shell, not the server.** Moments
+after the deploy, the same check refused on this machine: `DATABASE_URL` pointed at
+`localhost:55432` and `REDIS_URL` at `localhost:56379` in the *process environment* —
+the "host process reaching into the stack" mix §2 describes, left over from an earlier
+session and written in no file at all. The refusal named both variables and the fix.
+The lesson generalises past this incident: an exported variable beats `.env` and
+`--env-file` alike, so a shell can be in the other runtime with nobody having edited
+anything. Clear them in that shell, or start a fresh one, before any host run.
+
 **Verified through Cloudflare, on the public hostnames** (2026-09-17), after the
 Origin Rule was deployed:
 
