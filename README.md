@@ -179,8 +179,25 @@ Point it at a Postgres `chmabapay_test` database — the same thing CI does — 
 same suite takes about **2.5 minutes**:
 
 ```powershell
-$env:CHMABAPAY_TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/chmabapay_test"
+# The development stack's own Postgres. docker-compose.yml publishes it on 55432 and
+# leaves 5432 to whatever native Postgres the machine already runs, so this is the
+# same engine the containers use — one database over, never the same one.
+$env:CHMABAPAY_TEST_DATABASE_URL = "postgresql+asyncpg://chmaba:chmaba@localhost:55432/chmabapay_test"
 uv run pytest
+```
+
+Create that database once, if it is not there yet:
+
+```powershell
+docker exec chmabapay-db-1 psql -U chmaba -d postgres -c "CREATE DATABASE chmabapay_test"
+```
+
+CI also sets `CHMABAPAY_TEST_REDIS_URL`, because the stream commands the transport is
+built on (`XREADGROUP`, `XAUTOCLAIM`) deserve better than `fakeredis`. The stack's Redis
+is published on 56379, and DB 15 keeps the test keys clear of the API's own DB 0:
+
+```powershell
+$env:CHMABAPAY_TEST_REDIS_URL = "redis://localhost:56379/15"
 ```
 
 Two things that are easy to get wrong:
