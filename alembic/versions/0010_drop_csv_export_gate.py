@@ -14,7 +14,7 @@ and the products of that were worse than having no switch at all:
   console's plan editor, where an operator could switch it off and watch CSV keep
   working.
 - The store-catalog export on the same page was assembled in the browser from
-  `GET /v1/stores`, so it never touched the gate at all.
+  `GET /api/v1/stores`, so it never touched the gate at all.
 
 Decision D6 of the launch-gap-closure spec settled it as "CSV is available on every
 plan", which is what the code has always actually done. The gate is deleted from

@@ -25,8 +25,8 @@ Across the backend there was no `account_type == "business"` comparison anywhere
 only writes and echoes, so the column was write-only. `account_type_switched` on
 the change-plan response was likewise hardcoded to `False`.
 
-What the drop removes, concretely: the field on `PATCH /v1/me`, the two fields on
-`GET /v1/me` and the admin account rows, the two session-payload entries, and
+What the drop removes, concretely: the field on `PATCH /api/v1/me`, the two fields on
+`GET /api/v1/me` and the admin account rows, the two session-payload entries, and
 `account_type` plus `account_type_switched` on the change-plan response. A client
 reading any of them will now see the field absent rather than a value that
 implied a gate.
