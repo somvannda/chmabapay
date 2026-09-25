@@ -1,4 +1,6 @@
+import os
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -8,6 +10,22 @@ class Settings(BaseSettings):
 
     app_name: str = "ChmabaPay"
     database_url: str = "sqlite+aiosqlite:///./chmabapay.db"
+
+    # Which of the two ways this project runs this process is part of:
+    #
+    #   docker — inside a container. Postgres and Redis are reached by their
+    #            service names on the compose network (`db:5432`, `redis:6379`).
+    #   local  — on the host, against a database of its own, with no container in
+    #            the path at all.
+    #
+    # Left unset there is simply no declaration to check: the rules still follow
+    # wherever the process actually is (`running_in_container`), which is the normal
+    # case for a deployment that never sets it. Declaring it is how an environment
+    # file states which runtime it is written for, and a declaration that disagrees
+    # with the detection — or with the host names in DATABASE_URL/REDIS_URL — is
+    # refused at boot rather than served from the wrong database.
+    # `assert_runtime_matches_configuration` is the guard.
+    chmabapay_runtime: str | None = None
 
     # A fake Bakong rail mounted at /_dev where POST /_dev/payments/{id}/pay marks a
     # payment paid without money moving, and GET /auth/_dev/login mints a real session
@@ -230,6 +248,13 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_timeout_seconds: float = 5.0
 
+    # Whether a deployment that is visibly *not* production may page the operator chat
+    # anyway. Off, because a page that fires on a stopped laptop teaches people to mute
+    # the channel, and a muted channel is the same as none. It exists at all so the
+    # alert path can be tested on purpose, against a throwaway chat — the guard's
+    # reasoning lives in `alerts.delivery_allowed`.
+    alerts_allow_non_production: bool = False
+
     # JWT session auth. The default is deliberately *nothing*: a secret in this file
     # is in the repository and in the image, so it is public, and a public signing key
     # lets anyone mint a session for any account. `assert_session_secret_is_chosen`
@@ -376,6 +401,187 @@ def assert_a_queue_will_be_drained(settings: Settings) -> None:
         "drain this process's queue, so every job it enqueues — payment detection "
         "included — would be dropped silently. Either set WORKER_TRANSPORT=redis and "
         "run the worker process, or set WORKERS_ENABLED=true."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Runtime identity — container or host
+# --------------------------------------------------------------------------- #
+# This project is run two ways, and they are not interchangeable:
+#
+#   docker  `docker compose --env-file deploy/.env.local up -d` — the API, both
+#           frontends and the edge are containers, and Postgres and Redis are
+#           reached by their service names on the compose network (`db:5432`,
+#           `redis:6379`).
+#   local   on the host — `uv run uvicorn` against a database of its own.
+#
+# Mixing them is the failure these guards exist for, because it does not fail
+# where it happens. A container handed `localhost:55432` resolves it to *itself*
+# and answers from a second, empty database: every query succeeds, against the
+# wrong rows. A host process handed `db:5432` cannot resolve a name that exists
+# only on the compose network. Neither reads as "the environment is mixed" — both
+# read as "the application is broken".
+#
+# The repository-root `.env` is the *host* file and `deploy/.env.local` is the
+# container one; keeping them apart is what these rules are checking.
+
+# Docker writes this into every container it starts, including Linux containers
+# under Docker Desktop — which is how this project runs on Windows.
+_DOCKERENV_PATH = "/.dockerenv"
+
+# Service names that exist on the compose network and nowhere else. Seen from the
+# host they do not resolve at all.
+_COMPOSE_SERVICE_HOSTS = {"db", "redis"}
+
+# Host ports the compose stack publishes for its backing services. Chosen off the
+# defaults (55432, 56379) precisely so they cannot collide with a native Postgres
+# or Redis — which also makes the port a signature: on the host, a loopback
+# address on one of these is a *container*, reached through a published port.
+# Ints, because `urlsplit().port` is an int and a string set would silently never
+# match anything.
+_COMPOSE_HOST_PORTS = {55432, 56379}
+
+# Addresses that mean "this process itself" rather than another machine.
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"}
+
+_DECLARED_RUNTIMES = {"docker", "local"}
+
+
+class MixedRuntimeError(RuntimeError):
+    """Refused to start: this process is configured for the other runtime."""
+
+
+def running_in_container() -> bool:
+    """Whether this process is inside a container rather than on the host — detected.
+
+    Deliberately not influenced by `CHMABAPAY_RUNTIME`: that variable is the
+    *declaration*, and the point of having both is to be able to compare them. If the
+    declaration could set this answer, the comparison would be `x == x` and a stack
+    told it is in a container while it is not would sail through.
+
+    Two probes: `/.dockerenv`, which the Docker engine writes into every container it
+    starts (including Linux containers under Docker Desktop, which is how this project
+    runs on Windows), and the cgroup entry, for a runtime that does not write it.
+    Anything unrecognised is the host — the reading with the stricter rules.
+    """
+    if os.path.exists(_DOCKERENV_PATH):
+        return True
+
+    try:
+        with open("/proc/1/cgroup", encoding="utf-8") as cgroup:
+            contents = cgroup.read()
+    except OSError:
+        # No /proc at all — Windows, or an exotic target. This is the host.
+        return False
+    return any(marker in contents for marker in ("docker", "containerd", "kubepods"))
+
+
+def _url_host_and_port(url: str | None) -> tuple[str | None, int | None]:
+    """The hostname and port of a database/queue URL, or `(None, None)`.
+
+    `sqlite+aiosqlite:///./chmabapay.db` has no host at all, which is exactly the
+    answer the caller needs: a file database is not a remote one.
+    """
+    if not url:
+        return None, None
+    try:
+        parts = urlsplit(url)
+        return (parts.hostname or None), parts.port
+    except ValueError:
+        # A URL urlsplit cannot parse is not this guard's problem to report; the
+        # connection attempt is where a malformed URL should fail.
+        return None, None
+
+
+def assert_runtime_matches_configuration(settings: Settings) -> None:
+    """Refuse to serve when the configuration belongs to the other runtime.
+
+    Two questions, and both have to be answered consistently:
+
+    1. Does the *declared* runtime match the one this process is in? An
+       environment file copied from the other mode carries the other mode's
+       values, and the declaration is the first place that shows.
+    2. Do `DATABASE_URL` and `REDIS_URL` name something this process can actually
+       reach? A container cannot reach the host's loopback, and the host cannot
+       resolve a compose service name.
+
+    `REDIS_URL` is only examined when the transport is `redis`, because that is
+    the only time it is read: its default is deliberately a host address, and
+    checking it on the in-process transport would refuse every container for a
+    variable nothing consults.
+    """
+    declared = (settings.chmabapay_runtime or "").strip().lower() or None
+    if declared is not None and declared not in _DECLARED_RUNTIMES:
+        raise MixedRuntimeError(
+            f"CHMABAPAY_RUNTIME={settings.chmabapay_runtime!r} is not a runtime this "
+            "project has: set it to 'docker' or 'local', or leave it unset and let "
+            "the process be detected."
+        )
+
+    container = running_in_container()
+    if declared is not None and (declared == "docker") != container:
+        raise MixedRuntimeError(
+            f"CHMABAPAY_RUNTIME={declared} but this process is running "
+            f"{'in a container' if container else 'on the host'}. "
+            + (
+                "The container file is deploy/.env.local; the host file is the "
+                "repository-root .env. They are not interchangeable — start the "
+                "stack with:\n"
+                "  docker compose --env-file deploy/.env.local up -d --build"
+                if container
+                else "The container file is deploy/.env.local; the host file is the "
+                "repository-root .env. The container file's values reach the "
+                "container's own network and do not resolve here."
+            )
+        )
+
+    targets: list[tuple[str, str | None]] = [("DATABASE_URL", settings.database_url)]
+    if (settings.worker_transport or "").strip().lower() == "redis":
+        targets.append(("REDIS_URL", settings.redis_url))
+
+    where = "in a container" if container else "on the host"
+    problems: list[str] = []
+    for name, url in targets:
+        host, port = _url_host_and_port(url)
+        if host is None:
+            continue
+        host = host.lower()
+
+        if container and host in _LOCAL_HOSTS:
+            problems.append(
+                f"{name} points at {host}, which {where} is this container itself, "
+                "not the service it means to reach"
+            )
+        elif not container and host in _COMPOSE_SERVICE_HOSTS:
+            problems.append(
+                f"{name} points at '{host}', a compose service name that only exists "
+                "on the compose network"
+            )
+        elif not container and host in _LOCAL_HOSTS and port in _COMPOSE_HOST_PORTS:
+            problems.append(
+                f"{name} points at a container's published port ({host}:{port}); "
+                "that database belongs to the Docker stack"
+            )
+
+    if not problems:
+        return
+
+    detail = "\n".join(f"  - {problem}" for problem in problems)
+    raise MixedRuntimeError(
+        f"{'docker' if container else 'local'} runtime, but the configuration is "
+        f"written for the other one:\n{detail}\n"
+        + (
+            "This process is in a container, so it has to reach the stack over the "
+            "compose network. Start it with:\n"
+            "  docker compose --env-file deploy/.env.local up -d --build"
+            if container
+            else "This process is on the host. Either run the stack in Docker:\n"
+            "  docker compose --env-file deploy/.env.local up -d --build\n"
+            "or give the host run a database of its own (DATABASE_URL with no host, "
+            "e.g. sqlite+aiosqlite:///./chmabapay.db) and set CHMABAPAY_RUNTIME=local. "
+            "Reaching *into* the container's database from the host is the mix this "
+            "refuses."
+        )
     )
 
 

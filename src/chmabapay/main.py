@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import errors, observability
 from .config import (
     assert_a_queue_will_be_drained,
+    assert_runtime_matches_configuration,
     assert_session_secret_is_chosen,
     get_settings,
 )
@@ -87,6 +88,10 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         nonlocal transport
         observability.configure_logging()
+        # First, before anything is opened: a process pointed at the other runtime's
+        # database must not get as far as a connection, let alone a query. Both of
+        # these mistakes connect successfully and answer from the wrong rows.
+        assert_runtime_matches_configuration(settings)
         # Before the database, before the workers, before anything is served: a
         # process about to sign sessions with a secret published in the repository
         # has nothing useful to do, and it must not look healthy while doing it.
