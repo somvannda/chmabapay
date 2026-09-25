@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { Profile } from "./portal/useSession";
 
 /**
  * The phone-sized menu.
@@ -12,6 +13,11 @@ import { useState } from "react";
  * Anchors are absolute (`/#plans`) rather than bare (`#plans`) because the header
  * renders on every page: a bare hash is a no-op on `/api/docs`, `/terms` and the
  * 404 page, where no such element exists.
+ *
+ * The auth links at the bottom flip with the session, same as the desktop slot in
+ * `HeaderAccount`: "Sign in" / "Start free" when anonymous, the account's routes
+ * when signed in. The panel is the only way to sign out from a phone, because the
+ * desktop dropdown is not rendered at this width.
  */
 const LINKS = [
   { href: "/#product", label: "Product" },
@@ -23,8 +29,16 @@ const LINKS = [
 
 const SIGN_IN_HREF = "/auth/google/login";
 
-export function MobileNav() {
+export type MobileNavProps = {
+  /** Omitted while anonymous — and while the `GET /v1/me` check is still in flight. */
+  profile?: Profile | null;
+  onSignOut?: () => void;
+  signingOut?: boolean;
+};
+
+export function MobileNav({ profile, onSignOut, signingOut = false }: MobileNavProps) {
   const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
 
   return (
     <div className="landing-mobile-nav">
@@ -48,25 +62,60 @@ export function MobileNav() {
               key={link.href}
               className="landing-mobile-link"
               href={link.href}
-              onClick={() => setOpen(false)}
+              onClick={close}
             >
               {link.label}
             </a>
           ))}
-          <a
-            className="landing-mobile-link landing-mobile-signin"
-            href={SIGN_IN_HREF}
-            onClick={() => setOpen(false)}
-          >
-            Sign in
-          </a>
-          <a
-            className="landing-mobile-cta"
-            href={SIGN_IN_HREF}
-            onClick={() => setOpen(false)}
-          >
-            Start free
-          </a>
+          {profile ? (
+            <>
+              <a
+                className="landing-mobile-link landing-mobile-signin"
+                href="/dashboard"
+                onClick={close}
+              >
+                Open dashboard
+              </a>
+              <a
+                className="landing-mobile-link"
+                href="/dashboard/settings"
+                onClick={close}
+              >
+                Account settings
+              </a>
+              <a
+                className="landing-mobile-link"
+                href="/dashboard/billing"
+                onClick={close}
+              >
+                Billing &amp; plans
+              </a>
+              <button
+                type="button"
+                className="landing-mobile-link landing-mobile-signout"
+                onClick={() => {
+                  close();
+                  onSignOut?.();
+                }}
+                disabled={signingOut}
+              >
+                {signingOut ? "Signing out…" : "Sign out"}
+              </button>
+            </>
+          ) : (
+            <>
+              <a
+                className="landing-mobile-link landing-mobile-signin"
+                href={SIGN_IN_HREF}
+                onClick={close}
+              >
+                Sign in
+              </a>
+              <a className="landing-mobile-cta" href={SIGN_IN_HREF} onClick={close}>
+                Start free
+              </a>
+            </>
+          )}
         </div>
       )}
     </div>
