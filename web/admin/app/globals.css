@@ -3257,19 +3257,6 @@ body.dash-path-dashboard > .landing-footer {
   gap: var(--sp-1);
   flex: none;
 }
-.cp-toplink {
-  font-size: var(--fs-13);
-  font-weight: 600;
-  color: var(--ink-2);
-  text-decoration: none;
-  padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--r-xs);
-}
-.cp-toplink:hover {
-  background: #f6f6f9;
-  color: var(--ink);
-}
-
 .cp-menu { position: relative; }
 .cp-menu-btn {
   all: unset;
