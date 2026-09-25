@@ -31,6 +31,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .config import get_settings
@@ -46,6 +47,12 @@ log = logging.getLogger(__name__)
 # because unbounded state on caller-supplied input is a leak.
 _MAX_FINGERPRINTS = 500
 
+# Telegram rejects a message over 4096 characters, and an exception message can be an
+# entire SQL statement with its parameters. Truncate well inside the limit rather than
+# let the channel refuse a report about a failure because the failure was too verbose.
+_MAX_FIRST_LINE = 400
+_MAX_MESSAGE = 3500
+
 # The variable parts of a message — ids, amounts, timestamps, hex and uuid blobs.
 # Collapsing them is what makes "payment 41 not found" and "payment 92 not found"
 # one fingerprint, without merging them with "store 7 not found". The dashed uuid
@@ -58,13 +65,121 @@ _VARIABLE = re.compile(
     r"|\d+"
 )
 
+# --------------------------------------------------------------------------- #
+# Reading an exception the way the operator reads it
+# --------------------------------------------------------------------------- #
+# The type name and the message are for us; the sentence is for whoever is holding the
+# phone. Only shapes we recognise get a sentence — inventing a meaning for an unknown
+# exception would be worse than admitting we do not have one.
+_CONNECTIVITY_ERRORS = {
+    "ConnectionError",
+    "ConnectionRefusedError",
+    "ConnectionResetError",
+    "ConnectTimeoutError",
+    "DBAPIError",
+    "InterfaceError",
+    "OperationalError",
+    "PendingRollbackError",
+    "PoolTimeout",
+}
+# Matched against the message as well as the type, because the two spellings of the same
+# failure do not share a class: SQLAlchemy raises `InterfaceError` ("connection is
+# closed"), asyncpg raises its own, and a socket that is gone raises a builtin.
+_CONNECTIVITY_HINTS = (
+    "connection is closed",
+    "connection was closed",
+    "connection refused",
+    "connection reset",
+    "could not connect",
+    "server closed the connection",
+    "too many connections",
+    "the remote computer refused",
+)
+_DATA_ERRORS = {
+    "IntegrityError",
+    "ForeignKeyViolationError",
+    "NotNullViolationError",
+    "UniqueViolationError",
+}
+_CODE_ERRORS = {
+    "AssertionError",
+    "AttributeError",
+    "IndexError",
+    "KeyError",
+    "NotImplementedError",
+    "TypeError",
+    "ValueError",
+}
+
+
+def _classify(exc: BaseException) -> tuple[str, str | None]:
+    """`(severity, plain-English meaning)` for one exception.
+
+    The meaning is `None` when the exception is not a shape we recognise — silence is
+    more useful than a confident guess about a fault nobody has seen before.
+    """
+    name = type(exc).__name__
+    message = _first_line(exc).lower()
+
+    if name in _CONNECTIVITY_ERRORS or any(h in message for h in _CONNECTIVITY_HINTS):
+        return (
+            "OUTAGE",
+            "The platform lost its connection to a service it depends on, almost "
+            "always the database. Anything that has to read or write is failing "
+            "until it comes back.",
+        )
+    if name in _DATA_ERRORS:
+        return (
+            "ERROR",
+            "A database write was rejected — a duplicate, a missing row or a "
+            "constraint. Nothing was written silently; the operation that hit this "
+            "did not happen.",
+        )
+    if name in _CODE_ERRORS:
+        return ("ERROR", "The code reached a case it did not expect.")
+    return ("ERROR", None)
+
+
+def _area(where: str) -> str:
+    """Where it happened, said the way a person would say it."""
+    if where.startswith("worker:"):
+        return "background worker"
+    if where.startswith("api"):
+        return "API request"
+    return where
+
+
+def _location_lines(where: str, context: str | None, queue_label) -> list[str]:
+    """The `Worker:` / `Call:` / `Path:` lines that identify what was running."""
+    if where.startswith("worker:"):
+        queue = where.split(":", 1)[1]
+        lines = [f"Worker:  {queue_label(queue)}"]
+        if context:
+            lines.append(f"Job:     {context}")
+        return lines
+    if where.startswith("api "):
+        call = where[len("api ") :]
+        path = call.split(" ", 1)[-1]
+        lines = [f"Call:    {call}"]
+        # The template is what the metrics group by; the path is what was actually
+        # asked for. They differ only for a parameterised route, and that difference
+        # is usually the answer to "which payment?".
+        if context and context != path:
+            lines.append(f"Path:    {context}")
+        return lines
+    lines = [f"Where:   {where}"]
+    if context:
+        lines.append(f"Context: {context}")
+    return lines
+
 
 @dataclass
 class _Seen:
-    first_at: float
+    first_at: float  # monotonic, so a duration survives a clock change
+    first_seen: datetime  # wall clock, for the timestamp the reader compares to
     reported_at: float
     summary: str
-    suppressed: int = 0
+    total: int = 1
 
 
 _seen: dict[str, _Seen] = {}
@@ -85,15 +200,11 @@ def _fingerprint(where: str, exc: BaseException) -> str:
 
 
 def _first_line(exc: BaseException) -> str:
-    return str(exc).strip().splitlines()[0] if str(exc).strip() else "(no message)"
-
-
-def _duration(seconds: float) -> str:
-    if seconds < 90:
-        return f"{seconds:.0f}s"
-    if seconds < 5400:
-        return f"{seconds / 60:.0f}m"
-    return f"{seconds / 3600:.1f}h"
+    text = str(exc).strip()
+    first = text.splitlines()[0] if text else "(no message)"
+    if len(first) <= _MAX_FIRST_LINE:
+        return first
+    return f"{first[: _MAX_FIRST_LINE - 1]}…"
 
 
 def _remember(key: str, record: _Seen) -> None:
@@ -103,6 +214,64 @@ def _remember(key: str, record: _Seen) -> None:
         stalest = min(_seen, key=lambda k: _seen[k].reported_at)
         _seen.pop(stalest, None)
     _seen[key] = record
+
+
+def _format_report(
+    exc: BaseException,
+    *,
+    where: str,
+    context: str | None,
+    trace: str,
+    seen: _Seen | None,
+) -> str:
+    """One unhandled exception as the message an operator is sent.
+
+    Written to be read on a phone, which is why it carries a severity, a sentence
+    saying what it means for the platform, where it happened and when — and why the
+    traceback stays in the log rather than in the message:
+
+    ```
+    ChmabaPay · OUTAGE · API request
+
+    What:    InterfaceError: connection is closed
+    Meaning: The platform lost its connection to a service it depends on, ...
+    Call:    GET /v1/me
+    Trace:   cf950f72-4ede-465a-9ab4-e071facc2490
+    Time:    23 Sep 2026, 16:52 +07
+
+    Count:   8 since 23 Sep 2026, 16:47 (5m ago) — still happening.
+    ```
+    """
+    # Imported inside the call for the reason `_notifier` documents: `alerts` imports
+    # `chmabapay.workers`, and `workers.base` imports this module.
+    from .alerts import format_elapsed, format_moment, local_now, queue_label
+
+    severity, meaning = _classify(exc)
+    lines = [f"ChmabaPay · {severity} · {_area(where)}", ""]
+    lines.append(f"What:    {type(exc).__name__}: {_first_line(exc)}")
+    if meaning:
+        lines.append(f"Meaning: {meaning}")
+    lines.extend(_location_lines(where, context, queue_label))
+    lines.append(
+        f"Trace:   {trace}"
+        if trace and trace != "-"
+        else "Trace:   none (this happened outside a request)"
+    )
+    lines.append(f"Time:    {format_moment(local_now())}")
+    lines.append("")
+    if seen is None:
+        lines.append("Count:   1 — first time this error has been seen.")
+    else:
+        elapsed = format_elapsed(time.monotonic() - seen.first_at)
+        lines.append(
+            f"Count:   {seen.total} since {format_moment(seen.first_seen)} "
+            f"({elapsed} ago) — still happening."
+        )
+
+    body = "\n".join(lines)
+    if len(body) > _MAX_MESSAGE:
+        body = f"{body[: _MAX_MESSAGE - 16].rstrip()}\n… truncated"
+    return body
 
 
 def _notifier() -> TelegramNotifier:
@@ -154,15 +323,24 @@ def warn_if_unconfigured() -> None:
     # Imported locally: `services` pulls in a package that is otherwise irrelevant to
     # capture, and this module is imported by `workers.base` while the package is
     # still initialising.
+    from .alerts import delivery_allowed, development_reason
     from .services import notifications
 
-    if _notifier().configured or notifications.configured():
+    if not (_notifier().configured or notifications.configured()):
+        log.warning(
+            "error tracking will log unhandled exceptions but cannot send them "
+            "(set OPS_TELEGRAM_CHAT_ID or ACTIVITY_TELEGRAM_CHAT_ID, plus "
+            "TELEGRAM_BOT_TOKEN)"
+        )
         return
-    log.warning(
-        "error tracking will log unhandled exceptions but cannot send them "
-        "(set OPS_TELEGRAM_CHAT_ID or ACTIVITY_TELEGRAM_CHAT_ID, plus "
-        "TELEGRAM_BOT_TOKEN)"
-    )
+    # Configured is not the same as allowed to speak: a development deployment holds the
+    # credentials and still must not page. See `alerts.delivery_allowed`.
+    if not delivery_allowed():
+        log.warning(
+            "error tracking will log unhandled exceptions but will not send them: %s. "
+            "Set ALERTS_ALLOW_NON_PRODUCTION=true to send from here anyway.",
+            development_reason(),
+        )
 
 
 async def report_exception(
@@ -180,48 +358,53 @@ async def report_exception(
     becomes a label.
 
     Never raises. Every occurrence is counted in `chmabapay_errors_total` and written
-    to the log; only the first of each fingerprint, and then one per interval, is sent.
+    to the log; only the first of each fingerprint, and then one per interval, is sent —
+    and what is sent is a report written for a person, not a stack-trace header.
     """
     type_name = type(exc).__name__
     ERRORS_TOTAL.labels(where=where, type=type_name).inc()
 
     trace = trace_id or current_trace_id()
-    detail = f"UNHANDLED {where} {type_name}: {_first_line(exc)}"
+    compact = f"UNHANDLED {where} {type_name}: {_first_line(exc)}"
     if context:
-        detail = f"{detail}\n  at      {context}"
-    detail = f"{detail}\n  trace   {trace}"
-
-    # First, unconditionally: whatever else happens, the traceback is in the log.
-    log.error("%s", detail.replace("\n", " | "), exc_info=exc)
+        compact = f"{compact} | at {context}"
+    # First, unconditionally: whatever else happens, the traceback is in the log. The
+    # log line stays a single line on purpose — it is grep'd, and whoever reads a log
+    # file already knows the conventions the phone reader does not.
+    log.error("%s | trace %s", compact, trace, exc_info=exc)
 
     key = _fingerprint(where, exc)
     now = time.monotonic()
     record = _seen.get(key)
 
     if record is None:
+        # Imported locally for the same reason `_notifier` documents: `alerts` reaches
+        # back into `workers`, which imports this module.
+        from .alerts import local_now
+
         _remember(
             key,
             _Seen(
                 first_at=now,
+                first_seen=local_now(),
                 reported_at=now,
                 summary=f"{type_name} at {where}: {_first_line(exc)}",
             ),
         )
-        await _send(detail)
+        await _send(
+            _format_report(exc, where=where, context=context, trace=trace, seen=None)
+        )
         return
 
+    # Every occurrence counts toward the total, including the ones inside the window
+    # that are not sent: "this has happened 47 times since 09:12" is the difference
+    # between a blip and something that is genuinely broken.
+    record.total += 1
     window = max(0.0, get_settings().error_report_interval_seconds)
     if now - record.reported_at < window:
-        record.suppressed += 1
         return
 
-    suppressed = record.suppressed
     record.reported_at = now
-    record.suppressed = 0
-    suffix = (
-        f"\n\n{suppressed} more of this same error in the last "
-        f"{_duration(now - record.first_at)}; first seen then"
-        if suppressed
-        else ""
+    await _send(
+        _format_report(exc, where=where, context=context, trace=trace, seen=record)
     )
-    await _send(f"{detail}{suffix}")
