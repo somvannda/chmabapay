@@ -367,22 +367,22 @@ async def _maybe_promote_admin_and_seed_hq(
 # clear the debt. Named explicitly rather than inferred, because "the billing page" *is* the
 # point of the state — a frozen merchant with no way to pay is a merchant who phones support.
 #
-# `POST /v1/billing/change-plan` is here in both of its uses: paying by settling the invoice,
+# `POST /api/v1/billing/change-plan` is here in both of its uses: paying by settling the invoice,
 # and choosing a smaller plan instead. Both are ways out (§7.5), and neither grants anything
 # until it is paid — a paid tier lands in `pending` with an invoice.
 RESTRICTED_ALLOWED_WRITES: frozenset[tuple[str, str]] = frozenset(
-    {("POST", "/v1/billing/change-plan")}
+    {("POST", "/api/v1/billing/change-plan")}
 )
 
 # The reads a frozen account may *not* have, because they are not reads.
 #
-# `GET /v1/transactions/check-status/{id}` settles the payment it polls: its handler reaches
+# `GET /api/v1/transactions/check-status/{id}` settles the payment it polls: its handler reaches
 # `status_reconciler` → `services.payments.mark_paid`, which flips the payment, writes a ledger
 # entry, fires a webhook and can settle a plan invoice. It is exempt from the read allowance on
 # purpose, and refusing it costs the merchant nothing: settlement is W1's job, on a 5s/30s
 # sweep, and it does not depend on the merchant's own poll. An in-flight code a customer is
 # still holding therefore settles normally (§7.6) — what stops is the *merchant* driving writes.
-RESTRICTED_REFUSED_READS: frozenset[str] = frozenset({"/v1/transactions/check-status"})
+RESTRICTED_REFUSED_READS: frozenset[str] = frozenset({"/api/v1/transactions/check-status"})
 
 
 def _under(path: str, prefix: str) -> bool:
@@ -812,7 +812,7 @@ if settings.enable_dev_gateway:
             session, email=email, name=email.split("@")[0], rename_existing=False
         )
         # Same promotion the Google callback does, so CHMABAPAY_ADMIN_EMAILS
-        # accounts can reach /v1/admin and the admin UI in dev too.
+        # accounts can reach /api/v1/admin and the admin UI in dev too.
         await _maybe_promote_admin_and_seed_hq(session, account)
         await session.refresh(account)
         jwt = _make_session_jwt(account, "dev")

@@ -105,7 +105,7 @@ export default function DashboardKeysPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await fetch("/v1/keys", { credentials: "include" });
+      const res = await fetch("/api/v1/keys", { credentials: "include" });
       // A failed read used to leave `keys` empty, which the page then rendered as
       // "No API keys yet" — the same screen as a fresh account, and the one state in
       // which a merchant might create a duplicate key.
@@ -135,7 +135,7 @@ export default function DashboardKeysPage() {
       e.preventDefault();
       setCreating(true);
       try {
-        const res = await fetch("/v1/keys", {
+        const res = await fetch("/api/v1/keys", {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -170,7 +170,7 @@ export default function DashboardKeysPage() {
       }
       setBusy({ id: String(key.id), action: "revoke" });
       try {
-        const res = await fetch(`/v1/keys/${key.id}/revoke`, {
+        const res = await fetch(`/api/v1/keys/${key.id}/revoke`, {
           method: "POST",
           credentials: "include",
         });
@@ -198,7 +198,7 @@ export default function DashboardKeysPage() {
       }
       setBusy({ id: String(key.id), action: "rotate" });
       try {
-        const res = await fetch(`/v1/keys/${key.id}/rotate`, {
+        const res = await fetch(`/api/v1/keys/${key.id}/rotate`, {
           method: "POST",
           credentials: "include",
         });

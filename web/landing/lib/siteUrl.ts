@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 /**
  * The origin this app is being served from.
  *
- * The API is on the same origin — the edge routes `/v1/*`, `/pay/*` and `/auth/*`
+ * The API is on the same origin — the edge routes `/api/v1/*`, `/pay/*` and `/auth/*`
  * to the API and everything else to this app — so the request's own host is the
  * public base URL in every environment: `https://pay.chmaba.com` in production,
  * the local port during development.

@@ -21,7 +21,7 @@ export default function AdminLoginPage() {
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/v1/me", { credentials: "include" });
+        const res = await fetch("/api/v1/me", { credentials: "include" });
         if (res.ok && alive) {
           const me = (await res.json()) as {
             is_platform_admin?: boolean;

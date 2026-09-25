@@ -91,7 +91,7 @@ export default function StoreSettingsPage({
     setNotFound(false);
     (async () => {
       try {
-        const res = await fetch(`/v1/stores/${publicId}`, {
+        const res = await fetch(`/api/v1/stores/${publicId}`, {
           credentials: "include",
         });
         if (res.status === 404) {
@@ -172,7 +172,7 @@ export default function StoreSettingsPage({
           body.logo_image_url = logoImageUrl || null;
           body.whitelabel_css = whitelabelCss || null;
         }
-        const res = await fetch(`/v1/stores/${publicId}`, {
+        const res = await fetch(`/api/v1/stores/${publicId}`, {
           method: "PATCH",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -217,7 +217,7 @@ export default function StoreSettingsPage({
             merchant_name: paywayMerchantName.trim() || name.trim(),
           },
         };
-        const res = await fetch(`/v1/stores/${publicId}`, {
+        const res = await fetch(`/api/v1/stores/${publicId}`, {
           method: "PATCH",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -249,7 +249,7 @@ export default function StoreSettingsPage({
         const body: Record<string, unknown> = {
           telegram_chat_id: telegramChatId || null,
         };
-        const res = await fetch(`/v1/stores/${publicId}`, {
+        const res = await fetch(`/api/v1/stores/${publicId}`, {
           method: "PATCH",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -271,7 +271,7 @@ export default function StoreSettingsPage({
     setTgTestResult(null);
     setActionError(null);
     try {
-      const res = await fetch(`/v1/stores/${publicId}/telegram/test`, {
+      const res = await fetch(`/api/v1/stores/${publicId}/telegram/test`, {
         method: "POST",
         credentials: "include",
       });

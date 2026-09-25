@@ -2,12 +2,12 @@
 
 The subject throughout is one property: **a paid plan is bought, not clicked.** The
 route used to cancel the current subscription and activate the new one in the same
-request, collecting nothing — so `POST /v1/billing/change-plan {"plan_code": "pro"}`
+request, collecting nothing — so `POST /api/v1/billing/change-plan {"plan_code": "pro"}`
 was a free upgrade to the top tier, and the only thing standing between a merchant and
 $59.99/month of features was that they had to find the button.
 
 The other half is that an invoice must be payable. It was not: with no HQ store
-seeded, `GET /v1/billing/invoices/{id}/khqr` answered a raw 500 code and the merchant
+seeded, `GET /api/v1/billing/invoices/{id}/khqr` answered a raw 500 code and the merchant
 had nothing to scan.
 """
 
@@ -123,7 +123,7 @@ async def test_upgrading_to_a_paid_plan_raises_an_invoice_instead_of_granting_it
     """The revenue leak, closed: clicking Pro must produce a bill, not a plan."""
     account = await _signed_in(client, with_subscription_for="free")
 
-    res = await client.post("/v1/billing/change-plan", json={"plan_code": "starter"})
+    res = await client.post("/api/v1/billing/change-plan", json={"plan_code": "starter"})
     assert res.status_code == 200, res.text
     body = res.json()
 
@@ -140,13 +140,13 @@ async def test_upgrading_to_a_paid_plan_raises_an_invoice_instead_of_granting_it
 
     # And the API agrees the account is still on Free, which is the part that
     # actually stops the leak: every plan gate reads this.
-    sub = (await client.get("/v1/billing/subscription")).json()
+    sub = (await client.get("/api/v1/billing/subscription")).json()
     assert sub["plan"]["code"] == "free"
 
 
 async def test_paying_the_invoice_is_what_puts_the_new_plan_in_force(client):
     account = await _signed_in(client, with_subscription_for="free")
-    await client.post("/v1/billing/change-plan", json={"plan_code": "pro"})
+    await client.post("/api/v1/billing/change-plan", json={"plan_code": "pro"})
     invoice = await _invoice(account.id)
     assert invoice is not None and invoice.status == "open"
 
@@ -192,7 +192,7 @@ async def test_paying_the_invoice_is_what_puts_the_new_plan_in_force(client):
     assert active[0].id == refreshed.subscription_id
     assert all(s.status == "canceled" for s in subs if s.id != active[0].id)
 
-    sub = (await client.get("/v1/billing/subscription")).json()
+    sub = (await client.get("/api/v1/billing/subscription")).json()
     assert sub["plan"]["code"] == "pro"
 
 
@@ -201,14 +201,14 @@ async def test_a_downgrade_still_applies_immediately(client):
     trap them on it."""
     account = await _signed_in(client, with_subscription_for="starter")
 
-    res = await client.post("/v1/billing/change-plan", json={"plan_code": "free"})
+    res = await client.post("/api/v1/billing/change-plan", json={"plan_code": "free"})
     assert res.status_code == 200
     assert res.json()["payment_required"] is False
     assert res.json()["invoice"] is None
 
     subs = await _subscriptions_for(account.id)
     assert [s.status for s in subs] == ["canceled", "active"]
-    sub = (await client.get("/v1/billing/subscription")).json()
+    sub = (await client.get("/api/v1/billing/subscription")).json()
     assert sub["plan"]["code"] == "free"
 
 
@@ -217,7 +217,7 @@ async def test_reselecting_the_current_plan_is_refused(client):
     the plan they are already on."""
     await _signed_in(client, with_subscription_for="pro")
 
-    res = await client.post("/v1/billing/change-plan", json={"plan_code": "pro"})
+    res = await client.post("/api/v1/billing/change-plan", json={"plan_code": "pro"})
     assert res.status_code == 400
     assert res.json()["detail"] == "plan_unchanged"
 
@@ -231,10 +231,10 @@ async def test_an_unpaid_invoice_blocks_a_second_purchase(client):
     """
     account = await _signed_in(client, with_subscription_for="free")
     assert (
-        await client.post("/v1/billing/change-plan", json={"plan_code": "starter"})
+        await client.post("/api/v1/billing/change-plan", json={"plan_code": "starter"})
     ).status_code == 200
 
-    second = await client.post("/v1/billing/change-plan", json={"plan_code": "pro"})
+    second = await client.post("/api/v1/billing/change-plan", json={"plan_code": "pro"})
     assert second.status_code == 409
     assert second.json()["detail"].startswith("open_invoice_unpaid")
 
@@ -582,13 +582,13 @@ async def test_the_same_invoice_gives_the_same_payment_twice(client):
     original = settings.chmabapay_hq_store_id
     settings.chmabapay_hq_store_id = store.public_id
     try:
-        await client.post("/v1/billing/change-plan", json={"plan_code": "starter"})
+        await client.post("/api/v1/billing/change-plan", json={"plan_code": "starter"})
         invoice = await _invoice(account.id)
         assert invoice is not None
 
-        first = await client.get(f"/v1/billing/invoices/{invoice.id}/khqr")
+        first = await client.get(f"/api/v1/billing/invoices/{invoice.id}/khqr")
         assert first.status_code == 201, first.text
-        second = await client.get(f"/v1/billing/invoices/{invoice.id}/khqr")
+        second = await client.get(f"/api/v1/billing/invoices/{invoice.id}/khqr")
         assert second.status_code == 201, second.text
 
         assert first.json()["payment_id"] == second.json()["payment_id"]
@@ -602,7 +602,7 @@ async def test_invoice_payment_is_refused_with_an_answer_a_merchant_can_use(clie
     told that, instead of being shown an instruction addressed to an operator."""
     await _plans()
     account = await _signed_in(client, with_subscription_for="free")
-    await client.post("/v1/billing/change-plan", json={"plan_code": "starter"})
+    await client.post("/api/v1/billing/change-plan", json={"plan_code": "starter"})
     invoice = await _invoice(account.id)
     assert invoice is not None
 
@@ -610,7 +610,7 @@ async def test_invoice_payment_is_refused_with_an_answer_a_merchant_can_use(clie
     original = settings.chmabapay_hq_store_id
     settings.chmabapay_hq_store_id = None
     try:
-        res = await client.get(f"/v1/billing/invoices/{invoice.id}/khqr")
+        res = await client.get(f"/api/v1/billing/invoices/{invoice.id}/khqr")
     finally:
         settings.chmabapay_hq_store_id = original
 
@@ -642,11 +642,11 @@ async def test_a_lapsed_code_is_replaced_rather_than_handed_back_dead(client):
     original = settings.chmabapay_hq_store_id
     settings.chmabapay_hq_store_id = store.public_id
     try:
-        await client.post("/v1/billing/change-plan", json={"plan_code": "starter"})
+        await client.post("/api/v1/billing/change-plan", json={"plan_code": "starter"})
         invoice = await _invoice(account.id)
         assert invoice is not None
 
-        first = await client.get(f"/v1/billing/invoices/{invoice.id}/khqr")
+        first = await client.get(f"/api/v1/billing/invoices/{invoice.id}/khqr")
         assert first.status_code == 201, first.text
 
         # What the expiry sweeper does once ABA's window closes.
@@ -658,7 +658,7 @@ async def test_a_lapsed_code_is_replaced_rather_than_handed_back_dead(client):
             payment.status = models.PAYMENT_EXPIRED
             await session.commit()
 
-        second = await client.get(f"/v1/billing/invoices/{invoice.id}/khqr")
+        second = await client.get(f"/api/v1/billing/invoices/{invoice.id}/khqr")
         assert second.status_code == 201, second.text
         assert second.json()["payment_id"] != first.json()["payment_id"]
         assert second.json()["amount_cents"] == first.json()["amount_cents"]
@@ -674,7 +674,7 @@ async def test_a_lapsed_code_is_replaced_rather_than_handed_back_dead(client):
 
         # A live successor is reused, not replaced again: the same window that caused
         # the problem must not mint a third code.
-        third = await client.get(f"/v1/billing/invoices/{invoice.id}/khqr")
+        third = await client.get(f"/api/v1/billing/invoices/{invoice.id}/khqr")
         assert third.status_code == 201, third.text
         assert third.json()["payment_id"] == second.json()["payment_id"]
     finally:
@@ -859,7 +859,7 @@ async def test_the_chooser_moves_the_allowance(client):
         (branches[5].public_id, branches[6].id),
     ]
     for public_id, displaced_id in expected:
-        res = await client.post(f"/v1/stores/{public_id}/activate")
+        res = await client.post(f"/api/v1/stores/{public_id}/activate")
         assert res.status_code == 200, res.text
         body = res.json()
         assert body["moved"] is True
@@ -873,7 +873,7 @@ async def test_the_chooser_moves_the_allowance(client):
 
     # Quiet on a repeat: the store is already live, so nothing changes and no second row
     # is written — a double-click is not a second decision.
-    again = await client.post(f"/v1/stores/{branches[5].public_id}/activate")
+    again = await client.post(f"/api/v1/stores/{branches[5].public_id}/activate")
     assert again.status_code == 200, again.text
     assert again.json()["moved"] is False
     assert again.json()["displaced"] is None
@@ -896,7 +896,7 @@ async def test_a_pick_on_a_plan_with_room_displaces_nothing(client):
 
     assert len(await _hold(account.id, max_stores=2)) == 1
 
-    res = await client.post(f"/v1/stores/{branches[2].public_id}/activate")
+    res = await client.post(f"/api/v1/stores/{branches[2].public_id}/activate")
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["moved"] is True
@@ -919,7 +919,7 @@ async def test_the_chooser_refuses_a_store_an_operator_disabled(client):
         assert attached is not None
         await store_svc.disable_store(session, attached, branches[2].public_id)
 
-    res = await client.post(f"/v1/stores/{branches[2].public_id}/activate")
+    res = await client.post(f"/api/v1/stores/{branches[2].public_id}/activate")
     assert res.status_code == 409
     assert res.json()["detail"] == "store_disabled"
     # Nothing moved: the refusal is not a partial swap.
@@ -927,7 +927,7 @@ async def test_the_chooser_refuses_a_store_an_operator_disabled(client):
     assert await _slot_moves() == []
 
     # A store that was never held is a no-op, not a swap.
-    live = await client.post(f"/v1/stores/{branches[0].public_id}/activate")
+    live = await client.post(f"/api/v1/stores/{branches[0].public_id}/activate")
     assert live.status_code == 200
     assert live.json()["moved"] is False
     assert await _live_ids(account.id) == [branches[0].id]
@@ -948,8 +948,8 @@ async def test_two_picks_at_once_still_leave_exactly_the_allowance(client):
     await _hold(account.id, max_stores=5)
 
     first, second = await asyncio.gather(
-        client.post(f"/v1/stores/{branches[5].public_id}/activate"),
-        client.post(f"/v1/stores/{branches[6].public_id}/activate"),
+        client.post(f"/api/v1/stores/{branches[5].public_id}/activate"),
+        client.post(f"/api/v1/stores/{branches[6].public_id}/activate"),
     )
 
     assert first.status_code == 200, first.text
@@ -976,14 +976,14 @@ async def test_a_held_store_is_refused_with_its_own_code(client):
     live = next(s for s in branches if s.id in live_ids)
 
     refused = await client.post(
-        "/v1/payments", json={"amount": 1.0, "store": held.public_id}
+        "/api/v1/payments", json={"amount": 1.0, "store": held.public_id}
     )
     assert refused.status_code == 400, refused.text
     assert refused.json()["detail"] == "store_billing_suspended"
 
     # The store that kept its slot is untouched, which is the point of naming only the one.
     minted = await client.post(
-        "/v1/payments", json={"amount": 1.0, "store": live.public_id}
+        "/api/v1/payments", json={"amount": 1.0, "store": live.public_id}
     )
     assert minted.status_code == 201, minted.text
 
@@ -1125,17 +1125,17 @@ async def test_a_plan_choice_does_not_meter_the_month_it_was_made_in(client):
     body = {"amount": 1.0, "store": store.public_id}
 
     # The trap, demonstrated: over the allowance already, so the next code is refused.
-    refused = await client.post("/v1/payments", json=body)
+    refused = await client.post("/api/v1/payments", json=body)
     assert refused.status_code == 402
     assert refused.json()["detail"] == "quota_exceeded"
 
     # Choosing a smaller plan mid-month is not a reason to stop serving them today.
     moved = await client.post(
-        "/v1/billing/change-plan", json={"plan_code": "free_tiny"}
+        "/api/v1/billing/change-plan", json={"plan_code": "free_tiny"}
     )
     assert moved.status_code == 200, moved.text
 
-    working = await client.post("/v1/payments", json=body)
+    working = await client.post("/api/v1/payments", json=body)
     assert working.status_code == 201, working.text
 
     # The boundary is where it starts biting. Moving the cancellation into a previous month is
@@ -1152,7 +1152,7 @@ async def test_a_plan_choice_does_not_meter_the_month_it_was_made_in(client):
         canceled.canceled_at = datetime.now(UTC) - timedelta(days=40)
         await session.commit()
 
-    after = await client.post("/v1/payments", json=body)
+    after = await client.post("/api/v1/payments", json=body)
     assert after.status_code == 402
     assert after.json()["detail"] == "quota_exceeded"
 
@@ -1173,13 +1173,13 @@ async def test_the_deferral_is_reported_and_the_date_is_the_one_enforced(client)
     body = {"amount": 1.0, "store": store.public_id}
 
     # Nothing has been given up, so nothing is deferred and the bar means what it says.
-    quiet = (await client.get("/v1/billing/subscription")).json()
+    quiet = (await client.get("/api/v1/billing/subscription")).json()
     assert quiet["quota_deferred_until"] is None
 
-    moved = await client.post("/v1/billing/change-plan", json={"plan_code": "free_tiny"})
+    moved = await client.post("/api/v1/billing/change-plan", json={"plan_code": "free_tiny"})
     assert moved.status_code == 200, moved.text
 
-    reported = (await client.get("/v1/billing/subscription")).json()
+    reported = (await client.get("/api/v1/billing/subscription")).json()
     deferred = datetime.fromisoformat(reported["quota_deferred_until"])
     now = datetime.now(UTC)
     # A first-of-month instant, still ahead, and no further off than the next boundary can be —
@@ -1189,7 +1189,7 @@ async def test_the_deferral_is_reported_and_the_date_is_the_one_enforced(client)
     assert now < deferred <= now + timedelta(days=32)
 
     # Over the allowance and still served. That is the state the note exists to explain.
-    assert (await client.post("/v1/payments", json=body)).status_code == 201
+    assert (await client.post("/api/v1/payments", json=body)).status_code == 201
 
     # The same predicate the first of the next month satisfies, with no clock to fake.
     async with session_factory() as session:
@@ -1204,9 +1204,9 @@ async def test_the_deferral_is_reported_and_the_date_is_the_one_enforced(client)
         canceled.canceled_at = now - timedelta(days=40)
         await session.commit()
 
-    cleared = (await client.get("/v1/billing/subscription")).json()
+    cleared = (await client.get("/api/v1/billing/subscription")).json()
     assert cleared["quota_deferred_until"] is None
-    assert (await client.post("/v1/payments", json=body)).status_code == 402
+    assert (await client.post("/api/v1/payments", json=body)).status_code == 402
 
 
 async def test_a_new_free_account_is_metered_from_its_first_month(client):
@@ -1233,7 +1233,7 @@ async def test_a_new_free_account_is_metered_from_its_first_month(client):
     await _settle_payments(account.id, store.id, 2)
 
     refused = await client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={"amount": 1.0, "store": store.public_id},
         headers={"Authorization": f"Bearer {raw_key}"},
     )
@@ -1491,7 +1491,7 @@ async def test_a_frozen_account_choosing_free_writes_the_debt_off_and_is_unfroze
     await _freeze(account.id)
 
     async with _session_as(account) as frozen:
-        res = await frozen.post("/v1/billing/change-plan", json={"plan_code": "free"})
+        res = await frozen.post("/api/v1/billing/change-plan", json={"plan_code": "free"})
         assert res.status_code == 200, res.text
         assert res.json()["payment_required"] is False
 
@@ -1526,7 +1526,7 @@ async def test_a_frozen_account_choosing_a_paid_plan_waits_for_the_money():
     await _freeze(account.id)
 
     async with _session_as(account) as frozen:
-        res = await frozen.post("/v1/billing/change-plan", json={"plan_code": "pro"})
+        res = await frozen.post("/api/v1/billing/change-plan", json={"plan_code": "pro"})
         assert res.status_code == 200, res.text
         body = res.json()
         assert body["payment_required"] is True

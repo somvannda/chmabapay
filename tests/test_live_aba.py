@@ -85,7 +85,7 @@ async def test_hosted_checkout_mints_a_real_aba_session(client, live_setup):
     store, headers = live_setup
 
     created = await client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={"amount": 0.01, "store": store.public_id},
         headers=headers,
     )
@@ -119,7 +119,7 @@ async def test_hosted_checkout_mints_a_real_aba_session(client, live_setup):
     # ABA must be able to answer for the session it just handed us; without that
     # the payment could never be confirmed.
     status = await client.post(
-        "/v1/khqr/payway/status",
+        "/api/v1/khqr/payway/status",
         json={
             "client_id": session["client_id"],
             "request_time": session["request_time"],
@@ -149,7 +149,7 @@ async def test_a_real_aba_code_stops_being_served_once_it_expires(client, live_s
     store, headers = live_setup
 
     created = await client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={"amount": 0.01, "store": store.public_id},
         headers=headers,
     )

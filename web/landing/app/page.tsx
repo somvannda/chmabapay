@@ -72,7 +72,7 @@ function backendBaseUrl(): string {
 
 async function fetchPublicPlans(): Promise<PublicPlan[]> {
   try {
-    const res = await fetch(`${backendBaseUrl()}/v1/billing/plans`, {
+    const res = await fetch(`${backendBaseUrl()}/api/v1/billing/plans`, {
       next: { revalidate: 60 },
       // A hung API must not hold the marketing page hostage. Unreachable is already
       // fast (connection refused), but "accepting and silent" is not, so the wait

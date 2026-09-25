@@ -10,7 +10,7 @@ import Link from "next/link";
  * They used to be typed in, and they drifted: the copy named three payment
  * allowances and three key limits that only the plans in the database could confirm.
  * An FAQ that disagrees with the Billing page is worse than one that says less, so the
- * two answers that quote limits are built from `/v1/billing/plans`, and when that read
+ * two answers that quote limits are built from `/api/v1/billing/plans`, and when that read
  * fails they drop the numbers instead of falling back to a remembered set.
  */
 
@@ -68,7 +68,7 @@ export default function DashboardHelpPage() {
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/v1/billing/plans", { credentials: "include" });
+        const res = await fetch("/api/v1/billing/plans", { credentials: "include" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as PlanOut[];
         if (alive && Array.isArray(data)) {

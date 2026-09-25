@@ -28,7 +28,7 @@ Prove the loop with a `FakeBakongGateway` so UI/API/webhooks are built and testa
 real rail is wired.
 
 - FastAPI skeleton; Postgres schema (data-model.md) + migrations (Alembic).
-- `POST /v1/payments` → dynamic KHQR via offline encoder (Phase 0 output) or stored mock → row.
+- `POST /api/v1/payments` → dynamic KHQR via offline encoder (Phase 0 output) or stored mock → row.
 - Hosted checkout page `/pay/:id` rendering the branded KHQR card + polling; success/failure redirects.
 - Webhook outbox + delivery worker with HMAC signing and retries (send to a public test sink).
 - Expiry worker. Atomic transitions + idempotency (replay same create → same id).

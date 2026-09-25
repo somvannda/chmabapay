@@ -21,7 +21,7 @@ from ..services import stores as svc
 from ..services import telegram
 
 router = APIRouter(
-    prefix="/v1/stores",
+    prefix="/api/v1/stores",
     tags=["stores"],
     dependencies=AUTH_SECURITY,
     responses=AUTH_ERRORS,

@@ -14,7 +14,7 @@ export default function robots(): MetadataRoute.Robots {
         allow: "/",
         // Authenticated app, checkout hand-off and the API itself. Crawling any of
         // these either leaks customer data or burns rate-limit budget.
-        disallow: ["/dashboard", "/pay", "/v1", "/auth"],
+        disallow: ["/dashboard", "/pay", "/api/v1", "/auth"],
       },
     ],
     sitemap: `${baseUrl}/sitemap.xml`,

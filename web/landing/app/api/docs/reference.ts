@@ -70,13 +70,13 @@ export const errorGroups: ErrorGroup[] = [
         status: 400,
         code: "store_disabled",
         meaning:
-          "The merchant or an operator switched the store off. Re-enable it with `POST /v1/stores/{public_id}/enable`.",
+          "The merchant or an operator switched the store off. Re-enable it with `POST /api/v1/stores/{public_id}/enable`.",
       },
       {
         status: 400,
         code: "store_billing_suspended",
         meaning:
-          "The platform is holding the store because the account has more live stores than its plan allows. Bring it back with `POST /v1/stores/{public_id}/activate`.",
+          "The platform is holding the store because the account has more live stores than its plan allows. Bring it back with `POST /api/v1/stores/{public_id}/activate`.",
       },
       {
         status: 403,
@@ -149,7 +149,7 @@ export const errorGroups: ErrorGroup[] = [
         status: 400,
         code: "payment_link_disabled",
         meaning:
-          "The store has no active payment link, so there is no destination to mint a code against. Attach one with `PUT /v1/stores/{public_id}/link`.",
+          "The store has no active payment link, so there is no destination to mint a code against. Attach one with `PUT /api/v1/stores/{public_id}/link`.",
       },
       {
         status: 400,
@@ -236,13 +236,13 @@ export const errorGroups: ErrorGroup[] = [
         status: 400,
         code: "payload_too_long",
         meaning:
-          "The `payload` sent to `GET /v1/khqr/render.svg` is larger than a QR code can hold.",
+          "The `payload` sent to `GET /api/v1/khqr/render.svg` is larger than a QR code can hold.",
       },
       {
         status: 400,
         code: "invalid_payload",
         meaning:
-          "The `payload` sent to `GET /v1/khqr/render.svg` cannot be encoded as a QR code.",
+          "The `payload` sent to `GET /api/v1/khqr/render.svg` cannot be encoded as a QR code.",
       },
     ],
   },
@@ -294,7 +294,7 @@ export const errorGroups: ErrorGroup[] = [
         status: 410,
         code: "payment_{expired|failed|superseded|reversed}",
         meaning:
-          "The code is dead, so the QR is withdrawn rather than redrawn — a replacement is a new payment, via `POST /v1/payments/{public_id}/reissue`. This is a normal outcome, not a fault: a payment can still settle after `expired`, and the row is promoted to `paid` when it does.",
+          "The code is dead, so the QR is withdrawn rather than redrawn — a replacement is a new payment, via `POST /api/v1/payments/{public_id}/reissue`. This is a normal outcome, not a fault: a payment can still settle after `expired`, and the row is promoted to `paid` when it does.",
       },
     ],
   },
@@ -351,7 +351,7 @@ export const rateLimits: RateLimit[] = [
     rule: "payment_create",
     scope: "per API key",
     limit: "60 / minute",
-    applies: "`POST /v1/payments`",
+    applies: "`POST /api/v1/payments`",
   },
   {
     rule: "khqr",
@@ -386,8 +386,8 @@ export const conventions: Convention[] = [
   },
   {
     title: "Idempotency",
-    body: "`POST /v1/payments` accepts an `idempotency_key` in the body. Retrying with the same value returns the original payment instead of minting a second one, which is what makes a network retry safe. Use your own order id. The header form is not read — it must be in the body.",
-    code: `curl -X POST "$CHMABA_API/v1/payments" \\
+    body: "`POST /api/v1/payments` accepts an `idempotency_key` in the body. Retrying with the same value returns the original payment instead of minting a second one, which is what makes a network retry safe. Use your own order id. The header form is not read — it must be in the body.",
+    code: `curl -X POST "$CHMABA_API/api/v1/payments" \\
   -H "Authorization: Bearer $CHMABA_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{ "amount": 5.50, "idempotency_key": "order_1042", "store": "st_…" }'`,
@@ -398,13 +398,13 @@ export const conventions: Convention[] = [
   },
   {
     title: "Pagination",
-    body: "List endpoints take `limit` and `offset` and wrap their rows: `{ \"data\": [ … ] }`. Most cap `limit` at 100. `GET /v1/reports/payments.json` adds a `summary` and a `pagination` block; `GET /v1/stores` returns every store and is not paginated, because an account's store count is bounded by its plan.",
-    code: `curl "$CHMABA_API/v1/payments?status=paid&limit=50&offset=100" \\
+    body: "List endpoints take `limit` and `offset` and wrap their rows: `{ \"data\": [ … ] }`. Most cap `limit` at 100. `GET /api/v1/reports/payments.json` adds a `summary` and a `pagination` block; `GET /api/v1/stores` returns every store and is not paginated, because an account's store count is bounded by its plan.",
+    code: `curl "$CHMABA_API/payments?status=paid&limit=50&offset=100" \\
   -H "Authorization: Bearer $CHMABA_KEY"`,
   },
   {
     title: "Versioning",
-    body: "The API is versioned in the path — every route is under `/v1`. Additive changes (a new field, a new endpoint, a new error code) ship within `v1`; a breaking change would arrive as `/v2` alongside it rather than replacing it.",
+    body: "The API is versioned in the path — every route is under `/api/v1`. Additive changes (a new field, a new endpoint, a new error code) ship within `v1`; a breaking change would arrive as `/v2` alongside it rather than replacing it.",
   },
   {
     title: "Errors",

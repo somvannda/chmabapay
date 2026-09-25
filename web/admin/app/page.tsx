@@ -81,7 +81,7 @@ export default function AdminOverviewPage() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await apiFetch("/v1/admin/overview", { credentials: "include" });
+      const res = await apiFetch("/api/v1/admin/overview", { credentials: "include" });
       if (!res.ok) throw new Error(await readApiError(res));
       const data = (await res.json()) as AdminOverview;
       setOverview(data);

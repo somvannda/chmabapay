@@ -167,7 +167,7 @@ full picture.
 Dev routes under `/_dev` are the fake Bakong rail — **never enable them outside
 development**. `ENABLE_DEV_GATEWAY` defaults to off; the Docker stack turns it on from
 `deploy/.env.local`, the host from `.env`, and `deploy/docker-compose.prod.yml` hardcodes
-it off. Store provisioning API: `POST /v1/stores`, `PUT /v1/stores/{id}/link`.
+it off. Store provisioning API: `POST /api/v1/stores`, `PUT /api/v1/stores/{id}/link`.
 
 ### Running the tests
 
@@ -210,11 +210,11 @@ payment. A test that never runs is not coverage.
 ### Implemented in the POC
 - Tenant model: account (POS) → auto-provisioned sub-merchants → per-store payment links.
 - Account-scoped keys (provision + charge any store) and store-scoped keys (one store only).
-- `POST/GET /v1/payments` + list, hosted checkout `/pay/:id`, idempotency. The QR window
+- `POST/GET /api/v1/payments` + list, hosted checkout `/pay/:id`, idempotency. The QR window
   is **the rail's, not ours**: ABA returns `expire_in_sec: 180` for a hosted checkout and
   we mirror it, so the 5-minute `checkout_ttl_seconds` applies only to codes we build
   ourselves. A code that lapses is withdrawn (`410`) and replaced via
-  `POST /v1/payments/{id}/reissue`, with lineage kept.
+  `POST /api/v1/payments/{id}/reissue`, with lineage kept.
 - One **shared** account-level webhook + signing secret; events tagged with the sub-merchant.
 - Outbox (events written atomically with state change) + retry delivery worker, HMAC-SHA256
   signatures (`t=...,v1=...`), store-scoped endpoint override.

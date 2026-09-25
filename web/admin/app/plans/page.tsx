@@ -404,7 +404,7 @@ export default function AdminPlansPage() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await apiFetch("/v1/admin/plans", { credentials: "include" });
+      const res = await apiFetch("/api/v1/admin/plans", { credentials: "include" });
       if (!res.ok) throw new Error(await readApiError(res));
       const data = (await res.json()) as Plan[];
       setPlans(Array.isArray(data) ? data : []);
@@ -460,7 +460,7 @@ export default function AdminPlansPage() {
       setSavingId(plan.id);
       setErrorMsg(null);
       try {
-        const res = await apiFetch(`/v1/admin/plans/${plan.id}`, {
+        const res = await apiFetch(`/api/v1/admin/plans/${plan.id}`, {
           method: "PATCH",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -542,7 +542,7 @@ export default function AdminPlansPage() {
     setCreating(true);
     setErrorMsg(null);
     try {
-      const res = await apiFetch("/v1/admin/plans", {
+      const res = await apiFetch("/api/v1/admin/plans", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -570,7 +570,7 @@ export default function AdminPlansPage() {
     setDeletingId(plan.id);
     setErrorMsg(null);
     try {
-      const res = await apiFetch(`/v1/admin/plans/${plan.id}`, {
+      const res = await apiFetch(`/api/v1/admin/plans/${plan.id}`, {
         method: "DELETE",
         credentials: "include",
       });

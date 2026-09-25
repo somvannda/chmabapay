@@ -69,7 +69,7 @@ export default function DashboardStoresNewPage() {
     setLinkError(null);
     setUpgrade(false);
     try {
-      const res = await fetch("/v1/stores", {
+      const res = await fetch("/api/v1/stores", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

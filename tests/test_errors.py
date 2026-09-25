@@ -210,7 +210,7 @@ async def test_an_unhandled_route_exception_is_reported_and_still_answers_500(
         async with httpx.AsyncClient(
             transport=transport, base_url="http://localhost"
         ) as c:
-            res = await c.get("/v1/me")
+            res = await c.get("/api/v1/me")
     finally:
         app.dependency_overrides.clear()
 
@@ -218,7 +218,7 @@ async def test_an_unhandled_route_exception_is_reported_and_still_answers_500(
     assert len(sent) == 1
     assert sent[0].startswith("ChmabaPay · ERROR · API request")
     assert "What:    RuntimeError: dependency exploded" in sent[0]
-    assert "Call:    GET /v1/me" in sent[0]
+    assert "Call:    GET /api/v1/me" in sent[0]
     # The trace id is bound only for the life of the request, and the report is the
     # one place it can still be quoted — which is why the capture happens before the
     # middleware releases it.

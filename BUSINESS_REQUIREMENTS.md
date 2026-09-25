@@ -109,8 +109,8 @@ Mirror CutLuy pricing tiers exactly for merchant familiarity. **Only Business ac
 
 **Enforcement note.** White-label checkout is enforced today as a per-account entitlement
 (`Account.whitelabel_enabled`), granted by the platform operator in the admin console
-(`PATCH /v1/admin/accounts/{account_id}`) — there is no automatic plan → entitlement mapping yet.
-Without it, `POST`/`PATCH /v1/stores` reject the branding fields with `403 whitelabel_not_enabled`
+(`PATCH /api/v1/admin/accounts/{account_id}`) — there is no automatic plan → entitlement mapping yet.
+Without it, `POST`/`PATCH /api/v1/stores` reject the branding fields with `403 whitelabel_not_enabled`
 and `/pay/{id}` renders platform-branded. The tier column above describes the intended pricing
 packaging, not the current mechanism.
 
@@ -249,7 +249,7 @@ For payment PAID event:
 4. **POS Integration (Sokha's PHP code)**
    - Sample curl (copy from docs inside dashboard):
      ```
-     curl -X POST https://api.chmabapay.com/v1/payments \
+     curl -X POST https://api.chmabapay.com/api/v1/payments \
        -H "Authorization: Bearer st_live_aB3cXyZ..." \
        -H "Content-Type: application/json" \
        -d '{"amount": 5.50, "reference_id": "ticket_42", "metadata": {"table": "A3"}}'
@@ -277,7 +277,7 @@ For payment PAID event:
 ### Exit Criteria for Demo ✅
 - [ ] Sokha can sign in with Google
 - [ ] Paste a PayWay link → store is ACTIVE
-- [ ] Make test payment via `/v1/payments` with st_… key
+- [ ] Make test payment via `/api/v1/payments` with st_… key
 - [ ] Trigger fake rail payment (Phase 1 dev `/_dev/payments/{id}/pay`)
 - [ ] Signed webhook is delivered to `tools/sink.py` (our dev webhook sink server, already existing) → verify signature passes
 
@@ -301,7 +301,7 @@ For payment PAID event:
 4. Account-level Webhooks → **[+ Add shared webhook]**
    → URL `https://api.khmerpos.kh/chmabapay-hq` + signing secret `whsec_khmerpos_1a2b…`
 5. Stores → **[+ Create Store: "KhmerPOS HQ Billing"]** with KhmerPOS's own ABA PayWay link
-6. Test: 49$ subscription payment → `POST /v1/payments` with ck_… key → `{ store: "st_khmerpos_billing", amount: 49.00, reference_id: "khmerpos_sub_8821" }`
+6. Test: 49$ subscription payment → `POST /api/v1/payments` with ck_… key → `{ store: "st_khmerpos_billing", amount: 49.00, reference_id: "khmerpos_sub_8821" }`
    → Customer pays → webhook to khmerpos HQ URL → subscription activated. **Use Case A Works.**
 
 #### Step 2 — Upgrade to Scale (Use Case B: White-label SaaS to KhmerPOS's customers)
@@ -317,7 +317,7 @@ For payment PAID event:
      - Tab 3: Bank Code dropdown + Account # (Style B derive_bakong_id)
 9. **Sokha (end-customer of KhmerPOS — NOT a ChmabaPay user!)** enters ABA PayWay link + bakong_id → KhmerPOS backend makes:
    ```
-   POST /v1/platform/sub-merchants
+   POST /api/v1/platform/sub-merchants
    Authorization: Bearer ck_live_khmerpos_xyz…
    {
      "external_id": "khmerpos_user_sokha_7721",
@@ -335,7 +335,7 @@ For payment PAID event:
    ```
    → Response: 201 `{ sub_merchant_id: "sm_sokha_abc", resolved_bakong_id: "1260716…", tag30_00: "abaakhppxxx@abaa" }`
    → Internally: a "shadow store" st_shadow_sokha_… + PaymentLink auto-created under KhmerPOS account. Sokha never sees ChmabaPay UI.
-10. Next day customer buys noodles: KhmerPOS → `POST /v1/payments` with `sub_merchant_id=sm_sokha_abc` + amount 5.50
+10. Next day customer buys noodles: KhmerPOS → `POST /api/v1/payments` with `sub_merchant_id=sm_sokha_abc` + amount 5.50
     → ChmabaPay resolver hits sub_merchant → shadow store → uses SOKHA'S PaymentLink destination → **money settles to SOKHA'S ABA account, not KhmerPOS's**
 11. Customer scans → pays → Bakong settles → mark_paid → SubMerchant counters incremented atomically: `total_payments_count +=1`, `total_volume_cents += 550`
 12. Webhook fires to KhmerPOS's shared HQ URL with payload including `sub_merchant_id=sm_sokha_abc` and `external_id=khmerpos_user_sokha_7721` → KhmerPOS correlates → kitchen prints ticket in Sokha's shop.
@@ -343,7 +343,7 @@ For payment PAID event:
 ### Exit Criteria for Demo ✅
 - [ ] Create shared ck_… account key → generate payment → works WITHOUT specifying store (single store auto fallback)
 - [ ] Upgrade to Scale → Sub-Merchants tab appears
-- [ ] POST /v1/platform/sub-merchants → creates + returns shadow + destination resolved
+- [ ] POST /api/v1/platform/sub-merchants → creates + returns shadow + destination resolved
 - [ ] Create payment with sub_merchant_id → marks paid → SubMerchant counters +1
 - [ ] SubMerchant whitelabel_css_override renders on /pay/{id} HTML page
 
@@ -756,7 +756,7 @@ class AuditLog(Base):
     │  MERCHANT  │        │       CHMABAPAY           │       │   CUSTOMER APP   │
     │  (POS/WEB) │        │   GATEWAY (our code)      │       │  ABA/ACLEDA/WING │
     └──────┬─────┘        └─────────────┬─────────────┘       └────────┬─────────┘
-           │ ① POST /v1/payments         │                              │
+           │ ① POST /api/v1/payments         │                              │
            │ (amount, ref_id)            │                              │
            ──────────────────────────────>                              │
            │                            │ ② resolve scope → target store│
@@ -844,11 +844,11 @@ dev (Phase 1 fake rail — only when enable_dev_gateway=true)
 
 ```
 routers/auth.py           —   Google OAuth sign-in + session JWT cookie
-routers/platform.py       —   /v1/platform/*      (SaaS Business plan gate)
-routers/admin.py          —   /v1/admin/*         (is_platform_admin gate)
-routers/reports.py        —   /v1/reports/*       (CSV exports, plan gated)
-routers/account.py        —   /v1/me/*            (session auth, Settings page endpoints)
-routers/billing.py        —   /v1/billing/*       (plan list, upgrade/downgrade, invoices)
+routers/platform.py       —   /api/v1/platform/*      (SaaS Business plan gate)
+routers/admin.py          —   /api/v1/admin/*         (is_platform_admin gate)
+routers/reports.py        —   /api/v1/reports/*       (CSV exports, plan gated)
+routers/account.py        —   /api/v1/me/*            (session auth, Settings page endpoints)
+routers/billing.py        —   /api/v1/billing/*       (plan list, upgrade/downgrade, invoices)
 ```
 
 ### 10.2 Endpoint Matrix
@@ -858,31 +858,31 @@ routers/billing.py        —   /v1/billing/*       (plan list, upgrade/downgrad
 | **Auth** | GET | `/auth/google/login` | Public | — | — | 302 to Google |
 | | GET | `/auth/google/callback` | Public | — | code,state from Google | 302 to dashboard + set httpOnly session cookie JWT + CSRF token |
 | | POST | `/auth/signout` | Session | — | — | 204 clear cookie |
-| **Me / Account** | GET | `/v1/me` | Session | All | — | Account + plan features + active stores |
-| | PATCH | `/v1/me/profile` | Session | All | name, phone, lang, support_email | 200 |
-| **Keys** | GET | `/v1/keys` | API Key + Session | All | Query: ?scope=account/store | list |
-| | POST | `/v1/keys` | API Key + Session | Plan gate IND|BUS| | {name, mode, scope, store_id if store} | key display once |
-| | DELETE | `/v1/keys/{id}/revoke` | API Key + Session | Owner | reason | 200 revoked_at |
-| | POST | `/v1/keys/{id}/rotate` | API Key + Session | Owner | — | {new key display, deprecation_notice_at: old + 7 days} |
-| **Webhooks** | CRUD mirrors Keys → | `/v1/webhooks` | Session + Owner | Plan gate | — | — |
-| | POST | `/v1/webhooks/{id}/send-test` | Session | Owner | event_type | 200 request_id |
-| **Billing** | GET | `/v1/billing/plans` | Session | All | — | public plans matrix |
-| | POST | `/v1/billing/change-plan` | Session | Business | {plan_code, schedule_immediately (only upgrades)} | 200 (effective_at, proration if any) |
-| | GET | `/v1/billing/invoices` | Session | All | query period_month | list |
-| | GET | `/v1/billing/invoices/{id}/khqr` | Session | Owner | — | 201 {payment_id, qr_string → pay this invoice via our own gateway!} |
-| **SaaS Sub-Merchants (Platform Router)** | POST | `/v1/platform/sub-merchants` | API Key (account-scope) + plan gate | Business Scale/Ent | {external_id,display_name,khqr_config,redirects,whitelabel_css} | 201 + resolved bakong_id |
-| | GET | `/v1/platform/sub-merchants` | API Key or Session | Owner | query: ?status?external_id?page | list (paginated) |
-| | GET | `/v1/platform/sub-merchants/{id}` | Same | — | — | detail + counters |
-| | PATCH | `/v1/platform/sub-merchants/{id}` | Same | — | edits to destination/routing | 200 |
-| | POST | `/v1/platform/sub-merchants/import` | Same | — | CSV (max 1000) via multipart | {created, failed_rows: [error]} |
-| | DELETE | `/v1/platform/sub-merchants/{id}/disable` | Same | — | reason | 200 status=disabled |
-| **Reports** | GET | `/v1/reports/payments.csv` | API Key or Session | Plan gate: not Starter | ?from=&to=&store_id=&sub_merchant_id=&statuses= | CSV streaming |
-| | GET | `/v1/reports/payments.json` | Same | — | same filters + pagination | list + totals summary |
-| **Admin (Platform Owner only)** | CRUD Plan (mirror) | `/v1/admin/plans/*` | Session + is_admin | Owner | — | full CRUD |
-| | PATCH | `/v1/admin/accounts/{id}/suspend` | Session + is_admin | Owner | {reason} | status=suspended |
-| | POST | `/v1/admin/accounts/{id}/impersonate` | Session + is_admin | Owner | — | 200 + {impersonation_session_token} (admin can act as user for 30 min) |
-| | DELETE | `/v1/admin/keys/{id}/revoke-global` | Session + is_admin | Owner | {fraud_reason} | instant revoke |
-| | GET | `/v1/admin/reports/mrr.csv` | Session + is_admin | Owner | month | CSV platform MRR |
+| **Me / Account** | GET | `/api/v1/me` | Session | All | — | Account + plan features + active stores |
+| | PATCH | `/api/v1/me/profile` | Session | All | name, phone, lang, support_email | 200 |
+| **Keys** | GET | `/api/v1/keys` | API Key + Session | All | Query: ?scope=account/store | list |
+| | POST | `/api/v1/keys` | API Key + Session | Plan gate IND|BUS| | {name, mode, scope, store_id if store} | key display once |
+| | DELETE | `/api/v1/keys/{id}/revoke` | API Key + Session | Owner | reason | 200 revoked_at |
+| | POST | `/api/v1/keys/{id}/rotate` | API Key + Session | Owner | — | {new key display, deprecation_notice_at: old + 7 days} |
+| **Webhooks** | CRUD mirrors Keys → | `/api/v1/webhooks` | Session + Owner | Plan gate | — | — |
+| | POST | `/api/v1/webhooks/{id}/send-test` | Session | Owner | event_type | 200 request_id |
+| **Billing** | GET | `/api/v1/billing/plans` | Session | All | — | public plans matrix |
+| | POST | `/api/v1/billing/change-plan` | Session | Business | {plan_code, schedule_immediately (only upgrades)} | 200 (effective_at, proration if any) |
+| | GET | `/api/v1/billing/invoices` | Session | All | query period_month | list |
+| | GET | `/api/v1/billing/invoices/{id}/khqr` | Session | Owner | — | 201 {payment_id, qr_string → pay this invoice via our own gateway!} |
+| **SaaS Sub-Merchants (Platform Router)** | POST | `/api/v1/platform/sub-merchants` | API Key (account-scope) + plan gate | Business Scale/Ent | {external_id,display_name,khqr_config,redirects,whitelabel_css} | 201 + resolved bakong_id |
+| | GET | `/api/v1/platform/sub-merchants` | API Key or Session | Owner | query: ?status?external_id?page | list (paginated) |
+| | GET | `/api/v1/platform/sub-merchants/{id}` | Same | — | — | detail + counters |
+| | PATCH | `/api/v1/platform/sub-merchants/{id}` | Same | — | edits to destination/routing | 200 |
+| | POST | `/api/v1/platform/sub-merchants/import` | Same | — | CSV (max 1000) via multipart | {created, failed_rows: [error]} |
+| | DELETE | `/api/v1/platform/sub-merchants/{id}/disable` | Same | — | reason | 200 status=disabled |
+| **Reports** | GET | `/api/v1/reports/payments.csv` | API Key or Session | Plan gate: not Starter | ?from=&to=&store_id=&sub_merchant_id=&statuses= | CSV streaming |
+| | GET | `/api/v1/reports/payments.json` | Same | — | same filters + pagination | list + totals summary |
+| **Admin (Platform Owner only)** | CRUD Plan (mirror) | `/api/v1/admin/plans/*` | Session + is_admin | Owner | — | full CRUD |
+| | PATCH | `/api/v1/admin/accounts/{id}/suspend` | Session + is_admin | Owner | {reason} | status=suspended |
+| | POST | `/api/v1/admin/accounts/{id}/impersonate` | Session + is_admin | Owner | — | 200 + {impersonation_session_token} (admin can act as user for 30 min) |
+| | DELETE | `/api/v1/admin/keys/{id}/revoke-global` | Session + is_admin | Owner | {fraud_reason} | instant revoke |
+| | GET | `/api/v1/admin/reports/mrr.csv` | Session + is_admin | Owner | month | CSV platform MRR |
 
 ### 10.3 Existing Router Changes (Small)
 
@@ -908,7 +908,7 @@ Actions:
   [Jump to → Payments] with filter
 ```
 
-Shipped today: `PATCH /v1/admin/accounts/{account_id}` toggles the white-label entitlement
+Shipped today: `PATCH /api/v1/admin/accounts/{account_id}` toggles the white-label entitlement
 (`whitelabel_enabled`), surfaced as an Enable/Disable button on the account detail page. Store
 branding writes return `403 whitelabel_not_enabled` while it is off and the hosted checkout stays
 platform-branded.
@@ -966,12 +966,12 @@ Backlog:
 - [ ] **DB:** Add Account new columns (account_type, plan gates, is_platform_admin)
 - [ ] **DB:** Create Plan, PlanSubscription, PlanLedgerEntry tables with default Starter/Growth/Scale/Enterprise plan seed (migration + `db.seed_default_plans()`)
 - [ ] **Auth router (NEW):** `routers/auth.py` Google OAuth (authlib/fastapi-sso) + JWT session cookie + `/auth/signout`
-- [ ] **Dashboard account router (NEW):** `/v1/me` → session auth, profile
-- [ ] **Keys/Webhooks session endpoints:** `/v1/keys` + `/v1/webhooks` session CRUD (plan-gate scope options for IND vs business — still show Business scope but reject if IND tries; but M1 demoes only Individual)
+- [ ] **Dashboard account router (NEW):** `/api/v1/me` → session auth, profile
+- [ ] **Keys/Webhooks session endpoints:** `/api/v1/keys` + `/api/v1/webhooks` session CRUD (plan-gate scope options for IND vs business — still show Business scope but reject if IND tries; but M1 demoes only Individual)
 - [ ] **Dashboard UI (Next.js or Vue pick one):** Login redirect, Overview (4 cards mock + real data once connected), Stores page → Create Store wizard 3-tab destination, Payments list + filter, Detail with QR + timeline, Per-store Keys + Webhooks tabs, Settings profile
 - [ ] **Mark paid hook:** append PlanLedgerEntry atomically; enforce PlanFeature.max_stores cap in create_store
 - [ ] **Test-mode bypass:** ApiKey.mode=test → mark_paid fake delay 5s + mark after
-- [ ] **Billing router (NEW, backend only):** `/v1/billing/plans` → public plans matrix, change-plan endpoint (Individual → Business = auto Growth trial)
+- [ ] **Billing router (NEW, backend only):** `/api/v1/billing/plans` → public plans matrix, change-plan endpoint (Individual → Business = auto Growth trial)
 
 **Milestone 1 Exit Demo Checklist:**
 - [ ] New user sign in with Google → directed to onboarding → picks Individual
@@ -1004,7 +1004,7 @@ Backlog:
 
 Backlog:
 - [ ] **SubMerchant table + shadow store auto-create pattern** migration; `create_sub_merchant()` service: validates destination → runs Style B derivation if bank_account → auto-creates store st_shadow_<hash> + PaymentLink 1:1
-- [ ] **Platform router (NEW):** `/v1/platform/sub-merchants` CRUD + CSV bulk import (1000 max) → plan gate `saas_sub_merchants_enabled` = True
+- [ ] **Platform router (NEW):** `/api/v1/platform/sub-merchants` CRUD + CSV bulk import (1000 max) → plan gate `saas_sub_merchants_enabled` = True
 - [ ] **Payment resolver extension** (§4.2 STEP 2 — sub_merchant_id → shadow store)
 - [ ] **mark_paid counter atomics** → SubMerchant.total_payments_count / total_volume_cents = connection.execute(UPDATE … col=col+1 WHERE id)
 - [ ] **Checkout page whitelabel CSS override + redirect priority** (SubMerchant fields)
@@ -1018,7 +1018,7 @@ Backlog:
 **Milestone 3 Exit Demo Checklist (Full Story 2):**
 - [ ] Existing Business (Growth) → Billing page → [Upgrade to Scale]
 - [ ] New 👥 Sub-Merchants tab appears. Admin-created Sub-Merchant with bank account = Style B → resolved bakong_id shows green
-- [ ] `curl POST /v1/platform/sub-merchants` (external CSV import test) → 100 rows batch created
+- [ ] `curl POST /api/v1/platform/sub-merchants` (external CSV import test) → 100 rows batch created
 - [ ] Payment created with sub_merchant_id parameter → paid via dev rail → counters increment atomically on SubMerchant row
 - [ ] Whitelabel CSS renders on hosted /pay/{id} checkout page for that payment
 - [ ] Dashboard signature playground → merchant can generate + verify webhook signatures

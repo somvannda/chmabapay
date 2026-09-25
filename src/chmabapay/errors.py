@@ -235,7 +235,7 @@ def _format_report(
 
     What:    InterfaceError: connection is closed
     Meaning: The platform lost its connection to a service it depends on, ...
-    Call:    GET /v1/me
+    Call:    GET /api/v1/me
     Trace:   cf950f72-4ede-465a-9ab4-e071facc2490
     Time:    23 Sep 2026, 16:52 +07
 

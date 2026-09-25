@@ -37,16 +37,16 @@ const endpointGroups = [
     summary:
       "Create and manage merchant stores. A store is the merchant, and each store maps to one ABA PayWay payment link — the only supported destination.",
     items: [
-      { method: "POST", path: "/v1/stores", description: "Create a store. name (max 120 chars) is the only required field. Optional: external_id, city (defaults to \"Phnom Penh\", max 15 chars), support_email, telegram_chat_id, redirect_success_url, redirect_failure_url. Branding fields (brand_color, logo_image_url, whitelabel_css) require the white-label entitlement. Pass link={raw_link, merchant_account_id, merchant_name} to attach the destination in the same call, where only merchant_name is optional; leave it out and the store is created as a draft. 201 returns the store with id st_… ." },
-      { method: "GET", path: "/v1/stores", description: "List every store on the account, wrapped as {data: [...]}. Not paginated. Each store carries is_internal — true for the platform's own store, from which plan fees are collected; it is exempt from quota and its takings are not counted as merchant volume." },
-      { method: "GET", path: "/v1/stores/{public_id}", description: "Get one store and its payment link." },
-      { method: "PATCH", path: "/v1/stores/{public_id}", description: "Update a store. Pass any of name, external_id, city, support_email, telegram_chat_id, redirect URLs, or link={raw_link, merchant_account_id, merchant_name}. Branding fields require the white-label entitlement — otherwise 403 whitelabel_not_enabled." },
-      { method: "PUT", path: "/v1/stores/{public_id}", description: "Alias of PATCH /v1/stores/{public_id}: update a store with a full-body PUT. Same fields and validation, with the same 403 whitelabel_not_enabled when branding fields are sent without the entitlement." },
-      { method: "PUT", path: "/v1/stores/{public_id}/link", description: "Attach or replace the store's ABA PayWay link. Requires raw_link and merchant_account_id. Promotes a draft store to active." },
-      { method: "POST", path: "/v1/stores/{public_id}/disable", description: "Disable a store. New payments against it fail with 400 store_disabled, and no other write will touch it — a PATCH and a link attach are both refused while it is disabled." },
-      { method: "POST", path: "/v1/stores/{public_id}/enable", description: "Re-enable a disabled store. Answers status active, or draft when the store has no payment link left — attach one with PUT /v1/stores/{public_id}/link and it becomes active. A no-op on a store that is not disabled." },
-      { method: "POST", path: "/v1/stores/{public_id}/activate", description: "Bring back a store the platform is holding for billing (billing_suspended_at, set when a downgrade leaves the account over its plan's store allowance). The store comes back and one currently-live store is held in its place, so the number of live stores is unchanged; on a plan with room, nothing is displaced. Answers {store, displaced, moved}. 409 store_disabled when an operator disabled the store — that is an abuse decision, not a billing hold, and POST /v1/stores/{public_id}/enable is the route that reverses it." },
-      { method: "POST", path: "/v1/stores/{public_id}/telegram/test", description: "Send a test message to the store's configured Telegram chat, so you can confirm the chat id is right." },
+      { method: "POST", path: "/api/v1/stores", description: "Create a store. name (max 120 chars) is the only required field. Optional: external_id, city (defaults to \"Phnom Penh\", max 15 chars), support_email, telegram_chat_id, redirect_success_url, redirect_failure_url. Branding fields (brand_color, logo_image_url, whitelabel_css) require the white-label entitlement. Pass link={raw_link, merchant_account_id, merchant_name} to attach the destination in the same call, where only merchant_name is optional; leave it out and the store is created as a draft. 201 returns the store with id st_… ." },
+      { method: "GET", path: "/api/v1/stores", description: "List every store on the account, wrapped as {data: [...]}. Not paginated. Each store carries is_internal — true for the platform's own store, from which plan fees are collected; it is exempt from quota and its takings are not counted as merchant volume." },
+      { method: "GET", path: "/api/v1/stores/{public_id}", description: "Get one store and its payment link." },
+      { method: "PATCH", path: "/api/v1/stores/{public_id}", description: "Update a store. Pass any of name, external_id, city, support_email, telegram_chat_id, redirect URLs, or link={raw_link, merchant_account_id, merchant_name}. Branding fields require the white-label entitlement — otherwise 403 whitelabel_not_enabled." },
+      { method: "PUT", path: "/api/v1/stores/{public_id}", description: "Alias of PATCH /api/v1/stores/{public_id}: update a store with a full-body PUT. Same fields and validation, with the same 403 whitelabel_not_enabled when branding fields are sent without the entitlement." },
+      { method: "PUT", path: "/api/v1/stores/{public_id}/link", description: "Attach or replace the store's ABA PayWay link. Requires raw_link and merchant_account_id. Promotes a draft store to active." },
+      { method: "POST", path: "/api/v1/stores/{public_id}/disable", description: "Disable a store. New payments against it fail with 400 store_disabled, and no other write will touch it — a PATCH and a link attach are both refused while it is disabled." },
+      { method: "POST", path: "/api/v1/stores/{public_id}/enable", description: "Re-enable a disabled store. Answers status active, or draft when the store has no payment link left — attach one with PUT /api/v1/stores/{public_id}/link and it becomes active. A no-op on a store that is not disabled." },
+      { method: "POST", path: "/api/v1/stores/{public_id}/activate", description: "Bring back a store the platform is holding for billing (billing_suspended_at, set when a downgrade leaves the account over its plan's store allowance). The store comes back and one currently-live store is held in its place, so the number of live stores is unchanged; on a plan with room, nothing is displaced. Answers {store, displaced, moved}. 409 store_disabled when an operator disabled the store — that is an abuse decision, not a billing hold, and POST /api/v1/stores/{public_id}/enable is the route that reverses it." },
+      { method: "POST", path: "/api/v1/stores/{public_id}/telegram/test", description: "Send a test message to the store's configured Telegram chat, so you can confirm the chat id is right." },
     ],
   },
   {
@@ -54,11 +54,11 @@ const endpointGroups = [
     summary:
       "Create payments and track their status. The create call returns the KHQR string and a hosted checkout URL; reading a payment back returns the QR string without the URL, and the list returns neither.",
     items: [
-      { method: "POST", path: "/v1/payments", description: "Create a payment. Pass amount (a positive decimal with at most two places, in the store link's currency), optional reference_id, metadata and idempotency_key, plus store=<store public id> or merchant=<store external_id>. hosted_qr is left out by default, which means auto: ABA issues the code whenever the store's link is an ABA PayWay link, because a code we build ourselves for one carries no ABA transaction and can never be confirmed. hosted_qr=false builds a code offline and is refused on a live request unless the deployment can confirm one. 201 returns qr_string, checkout_url and expires_at." },
-      { method: "GET", path: "/v1/payments", description: "List the account's payments, newest first. Filters: ?store=, ?merchant=<external_id>, ?status=, ?limit= (default 20, max 100) and ?offset= (default 0, skips that many newest rows so you can page). A negative offset is a 422. Older payments are still listed after their QR dies, so filter ?status=paid for a settlement feed. Statuses: pending, scanned, paid, expired, failed, superseded, reversed." },
-      { method: "GET", path: "/v1/payments/{public_id}", description: "One payment: status, amount, currency, QR string, created/expires/approved/paid timestamps, the ABA reference once settled, and reversal state. checkout_url is null here — it is built by the create call, and the id inside it is this payment's own id, so /pay/{public_id} is the same page. Amounts are returned as decimal strings; summary totals elsewhere are integer *amount_cents." },
-      { method: "POST", path: "/v1/payments/{public_id}/reissue", description: "Replace a dead code with a fresh one and keep the lineage. Only an expired or failed payment can be replaced: paid answers 409 payment_already_paid, reversed answers 409 payment_reversed, and anything still live — pending, scanned, or a superseded code that already has a replacement — answers 409 payment_not_expired. 201 mints a new payment, 200 returns the live replacement already created for this one." },
-      { method: "POST", path: "/v1/payments/{public_id}/reverse", description: "Record that a paid payment was refunded, with an optional note and a payment.reversed event. This is bookkeeping only — we never hold your funds, so send the money back to the customer yourself and record it here so your reports and quota stop counting the sale. 409 payment_not_paid or payment_already_reversed otherwise." },
+      { method: "POST", path: "/api/v1/payments", description: "Create a payment. Pass amount (a positive decimal with at most two places, in the store link's currency), optional reference_id, metadata and idempotency_key, plus store=<store public id> or merchant=<store external_id>. hosted_qr is left out by default, which means auto: ABA issues the code whenever the store's link is an ABA PayWay link, because a code we build ourselves for one carries no ABA transaction and can never be confirmed. hosted_qr=false builds a code offline and is refused on a live request unless the deployment can confirm one. 201 returns qr_string, checkout_url and expires_at." },
+      { method: "GET", path: "/api/v1/payments", description: "List the account's payments, newest first. Filters: ?store=, ?merchant=<external_id>, ?status=, ?limit= (default 20, max 100) and ?offset= (default 0, skips that many newest rows so you can page). A negative offset is a 422. Older payments are still listed after their QR dies, so filter ?status=paid for a settlement feed. Statuses: pending, scanned, paid, expired, failed, superseded, reversed." },
+      { method: "GET", path: "/api/v1/payments/{public_id}", description: "One payment: status, amount, currency, QR string, created/expires/approved/paid timestamps, the ABA reference once settled, and reversal state. checkout_url is null here — it is built by the create call, and the id inside it is this payment's own id, so /pay/{public_id} is the same page. Amounts are returned as decimal strings; summary totals elsewhere are integer *amount_cents." },
+      { method: "POST", path: "/api/v1/payments/{public_id}/reissue", description: "Replace a dead code with a fresh one and keep the lineage. Only an expired or failed payment can be replaced: paid answers 409 payment_already_paid, reversed answers 409 payment_reversed, and anything still live — pending, scanned, or a superseded code that already has a replacement — answers 409 payment_not_expired. 201 mints a new payment, 200 returns the live replacement already created for this one." },
+      { method: "POST", path: "/api/v1/payments/{public_id}/reverse", description: "Record that a paid payment was refunded, with an optional note and a payment.reversed event. This is bookkeeping only — we never hold your funds, so send the money back to the customer yourself and record it here so your reports and quota stop counting the sale. 409 payment_not_paid or payment_already_reversed otherwise." },
     ],
   },
   {
@@ -66,8 +66,8 @@ const endpointGroups = [
     summary:
       "Re-check a payment you created, and have the platform act on what it finds. These are the endpoints to use for confirmation.",
     items: [
-      { method: "GET", path: "/v1/transactions/check-status/{payment_public_id}", description: "Authoritative status for one of your payments. Query: prefer_aba_page (default true), aba_slug_hint, mark_paid (default true — when a source reports PAID, the payment row transitions too). Returns status (PAID/PENDING/FAILED/UNKNOWN), source (payway_hosted_checkout when an ABA-hosted session answered, bakong_open_api when the Bakong ledger matched, or null when no source could be reached), matched_amount, transitioned_to_paid, the signals behind the answer, and error when a source could not be reached. 404 payment_not_found if the id is not on your account. Works without Bakong credentials for a payment that has a hosted ABA session." },
-      { method: "POST", path: "/v1/transactions/verify-payment/{payment_public_id}", description: "The same reconciliation, returning the underlying Bakong transaction shape instead of a status object. Query: use_hash (default false — forces the Bakong path), prefer_aba_page (default true), aba_slug_hint. When nothing confirms it yet it answers 200 with found:false rather than a 404 — there is simply no transaction to return yet. Bakong credentials are required only for a payment with no hosted session to ask." },
+      { method: "GET", path: "/api/v1/transactions/check-status/{payment_public_id}", description: "Authoritative status for one of your payments. Query: prefer_aba_page (default true), aba_slug_hint, mark_paid (default true — when a source reports PAID, the payment row transitions too). Returns status (PAID/PENDING/FAILED/UNKNOWN), source (payway_hosted_checkout when an ABA-hosted session answered, bakong_open_api when the Bakong ledger matched, or null when no source could be reached), matched_amount, transitioned_to_paid, the signals behind the answer, and error when a source could not be reached. 404 payment_not_found if the id is not on your account. Works without Bakong credentials for a payment that has a hosted ABA session." },
+      { method: "POST", path: "/api/v1/transactions/verify-payment/{payment_public_id}", description: "The same reconciliation, returning the underlying Bakong transaction shape instead of a status object. Query: use_hash (default false — forces the Bakong path), prefer_aba_page (default true), aba_slug_hint. When nothing confirms it yet it answers 200 with found:false rather than a 404 — there is simply no transaction to return yet. Bakong credentials are required only for a payment with no hosted session to ask." },
     ],
   },
   {
@@ -75,9 +75,9 @@ const endpointGroups = [
     summary:
       "Mint an ABA-hosted code for a store's payment link, check whether it settled, and render a KHQR payload as SVG. Only the PayWay routes can confirm a payment.",
     items: [
-      { method: "POST", path: "/v1/khqr/payway/checkout", description: "Ask ABA to issue a hosted checkout session for a link, and return the code ABA will accept — that is what makes it payable as well as trackable." },
-      { method: "POST", path: "/v1/khqr/payway/status", description: "Ask ABA for a hosted session's outcome — approved, paid, and ABA's own receipt URL. This is the only check that is authoritative on ABA's side." },
-      { method: "GET", path: "/v1/khqr/render.svg", description: "Render a KHQR payload as SVG. Pass payload (the raw QR string, 8–1500 chars); optional scale (default 8) and ecc (default h). Public and stateless — it encodes what you give it and stores nothing." },
+      { method: "POST", path: "/api/v1/khqr/payway/checkout", description: "Ask ABA to issue a hosted checkout session for a link, and return the code ABA will accept — that is what makes it payable as well as trackable." },
+      { method: "POST", path: "/api/v1/khqr/payway/status", description: "Ask ABA for a hosted session's outcome — approved, paid, and ABA's own receipt URL. This is the only check that is authoritative on ABA's side." },
+      { method: "GET", path: "/api/v1/khqr/render.svg", description: "Render a KHQR payload as SVG. Pass payload (the raw QR string, 8–1500 chars); optional scale (default 8) and ecc (default h). Public and stateless — it encodes what you give it and stores nothing." },
     ],
   },
   {
@@ -85,13 +85,13 @@ const endpointGroups = [
     summary:
       "Signed webhook endpoints with HMAC signatures, replay protection, and delivery logs. Subscribe to specific events or use the wildcard `*`. Each event's data block carries both `store` and `merchant: { external_id }`; external_id is null for stores created without one.",
     items: [
-      { method: "GET", path: "/v1/webhooks", description: "List the account's webhook endpoints." },
-      { method: "POST", path: "/v1/webhooks", description: "Register an endpoint. Pass url and an optional events=[] array ([\"*\"] for all). The response includes signing_secret once — store it, it cannot be read back. Capped by your plan." },
-      { method: "PATCH", path: "/v1/webhooks/{endpoint_id}", description: "Change the url, events, status (active|disabled), or set enabled=true|false." },
-      { method: "DELETE", path: "/v1/webhooks/{endpoint_id}", description: "Remove an endpoint and its delivery log. Use PATCH enabled=false to pause deliveries without losing history." },
-      { method: "POST", path: "/v1/webhooks/{endpoint_id}/rotate-secret", description: "Issue a new signing secret and return it once. Deliveries signed with the previous secret will fail verification." },
-      { method: "GET", path: "/v1/webhooks/{endpoint_id}/deliveries", description: "Delivery attempt log, newest first: attempt_count, http_status, response_body_preview, and created/completed times. ?limit= (default 200, max 500) and ?page=." },
-      { method: "POST", path: "/v1/webhooks/{endpoint_id}/test", description: "Send a synthetic signed event now, so you can validate the whole pipeline before going live." },
+      { method: "GET", path: "/api/v1/webhooks", description: "List the account's webhook endpoints." },
+      { method: "POST", path: "/api/v1/webhooks", description: "Register an endpoint. Pass url and an optional events=[] array ([\"*\"] for all). The response includes signing_secret once — store it, it cannot be read back. Capped by your plan." },
+      { method: "PATCH", path: "/api/v1/webhooks/{endpoint_id}", description: "Change the url, events, status (active|disabled), or set enabled=true|false." },
+      { method: "DELETE", path: "/api/v1/webhooks/{endpoint_id}", description: "Remove an endpoint and its delivery log. Use PATCH enabled=false to pause deliveries without losing history." },
+      { method: "POST", path: "/api/v1/webhooks/{endpoint_id}/rotate-secret", description: "Issue a new signing secret and return it once. Deliveries signed with the previous secret will fail verification." },
+      { method: "GET", path: "/api/v1/webhooks/{endpoint_id}/deliveries", description: "Delivery attempt log, newest first: attempt_count, http_status, response_body_preview, and created/completed times. ?limit= (default 200, max 500) and ?page=." },
+      { method: "POST", path: "/api/v1/webhooks/{endpoint_id}/test", description: "Send a synthetic signed event now, so you can validate the whole pipeline before going live." },
     ],
   },
   {
@@ -99,8 +99,8 @@ const endpointGroups = [
     summary:
       "CSV and JSON payment exports, available on every plan. CSV streams every matching payment; JSON adds summary totals and pagination.",
     items: [
-      { method: "GET", path: "/v1/reports/payments.csv", description: "Streaming CSV export. Filters: ?from=YYYY-MM-DD, ?to=YYYY-MM-DD, ?store_id=st_…, ?merchant=<external_id>, ?statuses=comma,separated." },
-      { method: "GET", path: "/v1/reports/payments.json", description: "JSON export. Same filters plus ?page= and ?per_page= (default 20, max 100). Returns {data, summary: {total_matching_rows, total_matching_paid_count, total_matching_paid_amount_cents, total_matching_paid_amount_formatted, total_matching_reversed_count, total_matching_reversed_amount_cents, filters_applied}, pagination}. The paid totals count only status=paid, so the reversed totals are what account for the difference." },
+      { method: "GET", path: "/api/v1/reports/payments.csv", description: "Streaming CSV export. Filters: ?from=YYYY-MM-DD, ?to=YYYY-MM-DD, ?store_id=st_…, ?merchant=<external_id>, ?statuses=comma,separated." },
+      { method: "GET", path: "/api/v1/reports/payments.json", description: "JSON export. Same filters plus ?page= and ?per_page= (default 20, max 100). Returns {data, summary: {total_matching_rows, total_matching_paid_count, total_matching_paid_amount_cents, total_matching_paid_amount_formatted, total_matching_reversed_count, total_matching_reversed_amount_cents, filters_applied}, pagination}. The paid totals count only status=paid, so the reversed totals are what account for the difference." },
     ],
   },
   {
@@ -126,7 +126,7 @@ export CHMABA_API="${baseUrl}"`,
     {
       title: "Create a store",
       lang: "bash",
-      code: `curl -X POST "$CHMABA_API/v1/stores" \\
+      code: `curl -X POST "$CHMABA_API/api/v1/stores" \\
   -H "Authorization: Bearer $CHMABA_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -139,7 +139,7 @@ export CHMABA_API="${baseUrl}"`,
     {
       title: "Attach the PayWay link",
       lang: "bash",
-      code: `curl -X PATCH "$CHMABA_API/v1/stores/st_your_store_id" \\
+      code: `curl -X PATCH "$CHMABA_API/api/v1/stores/st_your_store_id" \\
   -H "Authorization: Bearer $CHMABA_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -154,7 +154,7 @@ export CHMABA_API="${baseUrl}"`,
     {
       title: "Create a payment",
       lang: "bash",
-      code: `curl -X POST "$CHMABA_API/v1/payments" \\
+      code: `curl -X POST "$CHMABA_API/payments" \\
   -H "Authorization: Bearer $CHMABA_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -175,12 +175,12 @@ export CHMABA_API="${baseUrl}"`,
       title: "Wait for settlement",
       lang: "bash",
       code: `# Poll the payment, or simply wait for the payment.completed webhook:
-curl "$CHMABA_API/v1/payments/kQ7mZx2VaRt9LpBnWc4YsH1u" \\
+curl "$CHMABA_API/api/v1/payments/kQ7mZx2VaRt9LpBnWc4YsH1u" \\
   -H "Authorization: Bearer $CHMABA_KEY"
 # status: pending → paid, or expired / failed / superseded / reversed.
 
 # If the code died before the customer paid, mint a replacement:
-curl -X POST "$CHMABA_API/v1/payments/kQ7mZx2VaRt9LpBnWc4YsH1u/reissue" \\
+curl -X POST "$CHMABA_API/payments/kQ7mZx2VaRt9LpBnWc4YsH1u/reissue" \\
   -H "Authorization: Bearer $CHMABA_KEY"
 # 201 mints a new payment; 200 returns the live replacement if one exists.`,
     },

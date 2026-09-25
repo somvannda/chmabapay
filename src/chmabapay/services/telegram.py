@@ -2,7 +2,7 @@
 
 A store carries a `telegram_chat_id`; the deployment holds a bot token. Both are
 required, and every way of falling short is reported rather than swallowed.
-Previously `POST /v1/stores/{id}/telegram/test` logged "Would send Telegram test
+Previously `POST /api/v1/stores/{id}/telegram/test` logged "Would send Telegram test
 msg" and returned `ok: true` without sending anything, which told a merchant their
 alerts worked when nothing had ever left the building.
 """

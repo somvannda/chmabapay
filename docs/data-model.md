@@ -20,8 +20,8 @@ Platform tenants — the party that signs in and pays us. Auth via Google OAuth,
 | name | |
 | google_sub | unique |
 | status | active / suspended / closed |
-| whitelabel_enabled | white-label checkout entitlement; only the platform operator grants it (`PATCH /v1/admin/accounts/{id}`) |
-| is_platform_admin | platform owner; unlocks the `/v1/admin/*` surface |
+| whitelabel_enabled | white-label checkout entitlement; only the platform operator grants it (`PATCH /api/v1/admin/accounts/{id}`) |
+| is_platform_admin | platform owner; unlocks the `/api/v1/admin/*` surface |
 | created_at, updated_at | |
 
 ## stores  — a sub-merchant of the account (the account's own customer)
@@ -29,7 +29,7 @@ Platform tenants — the party that signs in and pays us. Auth via Google OAuth,
 Each store is one merchant a hosting platform onboarded. Its **own** payment link is the money
 destination: payments for this store land in **this store owner's** bank account, never the
 account's. Stores are created manually in the dashboard **or automatically via the API**
-(account-scoped key, `POST /v1/stores`). `public_id` targets the store in payment calls.
+(account-scoped key, `POST /api/v1/stores`). `public_id` targets the store in payment calls.
 
 | column | notes |
 | --- | --- |
@@ -51,7 +51,7 @@ Lifecycle: `draft` on creation → `link_pending` when a link attach is requeste
 after its destination link verifies. Disabling a store keeps its payment records and stops new
 payments. Each store has exactly one active payment link (partial unique index). A held store
 (`billing_suspended_at`) is the platform's doing rather than the merchant's, and clears without a
-restore step: `settle_invoice` releases the hold, and `POST /v1/stores/{id}/activate` swaps one
+restore step: `settle_invoice` releases the hold, and `POST /api/v1/stores/{id}/activate` swaps one
 back in while holding whichever store makes room.
 
 ## payment_links

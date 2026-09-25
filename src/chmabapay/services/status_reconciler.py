@@ -9,7 +9,7 @@ Status sources, in the order we trust them:
      one call answers for it. This is the only source that works today, and it
      runs first. See services/payway_parser.py:fetch_hosted_status.
 
-     It is also the reason a QR we build ourselves cannot work: /v1/khqr/from-link
+     It is also the reason a QR we build ourselves cannot work: /api/v1/khqr/from-link
      produces a syntactically valid EMVCo payload with no ABA transaction behind
      it, so a wallet resolving the payee answers "QR not found" and there is
      nothing anywhere to poll. Payments on an ABA PayWay link therefore default

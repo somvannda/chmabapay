@@ -102,7 +102,7 @@ export default function DashboardPaymentDetailPage({
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/v1/stores", { credentials: "include" });
+        const res = await fetch("/api/v1/stores", { credentials: "include" });
         if (res.ok) {
           const data = await res.json().catch(() => ({}));
           const items: StoreOption[] = Array.isArray(data)
@@ -126,7 +126,7 @@ export default function DashboardPaymentDetailPage({
     let alive = true;
     (async () => {
       try {
-        const res = await fetch(`/v1/payments/${publicId}`, {
+        const res = await fetch(`/api/v1/payments/${publicId}`, {
           credentials: "include",
         });
         if (res.ok) {
@@ -152,7 +152,7 @@ export default function DashboardPaymentDetailPage({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/v1/payments/${publicId}`, {
+      const res = await fetch(`/api/v1/payments/${publicId}`, {
         credentials: "include",
       });
       if (res.ok) {
@@ -169,7 +169,7 @@ export default function DashboardPaymentDetailPage({
   // `/_dev/payments/{id}/pay`, a route that exists only when the dev gateway is mounted
   // — so in production a platform admin was offered a control that answered 404. It is
   // deleted rather than hidden because the console now carries a supported
-  // `POST /v1/admin/payments/{id}/mark-paid`: same effect, a required reason, and an
+  // `POST /api/v1/admin/payments/{id}/mark-paid`: same effect, a required reason, and an
   // audit row naming the operator.
   function storeName(): string {
     if (!payment?.store) return "-";
@@ -205,7 +205,7 @@ export default function DashboardPaymentDetailPage({
     setRefunding(true);
     setError(null);
     try {
-      const res = await fetch(`/v1/payments/${payment.id}/reverse`, {
+      const res = await fetch(`/api/v1/payments/${payment.id}/reverse`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -253,7 +253,7 @@ export default function DashboardPaymentDetailPage({
     setReissuing(true);
     setError(null);
     try {
-      const res = await fetch(`/v1/payments/${payment.id}/reissue`, {
+      const res = await fetch(`/api/v1/payments/${payment.id}/reissue`, {
         method: "POST",
         credentials: "include",
       });

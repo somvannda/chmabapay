@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from "react";
  * would be a second copy of a policy, and the one that matters is the one the API enforces.
  */
 
-/** The payload from `GET /v1/billing/notices` — see `services/billing.py::_render_notice`. */
+/** The payload from `GET /api/v1/billing/notices` — see `services/billing.py::_render_notice`. */
 export type BillingNoticePayload = {
   state: string;
   level: string;

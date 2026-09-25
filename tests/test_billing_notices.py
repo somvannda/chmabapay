@@ -96,7 +96,7 @@ async def _set_status(account_id: int, status: str) -> None:
 
 async def _notice(account: models.Account) -> dict | None:
     async with _session_as(account) as client:
-        res = await client.get("/v1/billing/notices")
+        res = await client.get("/api/v1/billing/notices")
         assert res.status_code == 200, res.text
         return (res.json()["notices"] or [None])[0]
 
@@ -233,7 +233,7 @@ async def test_nothing_is_due_so_there_is_no_notice():
     """An empty list, not a reassuring banner: a merchant who owes nothing needs no interruption."""
     account = await make_account(email="clear@notices.test", name="Clear")
     async with _session_as(account) as client:
-        res = await client.get("/v1/billing/notices")
+        res = await client.get("/api/v1/billing/notices")
     assert res.status_code == 200
     assert res.json() == {"notices": []}
 
@@ -283,10 +283,10 @@ async def test_the_subscription_response_names_the_window_and_the_debt():
     invoice = await _invoice_due(account.id, plans["starter"].id, due=due)
 
     async with _session_as(account) as client:
-        res = await client.get("/v1/billing/subscription")
+        res = await client.get("/api/v1/billing/subscription")
         assert res.status_code == 200, res.text
         body = res.json()
-        invoices = (await client.get("/v1/billing/invoices")).json()["data"]
+        invoices = (await client.get("/api/v1/billing/invoices")).json()["data"]
 
     assert body["current_period_end"] is not None
     assert body["outstanding_invoice_id"] == invoice.id

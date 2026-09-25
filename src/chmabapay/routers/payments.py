@@ -31,7 +31,7 @@ from ..workers import Q_DETECTION, get_global_transport
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/v1/payments",
+    prefix="/api/v1/payments",
     tags=["payments"],
     dependencies=AUTH_SECURITY,
     responses=AUTH_ERRORS,

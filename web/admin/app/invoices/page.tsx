@@ -172,7 +172,7 @@ export default function AdminInvoicesPage() {
         if (overdue) params.set("overdue", "true");
         params.set("page", String(page));
         params.set("per_page", "25");
-        const res = await apiFetch(`/v1/admin/invoices?${params.toString()}`, {
+        const res = await apiFetch(`/api/v1/admin/invoices?${params.toString()}`, {
           credentials: "include",
         });
         if (!res.ok) throw new Error(await readApiError(res));
@@ -231,7 +231,7 @@ export default function AdminInvoicesPage() {
     }
     setBusy(true);
     try {
-      const res = await apiFetch(`/v1/admin/invoices/${invoice.id}/resolve`, {
+      const res = await apiFetch(`/api/v1/admin/invoices/${invoice.id}/resolve`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

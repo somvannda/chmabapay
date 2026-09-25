@@ -7,8 +7,8 @@ programmatically, which is what makes this the honest chokepoint for consent.
 **A key must not be able to manage keys.** These routes accepted an API key until
 2026-09-23. That meant a leaked key could mint itself a replacement and outlive its own
 revocation, and could revoke every other key on the account — locking the merchant out
-of the automation the leaked key was stolen from. `/v1/me`, `/v1/account` and
-`/v1/billing/*` were already session-only for the same class of reason; key management
+of the automation the leaked key was stolen from. `/api/v1/me`, `/api/v1/account` and
+`/api/v1/billing/*` were already session-only for the same class of reason; key management
 now matches them, so no credential can extend or destroy itself.
 """
 
@@ -30,7 +30,7 @@ from ..security import hash_key, new_api_key
 from .auth import get_current_session_account
 
 router = APIRouter(
-    prefix="/v1/keys",
+    prefix="/api/v1/keys",
     tags=["keys"],
     dependencies=SESSION_SECURITY,
     responses=AUTH_ERRORS,

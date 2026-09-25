@@ -24,7 +24,7 @@ from ..services import payments as svc
 from ..services import stores as store_svc
 from .auth import get_current_session_account
 
-router = APIRouter(prefix="/v1/billing", tags=["billing"])
+router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
 
 def _money_str(cents: int) -> str:

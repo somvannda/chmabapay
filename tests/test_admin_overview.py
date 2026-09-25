@@ -64,7 +64,7 @@ async def make_payment(
 ) -> dict:
     raw_key, _key = await make_key(merchant)
     res = await client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={
             "amount": amount,
             "reference_id": "order_99",
@@ -166,7 +166,7 @@ async def test_every_counter_matches_a_seeded_row(client):
         await session.commit()
 
     await sign_in(client, admin.email)
-    overview = (await client.get("/v1/admin/overview")).json()
+    overview = (await client.get("/api/v1/admin/overview")).json()
 
     counts = _counts(overview)
     assert counts["pending_past_expiry"] == 1
@@ -174,7 +174,7 @@ async def test_every_counter_matches_a_seeded_row(client):
     assert counts["deliveries_failed_24h"] == 1
 
     # The two stuck payments are the ones counted, not something incidental.
-    listing = (await client.get("/v1/admin/payments?per_page=50")).json()
+    listing = (await client.get("/api/v1/admin/payments?per_page=50")).json()
     by_id = {row["id"]: row for row in listing["data"]}
     assert by_id[stale["id"]]["detection_closed_at"] is None
     assert by_id[unwatched["id"]]["detection_closed_at"] is not None
@@ -203,12 +203,12 @@ async def test_the_counts_lead_to_the_rows_they_counted(client):
     await sign_in(client, admin.email)
 
     expired_rows = (
-        await client.get("/v1/admin/payments?attention=pending_past_expiry")
+        await client.get("/api/v1/admin/payments?attention=pending_past_expiry")
     ).json()
     assert [row["id"] for row in expired_rows["data"]] == [stale["id"]]
 
     closed_rows = (
-        await client.get("/v1/admin/payments?attention=detection_closed_unpaid")
+        await client.get("/api/v1/admin/payments?attention=detection_closed_unpaid")
     ).json()
     assert [row["id"] for row in closed_rows["data"]] == [unwatched["id"]]
 
@@ -228,7 +228,7 @@ async def test_the_worker_signals_are_absent_rather_than_zero_in_process(client)
     admin = await make_admin()
     await sign_in(client, admin.email)
 
-    overview = (await client.get("/v1/admin/overview")).json()
+    overview = (await client.get("/api/v1/admin/overview")).json()
     ops = overview["ops"]
 
     assert ops["watched"] is False
@@ -242,7 +242,7 @@ async def test_the_overview_and_its_filters_are_admin_only(client):
     merchant = await make_account(email="sokha@chmaba.test", name="Sokha Cafe")
     await make_store(merchant, owner="Sokha")
 
-    assert (await client.get("/v1/admin/overview")).status_code == 401
+    assert (await client.get("/api/v1/admin/overview")).status_code == 401
     assert (
-        await client.get("/v1/admin/payments?attention=pending_past_expiry")
+        await client.get("/api/v1/admin/payments?attention=pending_past_expiry")
     ).status_code == 401

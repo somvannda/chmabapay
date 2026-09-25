@@ -245,7 +245,7 @@ chat id, not a username.**
 
 - **operator alerts** — `OPS_TELEGRAM_CHAT_ID`, above;
 - **merchant alerts** — each store holds its own `telegram_chat_id`, and
-  `POST /v1/stores/{id}/telegram/test` sends a real message to it. Without a token
+  `POST /api/v1/stores/{id}/telegram/test` sends a real message to it. Without a token
   that endpoint answers `503 telegram_not_configured` rather than reporting a
   success that never happened.
 
@@ -275,7 +275,7 @@ belongs to the app on that vhost.
 | `/api/docs` | 200 | landing (its own page) |
 | `/health` | 200 | api |
 | `/openapi.json` | 200 | api |
-| `/v1/...` without a key | 401 | api |
+| `/api/v1/...` without a key | 401 | api |
 | `/auth/google/login` | 307 → accounts.google.com | api |
 | `Host: admin.localhost` `/` | 200 | admin |
 | `/metrics` | **404** | refused at the edge |
@@ -394,7 +394,7 @@ edge. `src/chmabapay/ratelimit.py` buckets an unauthenticated caller by the *fir
 entry of `X-Forwarded-For`. `$proxy_add_x_forwarded_for` **appends** to whatever the
 caller sent, so a caller who sends `X-Forwarded-For: 1.2.3.4` puts `1.2.3.4` first
 and lands in a fresh bucket on every request — a rate-limit bypass on `/pay/*` and
-`/v1/khqr/*`. Verified: with the config above, a caller-supplied
+`/api/v1/khqr/*`. Verified: with the config above, a caller-supplied
 `X-Forwarded-For: 1.2.3.4` is discarded and the real peer address is what the
 application receives.
 
@@ -855,7 +855,7 @@ against `163.245.204.122`, not localhost:
 - `db`, `api`, `landing`, `admin` and `proxy` all reached **healthy**; `migrate`
   exited **0**; the schema is at Alembic revision **`0006`** with 14 tables;
 - `GET /health` answers `{"status":"ok","app":"ChmabaPay"}`;
-- `landing` fetched `/v1/billing/plans` from `api` and got **200** — the frontend and
+- `landing` fetched `/api/v1/billing/plans` from `api` and got **200** — the frontend and
   API are genuinely wired, not merely both running;
 - the origin on **8443** serves the Cloudflare Origin CA certificate for both
   hostnames, negotiates **TLS 1.3**, routes `pay.chmaba.com` to the website,
@@ -946,7 +946,7 @@ Origin Rule was deployed:
 - `https://pay.chmaba.com` serves the website and `https://admin-pay.chmaba.com` the
   console, while `https://chmaba.com` still serves the POS — the three hostnames
   route independently;
-- `/health` → `{"status":"ok","app":"ChmabaPay"}` and `/v1/billing/plans` → **200**,
+- `/health` → `{"status":"ok","app":"ChmabaPay"}` and `/api/v1/billing/plans` → **200**,
   so API paths are routed at the edge;
 - the four refusals hold in production: `/metrics`, `/docs`, `/redoc` and
   `/auth/_dev/login` all return **404** from the public internet. That last one is

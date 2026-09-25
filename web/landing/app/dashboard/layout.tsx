@@ -86,7 +86,7 @@ export default function DashboardLayout({
 
     const loadPlan = async () => {
       try {
-        const subRes = await fetch("/v1/billing/subscription", {
+        const subRes = await fetch("/api/v1/billing/subscription", {
           credentials: "include",
         });
         if (subRes.ok && subRes.status !== 501) {
@@ -108,7 +108,7 @@ export default function DashboardLayout({
       }
 
       try {
-        const url = `/v1/reports/payments.json?from=${monthStartDateParam()}&per_page=1`;
+        const url = `/api/v1/reports/payments.json?from=${monthStartDateParam()}&per_page=1`;
         const repRes = await fetch(url, { credentials: "include" });
         if (repRes.ok) {
           const data = await repRes.json().catch(() => ({}));
@@ -121,7 +121,7 @@ export default function DashboardLayout({
       // The billing notice. Fetched here rather than in the shell, so it rides the same refresh
       // event as the plan card — a merchant who pays sees the warning clear without a reload.
       try {
-        const noticeRes = await fetch("/v1/billing/notices", {
+        const noticeRes = await fetch("/api/v1/billing/notices", {
           credentials: "include",
         });
         // Silent on failure, like the reads above: a banner is an extra, and blanking the shell
@@ -182,7 +182,7 @@ export default function DashboardLayout({
     setAcceptingTerms(true);
     setTermsError(null);
     try {
-      const res = await fetch("/v1/me/terms", {
+      const res = await fetch("/api/v1/me/terms", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

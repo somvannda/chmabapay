@@ -162,7 +162,7 @@ export default function AdminPaymentDetailPage({
     setErrorMsg(null);
     setNotFound(false);
     try {
-      const res = await apiFetch(`/v1/admin/payments/${publicId}`, {
+      const res = await apiFetch(`/api/v1/admin/payments/${publicId}`, {
         credentials: "include",
       });
       if (res.status === 404) {
@@ -188,7 +188,7 @@ export default function AdminPaymentDetailPage({
   const reconcile = useCallback(async () => {
     setBusy("reconcile");
     try {
-      const res = await apiFetch(`/v1/admin/payments/${publicId}/reconcile`, {
+      const res = await apiFetch(`/api/v1/admin/payments/${publicId}/reconcile`, {
         method: "POST",
         credentials: "include",
       });
@@ -218,7 +218,7 @@ export default function AdminPaymentDetailPage({
     }
     setBusy("mark-paid");
     try {
-      const res = await apiFetch(`/v1/admin/payments/${publicId}/mark-paid`, {
+      const res = await apiFetch(`/api/v1/admin/payments/${publicId}/mark-paid`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -246,7 +246,7 @@ export default function AdminPaymentDetailPage({
     }
     setBusy("refund");
     try {
-      const res = await apiFetch(`/v1/admin/payments/${publicId}/reverse`, {
+      const res = await apiFetch(`/api/v1/admin/payments/${publicId}/reverse`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -271,7 +271,7 @@ export default function AdminPaymentDetailPage({
       setBusy("redeliver");
       try {
         const res = await apiFetch(
-          `/v1/admin/payments/${publicId}/redeliver${
+          `/api/v1/admin/payments/${publicId}/redeliver${
             includeSuccesses ? "?include_successes=true" : ""
           }`,
           { method: "POST", credentials: "include" },

@@ -11,13 +11,13 @@ Companion docs: `docs/roadmap.md` (milestone history), `docs/architecture.md`,
 
 **Working and verified.** KHQR lifecycle end to end at the API and UI level:
 dead codes are withdrawn (`410`) rather than redrawn, a merchant can mint a
-replacement in one call (`POST /v1/payments/{id}/reissue`, with lineage), both
+replacement in one call (`POST /api/v1/payments/{id}/reissue`, with lineage), both
 dashboard detail routes stop showing a dead code and offer "Generate new QR",
 and the QR renders correctly in a browser (680px natural scaled to 220px CSS,
 unclipped, real module data).
 
 **The money path is proven.** On 2026-09-17 two real 0.10 USD payments were minted
-through `POST /v1/payments` on the compose stack, scanned from a real ABA/Bakong
+through `POST /api/v1/payments` on the compose stack, scanned from a real ABA/Bakong
 wallet and settled. The second also delivered a **signature-verified**
 `payment.completed` — HMAC recomputed from the exact 498 bytes that went over the
 wire — 104 ms after the row was written. `P0-2` is closed.
@@ -121,11 +121,11 @@ compose stack, a store pointed at the real link `ABAPAYpe518710Y` (merchant
 | ABA tran id | `1789628839192554` |
 
 Confirmed against ABA rather than only against ourselves: `POST
-/v1/khqr/payway/status` for that session returns `action: "approved"`,
+/api/v1/khqr/payway/status` for that session returns `action: "approved"`,
 `paid: true`, plus ABA's own receipt download URL.
 
 **What this settles.** The QR was *payable* — the half no test could reach. An
-ABA-issued code, minted through `POST /v1/payments`, was scanned by a real wallet
+ABA-issued code, minted through `POST /api/v1/payments`, was scanned by a real wallet
 and the row settled inside ABA's ~180s window with no human intervention on our
 side. It also shows `BAKONG_API_TOKEN` is **not required** for this path: W1
 skips its credential guard when a payment carries a hosted session, so the empty
@@ -189,7 +189,7 @@ A merchant asking "did you ever check this?" now gets an answer.
 **A live run cannot be improvised on a fresh stack.** The compose database was
 empty: no account, no store, no link. Provisioning is
 `docker compose exec -T api python -m chmabapay.cli bootstrap`, then
-`PUT /v1/stores/{id}/link` with the real PayWay link — the slug bootstrap invents
+`PUT /api/v1/stores/{id}/link` with the real PayWay link — the slug bootstrap invents
 (`link.payway.com.kh/sokhaademostorea`) does not exist at ABA, so a hosted mint
 against it fails. `CHMABAPAY_HQ_PAYWAY_LINK` seeds the same link on the HQ store,
 but only via the OAuth/password sign-in path.
@@ -320,7 +320,7 @@ branch, or it reports without blocking.
 
 - [x] Implement the Telegram send, or delete the endpoint. — **implemented**
 
-**Why.** `POST /v1/stores/{id}/telegram/test` logged `"Would send Telegram test
+**Why.** `POST /api/v1/stores/{id}/telegram/test` logged `"Would send Telegram test
 msg"` and returned `ok: true`. Nothing was sent. That is a false success reported
 to a merchant who is checking whether their alerts work.
 
@@ -408,7 +408,7 @@ three separate assumptions only held if customers pay promptly.
   lost to a restart is retried instead of suppressed.
 - Settling a payment **retires any live replacement code** (`superseded`), withdraws
   its QR (`410`) and fires `payment.superseded`.
-- `POST /v1/payments/{id}/reverse` records a refund: status `reversed`, `paid_at`
+- `POST /api/v1/payments/{id}/reverse` records a refund: status `reversed`, `paid_at`
   kept, `reversed_at` added, `payment.reversed` fired, audited in the same
   transaction. `mark_paid` treats `reversed` as terminal, so a later poll — ABA's
   session knows nothing about the refund and still says `approved` — cannot resurrect
@@ -521,7 +521,7 @@ lands. That is a reporting decision, not a schema one, and nothing is blocked by
 
 ### P1-1 Rate limiting and CORS lockdown
 
-- [x] Throttle `/v1/*`, `/pay/*`, `/auth/*`; replace the wildcard origin.
+- [x] Throttle `/api/v1/*`, `/pay/*`, `/auth/*`; replace the wildcard origin.
 
 **Why.** No rate limiting anywhere, and each unthrottled create can trigger an
 outbound ABA call. CORS was `allow_origins=["*"]` with `allow_methods=["*"]` on
@@ -532,11 +532,11 @@ decorate:
 
 | Bucket | Paths | Counted per | Default |
 |---|---|---|---|
-| `payment_create` | `POST /v1/payments`, `POST /v1/payments/{id}/reissue` | API key | 60/min |
-| `khqr` | `/v1/khqr/*` | address | 60/min |
+| `payment_create` | `POST /api/v1/payments`, `POST /api/v1/payments/{id}/reissue` | API key | 60/min |
+| `khqr` | `/api/v1/khqr/*` | address | 60/min |
 | `auth` | `/auth/*`, `/api/v1/auth/*`, `/user/google/auth/*` | address | 20/min |
 | `checkout` | `/pay/*` | address | 120/min |
-| `api` | the rest of `/v1/*` | API key | 600/min |
+| `api` | the rest of `/api/v1/*` | API key | 600/min |
 
 `/health` and `/_dev/*` are exempt. A refusal is `429` with `Retry-After`, a JSON
 body naming the bucket, and `X-RateLimit-Limit` / `-Remaining` on every limited
@@ -546,11 +546,11 @@ response so an integrator can back off before being refused.
 counted per **API key**, which a caller cannot rotate away — and both require a
 key, so a per-key limit is exactly what bounds outbound ABA traffic. The
 unauthenticated surfaces are counted per **address** instead. That asymmetry is
-the point: `/v1/khqr/*` needs no key, so keying it by whatever credential the
+the point: `/api/v1/khqr/*` needs no key, so keying it by whatever credential the
 caller presented would let a made-up token per request mint an unlimited supply
 of fresh buckets. There is a test for precisely that.
 
-**The unauthenticated ABA surface is the finding here.** `/v1/khqr/from-link`,
+**The unauthenticated ABA surface is the finding here.** `/api/v1/khqr/from-link`,
 `/probe-aba-status`, `/payway/checkout` and `/payway/status` take no key at all
 ("no auth, no state", as one of their own docstrings puts it) and each reaches out
 to ABA or PayWay. Before this, anyone could drive that outbound traffic without
@@ -634,7 +634,7 @@ system to change silently.
 1. **Nothing could suspend an account.** `Account.status` exists, and `auth.py`
    enforces it on sign-in and on every authenticated request — but no code path
    ever *wrote* it. The platform could enforce a suspension it had no supported
-   way to apply, and the BRD's `PATCH /v1/admin/accounts/{id}/suspend` was never
+   way to apply, and the BRD's `PATCH /api/v1/admin/accounts/{id}/suspend` was never
    built. `AdminAccountPatch` now takes `status` and an optional `reason`, so the
    action exists and the audit question "who suspended this account" has an
    answer. `reason` is optional: requiring it is a policy call that belongs with
@@ -646,15 +646,15 @@ system to change silently.
    column answers must never be read as "an operator did this". Nothing read it
    before, so the rename was free.
 
-**The view.** `GET /v1/admin/audit-logs` — operator-only, filterable by `action`,
+**The view.** `GET /api/v1/admin/audit-logs` — operator-only, filterable by `action`,
 `target_type` and `actor_account_id`, newest first, with `actor_email` resolved.
 The join to `accounts` is an **outer** join on purpose: a row left by an account
 that no longer exists is exactly the row an audit trail must not drop. The
 console has a matching page at `/audit` (`web/admin/app/audit/page.tsx`).
 
 **Tests.** `tests/test_audit.py`, 27 cases. The first is the invariant that keeps
-the rest honest: it enumerates every mutating route under `/v1/keys`,
-`/v1/webhooks` and `/v1/stores` **from the OpenAPI schema** and fails if one is
+the rest honest: it enumerates every mutating route under `/api/v1/keys`,
+`/api/v1/webhooks` and `/api/v1/stores` **from the OpenAPI schema** and fails if one is
 neither audited nor declared as changing nothing — so a new endpoint cannot be
 added without deciding. A second, parametrized test fails if a classified route
 disappears, naming it. Then per surface: each action writes a row naming the
@@ -941,13 +941,13 @@ dropped.
   accepted a superseded draft. New accounts start **null**: backfilling a
   timestamp would fabricate consent that was never given, which is the one thing
   this record must not contain.
-- `POST /v1/me/terms` records it and writes `account.terms_accepted` to the audit
+- `POST /api/v1/me/terms` records it and writes `account.terms_accepted` to the audit
   trail with the actor and the version. The caller must send the version it was
   shown and a mismatch is refused with `409` — recording whichever version the
   server happens to publish would attribute a stale page's acceptance to text the
   merchant never saw. Re-accepting the same version is a no-op and writes no
   second audit row: a reload is not a second event.
-- `/v1/me` exposes `terms_accepted_at`, `terms_accepted_version` and
+- `/api/v1/me` exposes `terms_accepted_at`, `terms_accepted_version` and
   `terms_required_version`, so a client can tell "accepted" from "accepted
   something we have since replaced" without hardcoding the version.
 - `TERMS_VERSION` lives in config. It is the *published* version and must move
@@ -1027,8 +1027,8 @@ accepted as a risk for now**, because it must be recoverable to sign with.
   comparison was a change detection for the diff. The one place that branched on it
   was `web/user/`, the older portal, which **no compose service in either stack built
   or ran**, since `/dashboard` in `web/landing` replaced it. Migration `0008`
-  drops it along with `account_type_explicitly_set`, and it is gone from the `/v1/me`
-  PATCH body, the `/v1/me` and admin account responses, the session payload and the
+  drops it along with `account_type_explicitly_set`, and it is gone from the `/api/v1/me`
+  PATCH body, the `/api/v1/me` and admin account responses, the session payload and the
   change-plan response.
 
   `ChangePlanOut.account_type_switched` went with it, and is worth noting: it was
@@ -1081,7 +1081,7 @@ recorded here because each one is a deliberate reduction in scope:
 - **The nine Bakong ledger endpoints are documented as unavailable** and their group is
   rendered as such, because Bakong Open API credentials are deliberately not configured.
   The two reconciliation endpoints that *do* work without them
-  (`GET /v1/transactions/check-status/{id}`, `POST /v1/transactions/verify-payment/{id}`)
+  (`GET /api/v1/transactions/check-status/{id}`, `POST /api/v1/transactions/verify-payment/{id}`)
   are now documented separately, which is what an integrator actually needs.
 - **Contact stays email-only, with no status page and no response-time commitment.** The
   terms already offered no SLA (section 7); `/contact` now says so out loud instead of
@@ -1113,11 +1113,11 @@ internet:
 - publicly: `/health` ok, landing/docs/contact/terms/privacy **200**, `admin-pay` **200**
   and not serving the landing page, `/no-such-page` **404** with its own
   `<title>Page not found — ChmabaPay</title>` and `noindex`;
-- `/openapi.json` declares `ApiKey` and `SessionCookie` and contains **no** `/v1/admin` or
+- `/openapi.json` declares `ApiKey` and `SessionCookie` and contains **no** `/api/v1/admin` or
   `/_dev` path;
-- enforced: all four KHQR routes, `/v1/payments`, `/v1/stores`,
-  `/v1/reports/payments.csv` and `/v1/transactions/check-status/…` answer **401** without a
-  credential; `/v1/billing/plans` answers **200** (public by design);
+- enforced: all four KHQR routes, `/api/v1/payments`, `/api/v1/stores`,
+  `/api/v1/reports/payments.csv` and `/api/v1/transactions/check-status/…` answer **401** without a
+  credential; `/api/v1/billing/plans` answers **200** (public by design);
 - refused twice: `/auth/_dev/login`, `/_dev/integration-test` and `/metrics` are **404**
   from the internet — the edge does not route them — and `/metrics` answers **401** from
   inside the network, where `METRICS_TOKEN` is the only thing stopping a scrape.
@@ -1154,7 +1154,7 @@ in the Docker builds, not by clicking them.
 | Theme | The finding that mattered | Closed by |
 | --- | --- | --- |
 | Docs vs code | `check-status` advertised a `source` value that is never assigned and omitted the one that is emitted for every ABA-hosted payment; `verify-payment` was documented to 404 when it returns `200 {found:false}`; `superseded` was described backwards; five published endpoints appeared in neither document | T-37 |
-| Schema accuracy | `POST /v1/payments` returns 201 and the published OpenAPI declared only 200, so a generated client was wrong at runtime | T-38 |
+| Schema accuracy | `POST /api/v1/payments` returns 201 and the published OpenAPI declared only 200, so a generated client was wrong at runtime | T-38 |
 | Edge hardening | **Neither hostname sent any security header at all** — no HSTS, no `X-Frame-Options`, no `nosniff` — on two session-authenticated consoles; and every app page carried Next's `s-maxage=31536000`, a year of shared caching on HTML belonging to one merchant | T-42 |
 | Merchant friction | Five pages reported a *failed fetch* as "no records yet", so a merchant with live stores saw an empty workspace; four buttons that destroy a live credential had no confirmation and no in-flight guard; payment history could not be paged past 50 | T-39, T-40, T-41 |
 | Legal text | The Terms still said the restricted-business list "is subject to change following legal review" — the last visible trace of the draft state; and the plan-fee clause described a billing flow the code does not implement | T-43 |
@@ -1181,8 +1181,8 @@ on both hostnames **through Cloudflare** (which passes the origin's HSTS through
 zone toggle is belt-and-braces rather than required); `/dashboard` and the whole console
 answer `Cache-Control: no-store` while public pages answer `s-maxage=300`; hashed static
 assets keep `max-age=31536000, immutable`; `/terms`, `/privacy` and `/contact` each have
-their own canonical and `og:title`; every public page 200; `POST /v1/khqr/from-link` and
-`/v1/khqr/payway/checkout` 401 to an anonymous caller; `/v1/admin/overview` 401 and
+their own canonical and `og:title`; every public page 200; `POST /api/v1/khqr/from-link` and
+`/api/v1/khqr/payway/checkout` 401 to an anonymous caller; `/api/v1/admin/overview` 401 and
 `/_dev/integration-test` 404; `offset` and the `201`s are in the live OpenAPI; and the
 POS stack was up 11–12 days throughout. In the repository: `ruff check` clean and **274
 passed, 2 deselected** against Postgres, with landing and admin built in Docker with
@@ -1207,7 +1207,7 @@ free subscription (the console's own account needs a billing row, because the HQ
 that self-pay charges against lives on it). Verified end to end rather than assumed:
 `POST /auth/login` returns 200 with `is_platform_admin: true`, the session JWT carries
 `amr: "password"` — the exact claim the admin gate inspects — and `GET
-/v1/admin/overview` answers **200** with that cookie and **401** without it. The env
+/api/v1/admin/overview` answers **200** with that cookie and **401** without it. The env
 bootstrap password is deliberately left empty; the credential exists only as a hash.
 
 **The platform was its own tenant, and metered itself.** The most consequential finding
@@ -1274,8 +1274,8 @@ cron entry pointing at it needed no attention.
 
 Verified from outside afterwards: `/health` 200; `/.well-known/security.txt` **200**,
 having been 404 ninety minutes earlier; `/contact` carries both the 24-hour target and
-the best-effort wording; `/v1/support` appears **four times** in the published OpenAPI;
-`/v1/support/requests` answers **401** to an anonymous caller rather than 404 or 500; and
+the best-effort wording; `/api/v1/support` appears **four times** in the published OpenAPI;
+`/api/v1/support/requests` answers **401** to an anonymous caller rather than 404 or 500; and
 `/metrics`, `/docs` and `/auth/_dev/login` are still **404** from the public internet.
 The POS stack was untouched — `deploy-front-1`, `deploy-api-1` and `deploy-db-1` all up
 **2 weeks** — and neither this stack's `db` nor its `proxy` was recreated.
@@ -1302,7 +1302,7 @@ future change cost twice.
 
 **Which route won, and why.** The flat `/dashboard/payments/{id}`. The deciding
 argument is a correctness one, not taste: **the store-scoped page ignored its own
-store segment.** It fetched `/v1/payments/{pay_id}`, which takes no store
+store segment.** It fetched `/api/v1/payments/{pay_id}`, which takes no store
 parameter at all, so `/dashboard/STORE_A/payments/{payment_of_store_b}` would
 happily render store B's payment inside store A's switcher and tab bar. The
 segment was decorative and could contradict the payment sitting under it. A
@@ -1689,7 +1689,7 @@ the same flag. It must be `false` everywhere in production and staging, or
   local Postgres had drift.
 - The backend on **:8010** is running code that predates today's reissue
   endpoint (its OpenAPI has `/pay/{id}/qr.svg` but not
-  `/v1/payments/{id}/reissue`). Restart before any verification run.
+  `/api/v1/payments/{id}/reissue`). Restart before any verification run.
 - Migration 9 (`payments.reissued_from_id`) has been applied to the local
   Postgres (`localhost:5432/chmabapay`).
 - Revision `0003` renames `audit_logs.admin_account_id` to `actor_account_id`, and
@@ -1755,7 +1755,7 @@ broken.
 **What it found that the earlier sweeps missed.**
 
 - **Webhook creation was broken for every merchant.** The portal's create form sent
-  `enabled`, which `WebhookCreate` forbids (`extra="forbid"`), so `POST /v1/webhooks`
+  `enabled`, which `WebhookCreate` forbids (`extra="forbid"`), so `POST /api/v1/webhooks`
   answered **422 `Extra inputs are not permitted`** every time. Reproduced live in a
   browser, response body and all. This broke onboarding step 3 and the acceptance
   criterion "sign in → accept terms → create a store → create a key → create a payment
@@ -1832,7 +1832,7 @@ not by a lawyer, and this file is the record of exactly what that means.
 **Closed after the findings above, in the same sweep.**
 
 - **D-02 — the console can resolve a refund dispute.** `POST
-  /v1/admin/payments/{public_id}/reverse` is mounted, calls the same `reverse_payment`
+  /api/v1/admin/payments/{public_id}/reverse` is mounted, calls the same `reverse_payment`
   service the merchant route calls (so the `409 payment_not_paid` and `409
   payment_already_reversed` guards, the negative ledger row and the `payment.reversed`
   webhook are identical), and records `admin.payment_reversed` naming the operator with a
@@ -1846,7 +1846,7 @@ not by a lawyer, and this file is the record of exactly what that means.
   instructions are gone from the dev tooling (PA-31) — nothing points at a credential
   `new_api_key` cannot mint. `CHMABAPAY_HQ_STORE_ID`'s resolution order is written down in
   `deploy/.env.example` (PA-32).
-- **Admin-key hardening.** `/v1/admin/*` rejects a `ck_` key outright and `/v1/keys` is
+- **Admin-key hardening.** `/api/v1/admin/*` rejects a `ck_` key outright and `/api/v1/keys` is
   session-only, so no credential can extend or destroy itself (D-6, D-8).
 
 **Verification pass (2026-09-23, PA-34).** `ruff check src/chmabapay` clean;
@@ -1854,7 +1854,7 @@ not by a lawyer, and this file is the record of exactly what that means.
 14 model tables, `alembic check` reporting no drift; `pytest` against Postgres 16 and
 Redis 7 → **372 passed, 2 `live` deselected**; both `next build`s through
 `web/Dockerfile` → exit 0; the webhook lifecycle verified end to end in a browser, no
-`/v1/*` 4xx or 5xx and no app-level console error on the public pages; and a read-only
+`/api/v1/*` 4xx or 5xx and no app-level console error on the public pages; and a read-only
 `GET` re-probe of every route touched, in which `/login`, `/pricing` and the store-scoped
 payment URL answered `307` in production as intended.
 

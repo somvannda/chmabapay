@@ -20,7 +20,7 @@ from ..openapi import AUTH_ERRORS, AUTH_SECURITY
 from ..security import new_secret, verify_signature
 
 router = APIRouter(
-    prefix="/v1/webhooks",
+    prefix="/api/v1/webhooks",
     tags=["webhooks"],
     dependencies=AUTH_SECURITY,
     responses=AUTH_ERRORS,

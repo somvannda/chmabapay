@@ -142,7 +142,7 @@ async def _bootstrap() -> None:
         print(f"\nWEBHOOK SIGNING SECRET: {endpoint.secret_key}")
 
     print("\nTry it:")
-    print(f"  curl -X POST http://127.0.0.1:8000/v1/payments -H 'Authorization: Bearer {raw_account_key}' "
+    print(f"  curl -X POST http://127.0.0.1:8000/api/v1/payments -H 'Authorization: Bearer {raw_account_key}' "
           f"-H 'Content-Type: application/json' -d '{{\"amount\": 1.50, \"reference_id\": \"order_1\", "
           f"\"store\": \"{next(iter(stores.values())).public_id}\"}}'")
     print("  POST /_dev/payments/<id>/pay  -> simulate the customer paying")

@@ -122,7 +122,7 @@ export default function StoreOverviewPage({
     setStoreError(null);
     (async () => {
       try {
-        const res = await fetch(`/v1/stores/${publicId}`, {
+        const res = await fetch(`/api/v1/stores/${publicId}`, {
           credentials: "include",
         });
         if (res.status === 404) {
@@ -150,7 +150,7 @@ export default function StoreOverviewPage({
     (async () => {
       try {
         const res = await fetch(
-          `/v1/payments?store=${encodeURIComponent(publicId)}&limit=20`,
+          `/api/v1/payments?store=${encodeURIComponent(publicId)}&limit=20`,
           { credentials: "include" },
         );
         if (!res.ok) throw new Error(await readApiError(res));
@@ -188,11 +188,11 @@ export default function StoreOverviewPage({
         const today = isoDateParam(new Date());
         const scope = `store_id=${encodeURIComponent(publicId)}`;
         const [allRes, todayRes] = await Promise.all([
-          fetch(`/v1/reports/payments.json?${scope}&per_page=1`, {
+          fetch(`/api/v1/reports/payments.json?${scope}&per_page=1`, {
             credentials: "include",
           }),
           fetch(
-            `/v1/reports/payments.json?${scope}&from=${today}&to=${today}&per_page=1`,
+            `/api/v1/reports/payments.json?${scope}&from=${today}&to=${today}&per_page=1`,
             { credentials: "include" },
           ),
         ]);

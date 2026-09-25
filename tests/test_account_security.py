@@ -75,12 +75,12 @@ async def test_an_email_change_needs_the_current_password():
     row = await make_account_row()
     async with session_client(row) as client:
         # No password at all: refused, and the address is untouched.
-        missing = await client.post("/v1/me/email", json={"email": "new@chmaba.test"})
+        missing = await client.post("/api/v1/me/email", json={"email": "new@chmaba.test"})
         assert missing.status_code == 401
         assert missing.json()["detail"] == "invalid_password"
 
         wrong = await client.post(
-            "/v1/me/email",
+            "/api/v1/me/email",
             json={"email": "new@chmaba.test", "current_password": "not it"},
         )
         assert wrong.status_code == 401
@@ -88,7 +88,7 @@ async def test_an_email_change_needs_the_current_password():
         assert (await reload_account(row.id)).email == "sokha@chmaba.test"
 
         ok = await client.post(
-            "/v1/me/email",
+            "/api/v1/me/email",
             json={"email": "New@Chmaba.test", "current_password": PASSWORD},
         )
         assert ok.status_code == 200, ok.text
@@ -119,7 +119,7 @@ async def test_an_email_change_cannot_land_on_a_taken_address():
 
     async with session_client(row) as client:
         res = await client.post(
-            "/v1/me/email",
+            "/api/v1/me/email",
             json={"email": "already@chmaba.test", "current_password": PASSWORD},
         )
     assert res.status_code == 400
@@ -132,7 +132,7 @@ async def test_a_passwordless_account_cannot_move_its_email():
 
     async with session_client(row, amr="google") as client:
         res = await client.post(
-            "/v1/me/email", json={"email": "new@chmaba.test", "current_password": None}
+            "/api/v1/me/email", json={"email": "new@chmaba.test", "current_password": None}
         )
     assert res.status_code == 409
     assert res.json()["detail"].startswith("email_change_requires_password:")
@@ -144,11 +144,11 @@ async def test_patching_the_email_is_refused_rather_than_ignored():
     row = await make_account_row()
 
     async with session_client(row) as client:
-        res = await client.patch("/v1/me", json={"email": "sneaky@chmaba.test"})
+        res = await client.patch("/api/v1/me", json={"email": "sneaky@chmaba.test"})
         assert res.status_code == 422
 
         # The field it does own still works.
-        renamed = await client.patch("/v1/me", json={"name": "Sokha Cafe II"})
+        renamed = await client.patch("/api/v1/me", json={"name": "Sokha Cafe II"})
         assert renamed.status_code == 200
         assert renamed.json()["name"] == "Sokha Cafe II"
 
@@ -161,21 +161,21 @@ async def test_a_password_change_checks_the_old_one_and_takes_effect():
 
     async with session_client(row) as client:
         wrong = await client.post(
-            "/v1/me/password",
+            "/api/v1/me/password",
             json={"current_password": "not it", "new_password": NEW_PASSWORD},
         )
         assert wrong.status_code == 401
         assert wrong.json()["detail"] == "invalid_password"
 
         same = await client.post(
-            "/v1/me/password",
+            "/api/v1/me/password",
             json={"current_password": PASSWORD, "new_password": PASSWORD},
         )
         assert same.status_code == 400
         assert same.json()["detail"] == "password_unchanged"
 
         ok = await client.post(
-            "/v1/me/password",
+            "/api/v1/me/password",
             json={"current_password": PASSWORD, "new_password": NEW_PASSWORD},
         )
         assert ok.status_code == 200, ok.text
@@ -207,7 +207,7 @@ async def test_a_new_password_longer_than_bcrypt_allows_is_refused_not_a_500():
 
     async with session_client(row) as client:
         too_long = await client.post(
-            "/v1/me/password",
+            "/api/v1/me/password",
             json={"current_password": PASSWORD, "new_password": "a" * 73},
         )
         assert too_long.status_code == 400
@@ -219,7 +219,7 @@ async def test_a_new_password_longer_than_bcrypt_allows_is_refused_not_a_500():
     assert len(("ក" * 25).encode("utf-8")) > 72
     async with session_client(row) as client:
         multibyte = await client.post(
-            "/v1/me/password",
+            "/api/v1/me/password",
             json={"current_password": PASSWORD, "new_password": "ក" * 25},
         )
         assert multibyte.status_code == 400
@@ -234,7 +234,7 @@ async def test_a_google_only_account_has_no_password_to_change():
 
     async with session_client(row, amr="google") as client:
         res = await client.post(
-            "/v1/me/password",
+            "/api/v1/me/password",
             json={"current_password": "anything", "new_password": NEW_PASSWORD},
         )
     assert res.status_code == 409
@@ -256,7 +256,7 @@ async def test_erasing_an_account_anonymises_it_and_switches_every_credential_of
 
     # A settled payment, so there is an accounting record to protect.
     created = await plain_client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={"amount": 5.0, "store": store.public_id, "hosted_qr": False},
         headers={"Authorization": f"Bearer {raw_key}"},
     )
@@ -266,7 +266,7 @@ async def test_erasing_an_account_anonymises_it_and_switches_every_credential_of
     async with session_client(row) as client:
         wrong_confirm = await client.request(
             "DELETE",
-            "/v1/me",
+            "/api/v1/me",
             json={"confirm_email": "someone@else.test", "current_password": PASSWORD},
         )
         assert wrong_confirm.status_code == 400
@@ -274,7 +274,7 @@ async def test_erasing_an_account_anonymises_it_and_switches_every_credential_of
 
         wrong_password = await client.request(
             "DELETE",
-            "/v1/me",
+            "/api/v1/me",
             json={"confirm_email": row.email, "current_password": "not it"},
         )
         assert wrong_password.status_code == 401
@@ -286,14 +286,14 @@ async def test_erasing_an_account_anonymises_it_and_switches_every_credential_of
 
         erased = await client.request(
             "DELETE",
-            "/v1/me",
+            "/api/v1/me",
             json={"confirm_email": row.email, "current_password": PASSWORD},
         )
         assert erased.status_code == 200, erased.text
 
         # The session died with the account: `get_current_session_account` refuses a
         # suspended one.
-        assert (await client.get("/v1/me")).status_code == 401
+        assert (await client.get("/api/v1/me")).status_code == 401
 
     saved = await reload_account(row.id)
     assert saved.email == f"erased-{row.id}@chmabapay.invalid"
@@ -347,7 +347,7 @@ async def test_a_platform_admin_cannot_erase_itself():
     async with session_client(row) as client:
         res = await client.request(
             "DELETE",
-            "/v1/me",
+            "/api/v1/me",
             json={"confirm_email": row.email, "current_password": PASSWORD},
         )
     assert res.status_code == 409
@@ -443,7 +443,7 @@ def _dependency_calls(dependant) -> set:
 
 
 def concrete(path: str) -> str:
-    """A request path for a templated route: `/v1/stores/{public_id}` -> `/v1/stores/x`."""
+    """A request path for a templated route: `/api/v1/stores/{public_id}` -> `/api/v1/stores/x`."""
     return re.sub(r"\{[^}]+\}", "x", path)
 
 
@@ -461,16 +461,16 @@ async def test_an_api_key_cannot_manage_api_keys(plain_client):
     raw_key, _ = await make_key(row)
     headers = {"Authorization": f"Bearer {raw_key}"}
 
-    listed = await plain_client.get("/v1/keys", headers=headers)
+    listed = await plain_client.get("/api/v1/keys", headers=headers)
     assert listed.status_code == 401
     assert listed.json()["detail"] == "invalid_session"
 
     # The id is deliberately one that cannot exist: authentication is refused before the
     # handler is reached, which is itself the property being asserted.
     for method, path in (
-        ("POST", "/v1/keys"),
-        ("POST", "/v1/keys/999999/revoke"),
-        ("POST", "/v1/keys/999999/rotate"),
+        ("POST", "/api/v1/keys"),
+        ("POST", "/api/v1/keys/999999/revoke"),
+        ("POST", "/api/v1/keys/999999/rotate"),
     ):
         res = await plain_client.request(
             method, path, json={"name": "self"}, headers=headers
@@ -480,14 +480,14 @@ async def test_an_api_key_cannot_manage_api_keys(plain_client):
 
     # The same key still authenticates the surface it was issued for, so the change is
     # scoped to key management rather than to the credential.
-    assert (await plain_client.get("/v1/stores", headers=headers)).status_code == 200
+    assert (await plain_client.get("/api/v1/stores", headers=headers)).status_code == 200
 
 
 async def test_a_frozen_account_reads_and_pays_but_cannot_write():
     """§7.4: the freeze takes capability, never the ability to pay.
 
     Reads stay open, because the portal has to render and the merchant has to see what they owe.
-    `POST /v1/billing/change-plan` stays open because it is two of the three ways out (§7.5) —
+    `POST /api/v1/billing/change-plan` stays open because it is two of the three ways out (§7.5) —
     pay, or move to a plan you can afford. Everything that would run the business is refused with
     a code an integrator can act on rather than a bare 403.
     """
@@ -497,22 +497,22 @@ async def test_a_frozen_account_reads_and_pays_but_cannot_write():
 
     async with session_client(row) as frozen:
         for path in (
-            "/v1/me",
-            "/v1/billing/subscription",
-            "/v1/billing/invoices",
-            "/v1/stores",
-            "/v1/payments",
-            "/v1/keys",
-            "/v1/webhooks",
+            "/api/v1/me",
+            "/api/v1/billing/subscription",
+            "/api/v1/billing/invoices",
+            "/api/v1/stores",
+            "/api/v1/payments",
+            "/api/v1/keys",
+            "/api/v1/webhooks",
         ):
             assert (await frozen.get(path)).status_code == 200, path
 
         for method, path in (
-            ("POST", "/v1/stores"),
-            ("POST", "/v1/keys"),
-            ("POST", "/v1/webhooks"),
-            ("PATCH", "/v1/me"),
-            ("DELETE", "/v1/me"),
+            ("POST", "/api/v1/stores"),
+            ("POST", "/api/v1/keys"),
+            ("POST", "/api/v1/webhooks"),
+            ("PATCH", "/api/v1/me"),
+            ("DELETE", "/api/v1/me"),
         ):
             res = await frozen.request(method, path, json={})
             assert res.status_code == 403, f"{method} {path}"
@@ -520,12 +520,12 @@ async def test_a_frozen_account_reads_and_pays_but_cannot_write():
 
         # A read that settles what it polls is not a read. Detection (W1) settles the payment
         # anyway, on its own sweep, so refusing this costs the merchant nothing.
-        polled = await frozen.get("/v1/transactions/check-status/pay_anything")
+        polled = await frozen.get("/api/v1/transactions/check-status/pay_anything")
         assert polled.status_code == 403
         assert polled.json()["detail"] == "account_restricted"
 
         # The escape hatch: choosing Free resolves the debt and lifts the freeze in one click.
-        moved = await frozen.post("/v1/billing/change-plan", json={"plan_code": "free"})
+        moved = await frozen.post("/api/v1/billing/change-plan", json={"plan_code": "free"})
         assert moved.status_code == 200, moved.text
 
     assert (await reload_account(row.id)).status == models.ACCOUNT_ACTIVE
@@ -591,7 +591,7 @@ async def test_a_frozen_account_can_sign_in_but_a_suspended_one_cannot(plain_cli
     assert refused.json()["detail"] == "account_suspended"
 
     async with session_client(row) as suspended:
-        assert (await suspended.get("/v1/me")).status_code == 401
+        assert (await suspended.get("/api/v1/me")).status_code == 401
 
 
 async def test_an_api_key_is_refused_for_a_frozen_account(plain_client):
@@ -603,7 +603,7 @@ async def test_an_api_key_is_refused_for_a_frozen_account(plain_client):
     await set_status(row.id, models.ACCOUNT_RESTRICTED)
 
     res = await plain_client.get(
-        "/v1/stores", headers={"Authorization": f"Bearer {raw_key}"}
+        "/api/v1/stores", headers={"Authorization": f"Bearer {raw_key}"}
     )
     assert res.status_code == 403
     assert res.json()["detail"] == "account_restricted"

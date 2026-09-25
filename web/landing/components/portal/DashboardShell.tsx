@@ -197,7 +197,7 @@ export type DashboardShellProps = {
   onSignOut: () => void;
   signoutLoading?: boolean;
   /**
-   * The single most urgent billing notice, from `GET /v1/billing/notices`. Fetched by the layout
+   * The single most urgent billing notice, from `GET /api/v1/billing/notices`. Fetched by the layout
    * rather than here, so the shell stays presentational and the notice refreshes on the same
    * `chmabapay:plan-changed` event that refreshes the plan card.
    */

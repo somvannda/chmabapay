@@ -109,7 +109,7 @@ export default function DashboardReportsPage() {
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/v1/stores", { credentials: "include" });
+        const res = await fetch("/api/v1/stores", { credentials: "include" });
         if (!res.ok) return;
         const data = await res.json().catch(() => ({}));
         const items: StoreOption[] = Array.isArray(data)
@@ -141,7 +141,7 @@ export default function DashboardReportsPage() {
         // asking for one row keeps the payload to a single payment.
         params.set("page", "1");
         params.set("per_page", "1");
-        const res = await fetch(`/v1/reports/payments.json?${params.toString()}`, {
+        const res = await fetch(`/api/v1/reports/payments.json?${params.toString()}`, {
           credentials: "include",
         });
         if (!res.ok) throw new Error(await readApiError(res));
@@ -174,7 +174,7 @@ export default function DashboardReportsPage() {
     setPaymentsBusy(true);
     try {
       const params = filterParams(merchant.trim());
-      const res = await fetch(`/v1/reports/payments.csv?${params.toString()}`, {
+      const res = await fetch(`/api/v1/reports/payments.csv?${params.toString()}`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(await readApiError(res));
@@ -191,7 +191,7 @@ export default function DashboardReportsPage() {
     setStoresError(null);
     setStoresBusy(true);
     try {
-      const res = await fetch("/v1/stores?limit=500", { credentials: "include" });
+      const res = await fetch("/api/v1/stores?limit=500", { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json().catch(() => ({}));
       const items: Record<string, unknown>[] = Array.isArray(data)

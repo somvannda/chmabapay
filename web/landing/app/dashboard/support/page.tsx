@@ -144,7 +144,7 @@ function NewRequestModal({
       }
       setSubmitting(true);
       try {
-        const res = await fetch("/v1/support/requests", {
+        const res = await fetch("/api/v1/support/requests", {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -346,7 +346,7 @@ function RequestThreadModal({
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await fetch(`/v1/support/requests/${publicId}`, {
+      const res = await fetch(`/api/v1/support/requests/${publicId}`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(await readApiError(res));
@@ -367,7 +367,7 @@ function RequestThreadModal({
     setReplyError(null);
     setReplyBusy(true);
     try {
-      const res = await fetch(`/v1/support/requests/${publicId}/reply`, {
+      const res = await fetch(`/api/v1/support/requests/${publicId}/reply`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -390,7 +390,7 @@ function RequestThreadModal({
     setCloseError(null);
     setCloseBusy(true);
     try {
-      const res = await fetch(`/v1/support/requests/${publicId}/close`, {
+      const res = await fetch(`/api/v1/support/requests/${publicId}/close`, {
         method: "POST",
         credentials: "include",
       });
@@ -576,7 +576,7 @@ export default function DashboardSupportPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await fetch("/v1/support/requests", { credentials: "include" });
+      const res = await fetch("/api/v1/support/requests", { credentials: "include" });
       // A failed read used to be indistinguishable from a fresh account if `requests`
       // were simply left empty, so it raises instead of falling through to the empty state.
       if (!res.ok) throw new Error(await readApiError(res));

@@ -1,30 +1,30 @@
 # Public API spec (v1)
 
 Mirrors CutLuy's developer surface so existing mental models (and SDK examples) map 1:1.
-Base URL `https://pay.chmaba.com/v1` — the API is served from the same origin as the dashboard,
+Base URL `https://pay.chmaba.com/api/v1` — the API is served from the same origin as the dashboard,
 so there is no separate `api.` host. JSON in/out. Auth: `Authorization: Bearer ck_live_…`.
 
-Only `ck_live_` keys are issued: `POST /v1/keys` always mints live mode, and there is no
-`ck_test_` issuance path. `POST /v1/keys` is also session-cookie only as of 2026-09-23 — a key
+Only `ck_live_` keys are issued: `POST /api/v1/keys` always mints live mode, and there is no
+`ck_test_` issuance path. `POST /api/v1/keys` is also session-cookie only as of 2026-09-23 — a key
 must not be able to mint, revoke or rotate keys, or a leaked one could replace itself and
-outlive its own revocation (decision D-8). The rest of `/v1/me` and `/v1/billing/*` are
-session-cookie only too, except `GET /v1/billing/plans`, which is public. Those surfaces are
+outlive its own revocation (decision D-8). The rest of `/api/v1/me` and `/api/v1/billing/*` are
+session-cookie only too, except `GET /api/v1/billing/plans`, which is public. Those surfaces are
 in the second section below.
 
 ## Endpoints
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/v1/payments` | Create a payment (KHQR + hosted checkout) |
-| GET | `/v1/payments/:id` | Fetch current state |
-| GET | `/v1/payments` | List payments (newest first); whole account, or scoped by `store`/`merchant` |
-| POST | `/v1/payments/:id/reissue` | Replace a dead code (expired/failed only; a still-live code answers `409 payment_not_expired`) |
-| POST | `/v1/payments/:id/reverse` | Record a refund of a settled payment |
+| POST | `/api/v1/payments` | Create a payment (KHQR + hosted checkout) |
+| GET | `/api/v1/payments/:id` | Fetch current state |
+| GET | `/api/v1/payments` | List payments (newest first); whole account, or scoped by `store`/`merchant` |
+| POST | `/api/v1/payments/:id/reissue` | Replace a dead code (expired/failed only; a still-live code answers `409 payment_not_expired`) |
+| POST | `/api/v1/payments/:id/reverse` | Record a refund of a settled payment |
 | GET | `/pay/:id` | **Public** hosted checkout page (no auth) |
 | GET | `/pay/:id/qr.svg` | **Public** QR image; `410` once the code is dead |
-| GET | `/v1/khqr/render.svg` | KHQR SVG renderer (no auth), `ecc`/`scale` params |
-| PUT | `/v1/stores/:id` | Update a store (alias of `PATCH /v1/stores/:id`) |
-| POST | `/v1/transactions/token/renew` | Request a fresh short-lived Bakong JWT |
+| GET | `/api/v1/khqr/render.svg` | KHQR SVG renderer (no auth), `ecc`/`scale` params |
+| PUT | `/api/v1/stores/:id` | Update a store (alias of `PATCH /api/v1/stores/:id`) |
+| POST | `/api/v1/transactions/token/renew` | Request a fresh short-lived Bakong JWT |
 
 ## Two surfaces, and why they are separate
 
@@ -39,27 +39,27 @@ them advertised a surface an integrator has no credential for.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/v1/keys` | List the account's API keys; the raw key is never returned again |
-| POST | `/v1/keys` | Create a key — session only, `name` required (1–64 chars), `raw_key` returned once, `403 terms_not_accepted` until the Terms are accepted, capped by the plan (`400 Max API keys (n) reached…`) |
-| POST | `/v1/keys/:id/revoke` | Revoke a key; any request using it fails from this call on (`404 key_not_found`) |
-| POST | `/v1/keys/:id/rotate` | Create a replacement and suspend the old key in the same call |
-| PATCH | `/v1/account` | Update the account name (alias of `PATCH /v1/me`) |
-| POST | `/v1/me/password` | Rotate the password (`401 invalid_password`, `400 password_unchanged`, `409 no_password_set`, `400 password_too_long` past bcrypt's 72 bytes) |
-| POST | `/v1/me/email` | Move the account's email (`400 email_already_taken`, `409 email_change_requires_password` for a Google-only account) |
-| DELETE | `/v1/me` | Close and anonymise the account (`400 confirm_email_does_not_match`, `401 invalid_password`, `409 platform_admin_cannot_self_delete`) |
-| POST | `/v1/me/terms` | Record Terms acceptance (`409 terms_version_superseded`) |
-| GET | `/v1/billing/subscription` | The current subscription and plan |
-| POST | `/v1/billing/change-plan` | Change plan; a paid tier is bought, so the plan activates when its invoice is paid (`409 open_invoice_unpaid`, `400 plan_unchanged`, `404 plan_not_found`, `400 plan_not_available`) |
-| GET | `/v1/billing/invoices` | List plan invoices, filtered by `period_month=YYYY-MM` |
-| GET | `/v1/billing/invoices/:id/khqr` | Mint a KHQR to settle a plan invoice (`400 invoice_already_paid`, `404 invoice_not_found`, `503 billing_not_open`) |
-| GET | `/v1/billing/notices` | The most urgent billing notice, or empty when nothing is owed |
+| GET | `/api/v1/keys` | List the account's API keys; the raw key is never returned again |
+| POST | `/api/v1/keys` | Create a key — session only, `name` required (1–64 chars), `raw_key` returned once, `403 terms_not_accepted` until the Terms are accepted, capped by the plan (`400 Max API keys (n) reached…`) |
+| POST | `/api/v1/keys/:id/revoke` | Revoke a key; any request using it fails from this call on (`404 key_not_found`) |
+| POST | `/api/v1/keys/:id/rotate` | Create a replacement and suspend the old key in the same call |
+| PATCH | `/api/v1/account` | Update the account name (alias of `PATCH /api/v1/me`) |
+| POST | `/api/v1/me/password` | Rotate the password (`401 invalid_password`, `400 password_unchanged`, `409 no_password_set`, `400 password_too_long` past bcrypt's 72 bytes) |
+| POST | `/api/v1/me/email` | Move the account's email (`400 email_already_taken`, `409 email_change_requires_password` for a Google-only account) |
+| DELETE | `/api/v1/me` | Close and anonymise the account (`400 confirm_email_does_not_match`, `401 invalid_password`, `409 platform_admin_cannot_self_delete`) |
+| POST | `/api/v1/me/terms` | Record Terms acceptance (`409 terms_version_superseded`) |
+| GET | `/api/v1/billing/subscription` | The current subscription and plan |
+| POST | `/api/v1/billing/change-plan` | Change plan; a paid tier is bought, so the plan activates when its invoice is paid (`409 open_invoice_unpaid`, `400 plan_unchanged`, `404 plan_not_found`, `400 plan_not_available`) |
+| GET | `/api/v1/billing/invoices` | List plan invoices, filtered by `period_month=YYYY-MM` |
+| GET | `/api/v1/billing/invoices/:id/khqr` | Mint a KHQR to settle a plan invoice (`400 invoice_already_paid`, `404 invoice_not_found`, `503 billing_not_open`) |
+| GET | `/api/v1/billing/notices` | The most urgent billing notice, or empty when nothing is owed |
 
-`POST /v1/transactions/token/renew` is withheld from the public page with the rest of the Bakong
-ledger group (decision D-3). The platform-admin routes (`/v1/admin/*`) and the dev rail
+`POST /api/v1/transactions/token/renew` is withheld from the public page with the rest of the Bakong
+ledger group (decision D-3). The platform-admin routes (`/api/v1/admin/*`) and the dev rail
 (`/_dev/*`, mounted only when `ENABLE_DEV_GATEWAY=true`) are internal and are not part of any
 public surface.
 
-## POST /v1/payments
+## POST /api/v1/payments
 
 Request body:
 
@@ -106,18 +106,18 @@ Response `201 Created` (or `200` on idempotent replay):
 Amounts serialized as decimal strings. `qr_string` is the raw EMVCo/KHQR payload to hand to any
 QR library (render at ECC H so the centre medallion survives). Generated server-side only.
 
-## GET /v1/payments/:id and GET /v1/payments
+## GET /api/v1/payments/:id and GET /api/v1/payments
 
-`GET /v1/payments` lists newest first. Scoped by `store` (a store's public id) or `merchant`
+`GET /api/v1/payments` lists newest first. Scoped by `store` (a store's public id) or `merchant`
 (its `external_id`) when either is given; with neither it lists **every** store on the account.
 Also accepts `status` (filter), `limit` (default 20, max 100) and `offset` (default 0, the
 newest-first index to start at, so a merchant can page past the first page; a negative offset is
 a `422` and an absurd one is clamped), and returns under `data`.
 
 Each row carries `store` — which store took the payment — and `paid_at`. It does *not* carry
-`metadata`, `qr_string` or `checkout_url`; `metadata` and `qr_string` are on `GET /v1/payments/:id`.
-`checkout_url` is returned by the calls that mint or replace a code — `POST /v1/payments`,
-`POST /v1/payments/:id/reissue` and `POST /v1/payments/:id/reverse` — and by neither read, so a
+`metadata`, `qr_string` or `checkout_url`; `metadata` and `qr_string` are on `GET /api/v1/payments/:id`.
+`checkout_url` is returned by the calls that mint or replace a code — `POST /api/v1/payments`,
+`POST /api/v1/payments/:id/reissue` and `POST /api/v1/payments/:id/reverse` — and by neither read, so a
 payment fetched by id has to be turned into a link as `/pay/{id}` on your own checkout origin.
 
 ## Payment object / statuses
@@ -140,7 +140,7 @@ payment fetched by id has to be turned into a link as `/pay/{id}` on your own ch
 `checkout_ttl_seconds` applies only to codes we build ourselves. Once the window
 closes the QR image stops being served — `GET /pay/:id/qr.svg` answers `410` — and
 `payment.expired` fires. (`GET /pay/:id` still renders; it is the JSON status and the
-QR image that carry the dead state, and `GET /v1/payments/:id` returns `200` with
+QR image that carry the dead state, and `GET /api/v1/payments/:id` returns `200` with
 `status: "expired"` rather than an error.) But **that is not the end of the sale.**
 ABA keeps accepting the payment, and on 2026-09-17 one settled nine minutes after its
 own expiry event. We keep reconciling for
@@ -152,7 +152,7 @@ Statuses, by what they mean for money:
 - `paid` — settled. Counts toward quota, fires `payment.completed`.
 - `reversed` — settled, then refunded. `paid_at` is kept and `reversed_at` is added,
   so a report can say "collected, then given back" rather than pretending the sale
-  never happened. Set only by `POST /v1/payments/:id/reverse`, because ABA gives us
+  never happened. Set only by `POST /api/v1/payments/:id/reverse`, because ABA gives us
   no callback for a refund.
 - `expired` — the code stopped being served. **Not terminal:** still reconcilable, and
   it becomes `paid` if the money arrives.
@@ -164,7 +164,7 @@ Statuses, by what they mean for money:
   an answer from the rail at that moment, an operator is alerted rather than the
   question being dropped.
 
-## POST /v1/payments/:id/reverse
+## POST /api/v1/payments/:id/reverse
 
 Record that a settled payment was refunded. Body: `{"reason": "…"}` (optional, and
 worth supplying — six months later a reversal with no reason is indistinguishable
@@ -295,7 +295,7 @@ Codes returned in `detail` (verified against `src/`):
 | `unauthorized` | 401 | Missing or invalid key |
 | `invalid_session` | 401 | Cookie-only endpoint called without a valid session |
 | `account_suspended` | 403 | The account is suspended |
-| `account_restricted` | 403 | The account is frozen for an unpaid plan invoice. No route is served except the billing allowlist (`GET /v1/billing/*`, `POST /v1/billing/change-plan`) — including every API key, which is refused wholesale. Settling the invoice, moving to Free, or moving to a smaller paid plan lifts it |
+| `account_restricted` | 403 | The account is frozen for an unpaid plan invoice. No route is served except the billing allowlist (`GET /api/v1/billing/*`, `POST /api/v1/billing/change-plan`) — including every API key, which is refused wholesale. Settling the invoice, moving to Free, or moving to a smaller paid plan lifts it |
 | `quota_exceeded` | 402 | Plan quota reached |
 | `whitelabel_not_enabled` | 403 | Branding fields sent without the entitlement |
 | `invalid_amount` / `amount_too_low` / `amount_too_high` | 422 (or 400 from the service) | Amount rejected |
@@ -303,19 +303,19 @@ Codes returned in `detail` (verified against `src/`):
 | `store_disabled` | 400 | The store is switched off — by the merchant, or by an operator |
 | `store_billing_suspended` | 400 | The platform is holding the store: the account is on a plan smaller than its store count. Unlike `store_disabled` this is not the merchant's own switch, and it clears when the plan is settled or a slot is swapped back on the billing page |
 | `offline_qr_requires_a_confirmation_source` | 400 | `hosted_qr=false` where nothing can confirm it |
-| `payload_too_long` | 400 | `GET /v1/khqr/render.svg` only: the payload does not fit a QR code. Not a request-body limit. |
-| `invalid_payload` | 400 | `GET /v1/khqr/render.svg`: the payload could not be encoded |
+| `payload_too_long` | 400 | `GET /api/v1/khqr/render.svg` only: the payload does not fit a QR code. Not a request-body limit. |
+| `invalid_payload` | 400 | `GET /api/v1/khqr/render.svg`: the payload could not be encoded |
 | `payment_not_found` / `store_not_found` / `merchant_not_found` | 404 | Not found in this account |
 | `payment_not_paid` / `payment_already_reversed` | 409 | Reversal preconditions |
 | `email_already_taken` | 400 | Profile email in use |
 | `terms_version_superseded` | 409 | Accepted a terms version we no longer publish |
 | `bakong_not_configured` | 503 | Bakong ledger endpoints without platform credentials |
-| `billing_not_open` | 503 | `GET /v1/billing/invoices/{id}/khqr`: the platform's own payment destination is not configured |
-| `invalid_password` | 401 | Password proof failed (`POST /v1/me/email`, `POST /v1/me/password`, `DELETE /v1/me`) |
-| `no_password_set` / `password_unchanged` | 409 / 400 | `POST /v1/me/password` preconditions |
-| `confirm_email_does_not_match` | 400 | `DELETE /v1/me` typed confirmation did not match |
-| `platform_admin_cannot_self_delete` | 409 | `DELETE /v1/me` on the console's own account |
-| `email_required` / `bakong_error` | 400 | `POST /v1/transactions/token/renew` |
+| `billing_not_open` | 503 | `GET /api/v1/billing/invoices/{id}/khqr`: the platform's own payment destination is not configured |
+| `invalid_password` | 401 | Password proof failed (`POST /api/v1/me/email`, `POST /api/v1/me/password`, `DELETE /api/v1/me`) |
+| `no_password_set` / `password_unchanged` | 409 / 400 | `POST /api/v1/me/password` preconditions |
+| `confirm_email_does_not_match` | 400 | `DELETE /api/v1/me` typed confirmation did not match |
+| `platform_admin_cannot_self_delete` | 409 | `DELETE /api/v1/me` on the console's own account |
+| `email_required` / `bakong_error` | 400 | `POST /api/v1/transactions/token/renew` |
 | `rate_limited: <rule>` | 429 | Rate limit hit; the value is prefixed, e.g. `rate_limited: auth` |
 
 ## Quota
@@ -331,7 +331,7 @@ Codes returned in `detail` (verified against `src/`):
   boundary, and until then the store cap is the lever that bites. A merchant who was never on a
   paid plan is metered from their first day: the deferral is keyed on a paid plan being given up,
   not on a plan starting.
-  `GET /v1/billing/subscription` reports it as `quota_deferred_until` — the instant the new
+  `GET /api/v1/billing/subscription` reports it as `quota_deferred_until` — the instant the new
   allowance starts being enforced, `null` when it already is. It exists for the portal: usage is
   counted against the plan *in force*, so a mid-month downgrade reads over-limit while every code
   still mints, and this is the only way a client can explain that rather than contradict it.
@@ -373,16 +373,16 @@ Timeline for one 30-day period, where `D` is the day the period ends (the invoic
 - **A smaller plan caps the stores immediately.** Stores over the new allowance are held
   (`billing_suspended_at` on the store object) and a new code against one answers
   `400 store_billing_suspended`, while a payment already in a customer's hand still settles.
-  `POST /v1/stores/{public_id}/activate` swaps a held store back in, holding whichever store makes
+  `POST /api/v1/stores/{public_id}/activate` swaps a held store back in, holding whichever store makes
   room, so the count never changes.
-- Only `GET /v1/billing/plans` is public. The rest of `/v1/billing/*` is session-cookie only, and
+- Only `GET /api/v1/billing/plans` is public. The rest of `/api/v1/billing/*` is session-cookie only, and
   while an account is frozen those routes plus reads are the *only* ones served.
 
 ### The plan invoice object
 
 | field | notes |
 | --- | --- |
-| id | used by `POST /v1/billing/invoices/{id}/khqr` to mint a payable code |
+| id | used by `POST /api/v1/billing/invoices/{id}/khqr` to mint a payable code |
 | period_month | `YYYY-MM` label derived from `due_at` — a label, not the window |
 | period_start, period_end | the window this invoice is a claim for |
 | due_at | when it was expected; `null` only on pre-2026 rows |
@@ -396,7 +396,7 @@ Timeline for one 30-day period, where `D` is the day the period ends (the invoic
 billed again, which is why voiding is not how a debt is forgiven. A voided invoice is still
 **payable** — settling one is how a merchant who let a period lapse buys it back.
 
-### GET /v1/billing/notices
+### GET /api/v1/billing/notices
 
 At most one notice, most urgent first. `level` is `info` / `warning` / `critical`; `state` is
 `issuance`, `due_3`, `due_1`, `due_today`, `overdue_1`, `overdue_3`, `overdue_final` or `frozen`,
@@ -424,9 +424,9 @@ Rules, by route (each limit is configurable per minute — see `config.py`):
 
 | Rule | Identity | Applies to |
 | --- | --- | --- |
-| `payment_create` | API key | `POST /v1/payments`, `POST /v1/payments/{id}/reissue` — the calls that mint an ABA QR |
-| `api` | API key | everything else under `/v1/` |
-| `khqr` | IP | `/v1/khqr/*` (unauthenticated by design) |
+| `payment_create` | API key | `POST /api/v1/payments`, `POST /api/v1/payments/{id}/reissue` — the calls that mint an ABA QR |
+| `api` | API key | everything else under `/api/v1/` |
+| `khqr` | IP | `/api/v1/khqr/*` (unauthenticated by design) |
 | `auth` | IP | `/auth/*`, `/api/v1/auth/*`, `/user/google/auth/*` |
 | `checkout` | IP | `/pay/*` |
 

@@ -7,7 +7,7 @@ import { useSession, type Profile } from "@/components/portal/useSession";
 
 type Payment = {
   id: string | number;
-  // `GET /v1/payments` returns `amount` as a decimal string; the reports
+  // `GET /api/v1/payments` returns `amount` as a decimal string; the reports
   // summary returns integer cents. Both shapes are accepted.
   amount?: string | number | null;
   amount_cents?: number;
@@ -152,7 +152,7 @@ export default function DashboardOverviewPage() {
     setPaymentsError(null);
     (async () => {
       try {
-        const res = await fetch("/v1/payments?limit=200", {
+        const res = await fetch("/api/v1/payments?limit=200", {
           credentials: "include",
         });
         if (!res.ok) throw new Error(await readApiError(res));
@@ -182,7 +182,7 @@ export default function DashboardOverviewPage() {
     setStoresError(null);
     (async () => {
       try {
-        const res = await fetch("/v1/stores", { credentials: "include" });
+        const res = await fetch("/api/v1/stores", { credentials: "include" });
         if (!res.ok) throw new Error(await readApiError(res));
         const data = await res.json().catch(() => ({}));
         const items: Store[] = Array.isArray(data)
@@ -208,7 +208,7 @@ export default function DashboardOverviewPage() {
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/v1/billing/subscription", {
+        const res = await fetch("/api/v1/billing/subscription", {
           credentials: "include",
         });
         if (res.ok && res.status !== 501) {
@@ -234,11 +234,11 @@ export default function DashboardOverviewPage() {
       try {
         const today = isoDateParam(new Date());
         const [allRes, todayRes] = await Promise.all([
-          fetch("/v1/reports/payments.json?per_page=1", {
+          fetch("/api/v1/reports/payments.json?per_page=1", {
             credentials: "include",
           }),
           fetch(
-            `/v1/reports/payments.json?from=${today}&to=${today}&per_page=1`,
+            `/api/v1/reports/payments.json?from=${today}&to=${today}&per_page=1`,
             { credentials: "include" },
           ),
         ]);

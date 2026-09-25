@@ -281,7 +281,7 @@ services:
         NEXT_PUBLIC_API_URL: http://api:8000
     restart: unless-stopped
     environment:
-      # Only used by the app's own rewrites, and only if a request for /v1/* ever
+      # Only used by the app's own rewrites, and only if a request for /api/v1/* ever
       # reaches this container — normally the proxy routes those straight to `api`.
       NEXT_PUBLIC_API_URL: http://api:8000
     depends_on:

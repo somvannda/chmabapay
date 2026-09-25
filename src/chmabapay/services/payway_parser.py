@@ -22,7 +22,7 @@ How ABA PayWay link pages work (REVERSE-ENGINEERED):
       b. ALSO ship a script that extracts the real checkoutData.qr_string and
          parses Tag 30.01 (bakong_id) out of it for the same slug/amount.
   - Because a full headless browser isn't always available, we also have a
-    "known fields cache" mode — callers (the /v1/khqr/from-link API) that
+    "known fields cache" mode — callers (the /api/v1/khqr/from-link API) that
     know the bakong_id/payway_client_id from DB can still use them as
     fallbacks; this parser is for bootstrapping that DB.
 """

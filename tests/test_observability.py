@@ -185,7 +185,7 @@ async def test_a_settled_payment_increments_created_and_paid(client):
 
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 2.5, "hosted_qr": False},
             headers=headers,
         )
@@ -212,7 +212,7 @@ async def test_expiring_payments_counts_them(client):
 
     created = (
         await client.post(
-            "/v1/payments", json={"amount": 1.0, "hosted_qr": False}, headers=headers
+            "/api/v1/payments", json={"amount": 1.0, "hosted_qr": False}, headers=headers
         )
     ).json()
 

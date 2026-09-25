@@ -243,7 +243,7 @@ class Settings(BaseSettings):
 
     # Merchant alerts via Telegram. A store holds the `telegram_chat_id`; this
     # token is what turns that id into a delivered message. Without it no alert
-    # can be sent, so POST /v1/stores/{id}/telegram/test refuses (503) instead of
+    # can be sent, so POST /api/v1/stores/{id}/telegram/test refuses (503) instead of
     # reporting a success that never happened.
     telegram_bot_token: str | None = None
     telegram_timeout_seconds: float = 5.0
@@ -302,7 +302,7 @@ class Settings(BaseSettings):
     worker_w1_fast_poll_seconds: float = 5.0
     worker_w1_fast_window_seconds: float = 180.0
 
-    # Billing self-pay HQ store: used by /v1/billing/invoices/{id}/khqr to target
+    # Billing self-pay HQ store: used by /api/v1/billing/invoices/{id}/khqr to target
     # ChmabaPay's own internal store when it dog-foods create_payment() to collect plan fees.
     # Accepts either Store.id (int-as-string) or Store.public_id (string). Fallback: first
     # is_platform_admin account's first active Store. If none -> 500 platform_hq_store_not_configured.

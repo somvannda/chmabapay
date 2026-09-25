@@ -19,7 +19,7 @@ from ..openapi import AUTH_ERRORS, AUTH_SECURITY
 from ..schemas import money_to_str
 
 router = APIRouter(
-    prefix="/v1/reports",
+    prefix="/api/v1/reports",
     tags=["reports"],
     dependencies=AUTH_SECURITY,
     responses=AUTH_ERRORS,

@@ -326,7 +326,7 @@ body {
 }
 
 /* Holds the width of the signed-out pair (or the signed-in chip) while the
-   `/v1/me` check is in flight, so the bar does not reflow when it resolves. It is
+   `/api/v1/me` check is in flight, so the bar does not reflow when it resolves. It is
    `visibility: hidden` rather than a shimmer on purpose: a signed-in merchant must
    not see "Sign in" even for the frame before their profile arrives, and a spinner
    in a 76px marketing bar reads as a defect. Removed at 480px and below, where the
@@ -5591,7 +5591,7 @@ body.dash-path-dashboard > .landing-footer {
 }
 
 /* ---------- Billing notice (shell banner) ----------
-   Driven by GET /v1/billing/notices. The three levels reuse the exact colours of the form alert
+   Driven by GET /api/v1/billing/notices. The three levels reuse the exact colours of the form alert
    trio above, so "something needs you" looks the same wherever a merchant meets it. The banner
    sits in `.cp-app-body` above `<main>`, inside its own container so its text lines up with the
    topbar and the page below rather than running edge to edge. */

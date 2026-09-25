@@ -93,8 +93,8 @@ const nextConfig = {
         destination: `${backend}/pay/:path*`,
       },
       {
-        source: "/v1/:path*",
-        destination: `${backend}/v1/:path*`,
+        source: "/api/v1/:path*",
+        destination: `${backend}/api/v1/:path*`,
       },
       {
         source: "/openapi.json",
@@ -103,10 +103,6 @@ const nextConfig = {
       {
         source: "/health",
         destination: `${backend}/health`,
-      },
-      {
-        source: "/api/:path*",
-        destination: `${backend}/:path*`,
       },
     ];
   },

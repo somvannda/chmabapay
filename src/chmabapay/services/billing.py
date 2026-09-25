@@ -66,7 +66,7 @@ VOID_PRE_LIFECYCLE = "pre_lifecycle"
 VOID_OPERATOR = "operator"
 
 # The name of the platform's own store — the one plan fees are collected into. It is
-# the identity an operator sets up from the admin console (`PUT /v1/admin/hq-store/link`),
+# the identity an operator sets up from the admin console (`PUT /api/v1/admin/hq-store/link`),
 # and the thing `_get_hq_store` looks for when no store id is configured. Lives here
 # because three modules have to agree on it: the sign-in seed, the billing lookup, and
 # the admin endpoint that writes it.

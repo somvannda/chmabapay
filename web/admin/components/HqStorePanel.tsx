@@ -82,7 +82,7 @@ export function HqStorePanel() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await apiFetch("/v1/admin/hq-store", { credentials: "include" });
+      const res = await apiFetch("/api/v1/admin/hq-store", { credentials: "include" });
       if (!res.ok) throw new Error(await readApiError(res));
       const data = (await res.json()) as HqStore;
       setStore(data);
@@ -123,7 +123,7 @@ export function HqStorePanel() {
     const trimmed = link.trim();
     setSaving(true);
     try {
-      const res = await apiFetch("/v1/admin/hq-store/link", {
+      const res = await apiFetch("/api/v1/admin/hq-store/link", {
         method: "PUT",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

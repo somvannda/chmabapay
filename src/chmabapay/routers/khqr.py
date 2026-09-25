@@ -66,8 +66,8 @@ from ..services.payway_parser import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/v1/khqr", tags=["khqr"])
-# No router-level security: `GET /v1/khqr/render.svg` is public by design — a QR image
+router = APIRouter(prefix="/api/v1/khqr", tags=["khqr"])
+# No router-level security: `GET /api/v1/khqr/render.svg` is public by design — a QR image
 # is what a merchant pastes into a page their customers load. The four routes that
 # drive an outbound ABA fetch carry `AUTH_SECURITY` individually.
 
@@ -335,7 +335,7 @@ async def probe_aba_status(
 # --------------------------------------------------------------------------- #
 # ABA hosted checkout: let ABA issue the QR, then ask ABA whether it was paid. #
 #                                                                             #
-# This is the only path that can confirm a payment. /v1/khqr/from-link builds  #
+# This is the only path that can confirm a payment. /api/v1/khqr/from-link builds  #
 # the payload ourselves, so nothing on ABA's side has a record of it — which   #
 # is why a wallet answers "QR not found" and why there is nothing to poll.     #
 # Here ABA owns both the QR and the transaction, so both work.                 #

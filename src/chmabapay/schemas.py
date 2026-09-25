@@ -524,7 +524,7 @@ class KHQRFromLinkRequest(BaseModel):
     # No `gt=0` on the field above on purpose: a pydantic constraint is
     # evaluated before this validator and would replace the machine-readable
     # `amount_too_low` with its own prose, so the identical condition returned
-    # `amount_too_low` on /v1/payments but "Input should be greater than 0"
+    # `amount_too_low` on /api/v1/payments but "Input should be greater than 0"
     # here. Clients need one stable code per condition.
     @field_validator("amount")
     @classmethod
@@ -540,7 +540,7 @@ class KHQRFromLinkRequest(BaseModel):
 
 
 class KHQRFromLinkResponse(BaseModel):
-    """Output of /v1/khqr/from-link — a scannable KHQR plus all search keys."""
+    """Output of /api/v1/khqr/from-link — a scannable KHQR plus all search keys."""
     ok: bool = True
     qr_string: str = Field(description="Full EMVCo TLV payload (render as QR code).")
     qr_md5: str = Field(description="MD5 hash of qr_string — primary Strategy B search key.")
@@ -570,7 +570,7 @@ class KHQRFromLinkResponse(BaseModel):
 
 # --------------------------------------------------------------------------- #
 # ABA hosted checkout — the PayWay page's own API (reverse-engineered).
-# Unlike /v1/khqr/from-link this does NOT build the QR ourselves: ABA mints it,
+# Unlike /api/v1/khqr/from-link this does NOT build the QR ourselves: ABA mints it,
 # which is what makes it payable and gives us a handle to poll for payment.
 # --------------------------------------------------------------------------- #
 class PayWayHostedCheckoutRequest(BaseModel):
@@ -616,7 +616,7 @@ class PayWayHostedCheckoutResponse(BaseModel):
     link_url: str
     merchant_name: str | None = None
     instructions: str = (
-        "Scan qr_string, then poll POST /v1/khqr/payway/status with client_id, "
+        "Scan qr_string, then poll POST /api/v1/khqr/payway/status with client_id, "
         "request_time and token until paid is true."
     )
 

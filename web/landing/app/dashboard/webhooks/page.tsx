@@ -238,7 +238,7 @@ function TestWebhookModal({
     setSending(true);
     setError(null);
     try {
-      const res = await fetch(`/v1/webhooks/${endpoint.id}/test`, {
+      const res = await fetch(`/api/v1/webhooks/${endpoint.id}/test`, {
         method: "POST",
         credentials: "include",
       });
@@ -419,7 +419,7 @@ function DeliveriesModal({
     setError(null);
     try {
       const res = await fetch(
-        `/v1/webhooks/${endpoint.id}/deliveries?limit=50&page=1`,
+        `/api/v1/webhooks/${endpoint.id}/deliveries?limit=50&page=1`,
         { credentials: "include" },
       );
       if (!res.ok) throw new Error(await readApiError(res));
@@ -595,14 +595,14 @@ function EditEndpointModal({
 
         let res: Response;
         if (isEditing) {
-          res = await fetch(`/v1/webhooks/${endpoint!.id}`, {
+          res = await fetch(`/api/v1/webhooks/${endpoint!.id}`, {
             method: "PATCH",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           });
         } else {
-          res = await fetch("/v1/webhooks", {
+          res = await fetch("/api/v1/webhooks", {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
@@ -747,7 +747,7 @@ export default function DashboardWebhooksPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await fetch("/v1/webhooks", { credentials: "include" });
+      const res = await fetch("/api/v1/webhooks", { credentials: "include" });
       // A failed read used to leave `endpoints` empty, which the page then rendered as
       // "No webhook endpoints yet." — the same screen as a fresh account.
       if (!res.ok) throw new Error(await readApiError(res));
@@ -788,7 +788,7 @@ export default function DashboardWebhooksPage() {
       setActionError(null);
       setBusyId(String(id));
       try {
-        const res = await fetch(`/v1/webhooks/${id}`, {
+        const res = await fetch(`/api/v1/webhooks/${id}`, {
           method: "DELETE",
           credentials: "include",
         });
@@ -808,7 +808,7 @@ export default function DashboardWebhooksPage() {
       setActionError(null);
       try {
         const nextEnabled = ep.status === "active" ? false : true;
-        const res = await fetch(`/v1/webhooks/${ep.id}`, {
+        const res = await fetch(`/api/v1/webhooks/${ep.id}`, {
           method: "PATCH",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -828,7 +828,7 @@ export default function DashboardWebhooksPage() {
       setActionError(null);
       setBusyId(String(id));
       try {
-        const res = await fetch(`/v1/webhooks/${id}/rotate-secret`, {
+        const res = await fetch(`/api/v1/webhooks/${id}/rotate-secret`, {
           method: "POST",
           credentials: "include",
         });
