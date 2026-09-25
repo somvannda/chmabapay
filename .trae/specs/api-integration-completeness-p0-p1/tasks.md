@@ -2,11 +2,11 @@
 
 ## Task 1: Admin KYC Router (Queue List + Approve + Reject)
 - **Status**: `superseded`
-- **Verified**: KYC was dropped entirely by `supabase/migrations/6-drop-kyc.sql`, which removes `accounts.kyc_status`, `kyc_approved_at`, `kyc_reject_reason` and `kyc_live_blocked` plus `plans.kyc_required_for_live`; the word `kyc` no longer appears anywhere under `src/`, and `routers/admin.py` today is a different operator console (`/v1/admin/accounts`, `/v1/admin/plans`, `/v1/admin/invoices`, `/v1/admin/payments`, `/v1/admin/hq-store`) with no KYC queue/approve/reject routes.
+- **Verified**: KYC was dropped entirely by `supabase/migrations/6-drop-kyc.sql`, which removes `accounts.kyc_status`, `kyc_approved_at`, `kyc_reject_reason` and `kyc_live_blocked` plus `plans.kyc_required_for_live`; the word `kyc` no longer appears anywhere under `src/`, and `routers/admin.py` today is a different operator console (`/api/v1/admin/accounts`, `/api/v1/admin/plans`, `/api/v1/admin/invoices`, `/api/v1/admin/payments`, `/api/v1/admin/hq-store`) with no KYC queue/approve/reject routes.
 - **Priority**: high
 - **Depends On**: None
 - **Description**:
-  - Create new file `src/chmabapay/routers/admin.py` with prefix `/v1/admin`.
+  - Create new file `src/chmabapay/routers/admin.py` with prefix `/api/v1/admin`.
   - Implement hybrid auth helper (session OR Bearer ck_ key) that ALSO checks `session_account.is_platform_admin == True`; returns 403 `forbidden` otherwise.
   - Route `GET /kyc/pending`: select Account where `kyc_status IN ('submitted','reviewing')`, return paginated list with KYC fields + submitted_at computed.
   - Route `POST /kyc/{account_id}/approve`: load target account, set kyc_status='approved', kyc_live_blocked=False, kyc_approved_at=now UTC, updated_at=now. Write AuditLog: action='kyc.approved', target_type='Account', target_id=account_id, admin_account_id=admin.id, details={}. Return updated account profile subset.
@@ -14,7 +14,7 @@
   - Include in `main.py` `app.include_router(admin.router)` near the other routers (after account before billing or at end).
 - **Acceptance Criteria Addressed**: AC-3, AC-4, AC-5, AC-17
 - **Test Requirements**:
-  - `rule` TR-1.1: Non-admin session GET /v1/admin/kyc/pending → HTTP 403. Evidence: pytest httpx test.
+  - `rule` TR-1.1: Non-admin session GET /api/v1/admin/kyc/pending → HTTP 403. Evidence: pytest httpx test.
   - `rule` TR-1.2: Approve flow: submit Business KYC → login admin → POST approve → target kyc_status/approved_at/kyc_live_blocked cols flipped; AuditLog row exists. Evidence: pytest assertions on DB.
   - `rule` TR-1.3: Reject flow: submit Business KYC → admin POST reject with reason → kyc_status=rejected, blocked=True, reason saved, AuditLog row. Evidence: pytest.
 - **Notes**: Reuse existing AuditLog model from `models.py` (M1 already implemented per prior spec). Test helper to create an `is_platform_admin=True` account fixture.
@@ -30,7 +30,7 @@
   - **Model layer**: Add `SubMerchant` SQLAlchemy model class to `src/chmabapay/models.py` per BRD §8.2 spec: id PK, public_id (sm_… 20+ urlsafe chars unique index), account_id FK accounts.id, external_id (Saas partner id, indexed, unique constraint per (account_id, external_id)), display_name, status default='active', shadow_store_id FK stores.id UNIQUE (1:1), link_type enum (aba_payway_link|bakong_id|bank_account), raw_link nullable, merchant_account_id nullable (resolved bakong_id Tag 30.01), merchant_name nullable, payway_client_id nullable, bank_code nullable, account_number nullable, resolved_bakong_id nullable, redirect_success_url nullable, redirect_failure_url nullable, support_email nullable, whitelabel_css nullable (TEXT), total_payments_count default=0, total_volume_cents default=0, created_at + updated_at datetime.
   - **DB apply**: Ensure `create_all` in `db.py` includes SubMerchant table if not done automatically by SQLAlchemy metadata.
   - **Public id generator**: Helper `new_sub_merchant_id()` in security.py (or inline) generating `sm_` prefix + 16 urlsafe chars consistent with `st_`, `ck_`, `pay_` prefix patterns.
-  - **Router file**: Create `src/chmabapay/routers/platform.py` prefix `/v1/platform`. Hybrid auth: ck_ Bearer OR session. Reject st_ scoped keys with 403. Plan gate: `Account.saas_sub_merchants_enabled == True` via active plan (same `_get_active_plan` helper pattern from `keys.py` lines 97–111). If Growth or Starter → 403.
+  - **Router file**: Create `src/chmabapay/routers/platform.py` prefix `/api/v1/platform`. Hybrid auth: ck_ Bearer OR session. Reject st_ scoped keys with 403. Plan gate: `Account.saas_sub_merchants_enabled == True` via active plan (same `_get_active_plan` helper pattern from `keys.py` lines 97–111). If Growth or Starter → 403.
   - **Cap enforcement**: `Plan.max_sub_merchants` count check on create; if cap hit → 402 detail="Sub-Merchant cap reached ({N} on {plan_code} plan). Upgrade to Enterprise for unlimited."
   - **Route CRUD**:
     - `POST /sub-merchants`: Create. Payload fields: external_id (str), display_name (str), khqr_config (dict: link_type, raw_link?, bakong_id?, bank_code?, account_number?), redirect_success_url?, redirect_failure_url?, support_email?, whitelabel_css?. Behavior: (a) if external_id already exists for same account → return existing (idempotent replay 200 not 201). (b) create shadow Store: name=display_name+" (shadow)", status=ACTIVE, under same account_id. (c) create PaymentLink for that Store: depending on link_type, save raw_link/payway_client_id etc, status=ACTIVE. (d) resolve bakong_id (reuse derive_bakong_id helper from khqr.py if Style B bank account chosen — import cross-module carefully). (e) Return 201 or 200: {sub_merchant_id, external_id, resolved_bakong_id, tag30_00 derived from bank profile, shadow_store_id (hide in production? — no, return it per BRD for debugging), status}.
@@ -70,7 +70,7 @@
 
 ## Task 4: Billing Invoices List + Self-Pay KHQR via Own Gateway
 - **Status**: `complete`
-- **Verified**: `routers/billing.py:491 list_invoices` serves `GET /v1/billing/invoices` (session-only, `?period_month=`, ordered `period_month` DESC) and `routers/billing.py:556 get_invoice_khqr` serves `GET /v1/billing/invoices/{invoice_id}/khqr` (201, mints the payment via `_invoice_payment` → `services.payments.create_payment` on the resolved HQ store), pinned by `tests/test_billing_invoices.py::test_the_same_invoice_gives_the_same_payment_twice`.
+- **Verified**: `routers/billing.py:491 list_invoices` serves `GET /api/v1/billing/invoices` (session-only, `?period_month=`, ordered `period_month` DESC) and `routers/billing.py:556 get_invoice_khqr` serves `GET /api/v1/billing/invoices/{invoice_id}/khqr` (201, mints the payment via `_invoice_payment` → `services.payments.create_payment` on the resolved HQ store), pinned by `tests/test_billing_invoices.py::test_the_same_invoice_gives_the_same_payment_twice`.
 - **Priority**: high
 - **Depends On**: None (can work even if PlanInvoice model needs to be added; it was in M1)
 - **Description**:
@@ -89,11 +89,11 @@
 
 ## Task 5: Reports Router (CSV + JSON Payments Export, Plan-Gated)
 - **Status**: `partial`
-- **Verified**: both endpoints exist today — `routers/reports.py:131 export_payments_csv` (`GET /v1/reports/payments.csv`, streaming, exercised by `tests/test_settlement_lifecycle.py`) and `routers/reports.py:199 export_payments_json` (`GET /v1/reports/payments.json` with the totals summary) — but the plan gate half was deliberately removed by `alembic/versions/0010_drop_csv_export_gate.py`, which drops `plans.csv_export_enabled` because the 403 was unreachable (every plan, Free included, had it true).
+- **Verified**: both endpoints exist today — `routers/reports.py:131 export_payments_csv` (`GET /api/v1/reports/payments.csv`, streaming, exercised by `tests/test_settlement_lifecycle.py`) and `routers/reports.py:199 export_payments_json` (`GET /api/v1/reports/payments.json` with the totals summary) — but the plan gate half was deliberately removed by `alembic/versions/0010_drop_csv_export_gate.py`, which drops `plans.csv_export_enabled` because the 403 was unreachable (every plan, Free included, had it true).
 - **Priority**: medium
 - **Depends On**: None
 - **Description**:
-  - **New file**: `src/chmabapay/routers/reports.py` prefix `/v1/reports`.
+  - **New file**: `src/chmabapay/routers/reports.py` prefix `/api/v1/reports`.
   - **Hybrid auth**: Exactly same pattern as keys/webhooks (session OR ck_ Bearer). Scope for store-scope keys → filter to that store only automatically (no privilege escalation to cross-store).
   - **Plan gate helper**: `_ensure_csv_export_allowed(session, account)` → get active plan for account; if plan.csv_export_enabled == False OR Starter → raise 403 detail="CSV exports are not available on the Starter plan. Upgrade to Growth to unlock.". Call this helper inside both CSV and JSON endpoints? Actually JSON report should be accessible to all but CSV is Starter-gated. Only gate the CSV endpoint with 403. JSON is always 200 if authed.
   - **Shared filter parser**: Parse query params: `from` (ISO date), `to` (ISO date), `store_id` (store public_id str), `sub_merchant_id` (sm_ public_id), `statuses` comma-separated list (pending,paid,expired,failed,scanned). Build SQL where clause accordingly. Join Store for owner account scoping.
@@ -101,7 +101,7 @@
   - **JSON endpoint**: `GET /payments.json`. Same filters. Pagination: query `?page=1 default, ?per_page=20 default, max 100`. Response shape: {data: [..., each row same as CSV fields as dict], summary: {count: N rows in this page, total_matching_rows (int), total_amount_cents_sum (sum of all matching rows, not just page)}, pagination: {page, per_page, total_pages, total_rows}}.
 - **Acceptance Criteria Addressed**: AC-12, AC-13
 - **Test Requirements**:
-  - `rule` TR-5.1: Starter account GET /v1/reports/payments.csv → 403 with exact detail substring "Upgrade to Growth". Evidence: pytest.
+  - `rule` TR-5.1: Starter account GET /api/v1/reports/payments.csv → 403 with exact detail substring "Upgrade to Growth". Evidence: pytest.
   - `rule` TR-5.2: Growth account GET CSV → 200, Content-Type text/csv, body starts with header "public_id,status,amount,...". Evidence: pytest httpx Content-Type + body startswith.
   - `rule` TR-5.3: JSON endpoint 3 paid payments ($5, $10, $2) → summary.count=3, summary.total_amount_cents=1700. Evidence: pytest JSON assertions.
 - **Notes**: Sub-amount sum: sum payment.amount_cents for all matching (not just page) for totals. Do 2 queries: list + aggregate SUM + COUNT for totals. Always safe.
@@ -110,7 +110,7 @@
 
 ## Task 6: Webhook Deliveries Listing Endpoint
 - **Status**: `complete`
-- **Verified**: `routers/webhooks.py:377 list_webhook_deliveries` serves `GET /v1/webhooks/{endpoint_id}/deliveries`, returning `WebhookDeliveryOut` rows (delivery_id, event_type, http_status, attempt_count, response_body_preview truncated to 500 chars, created_at, completed_at) read from `models.EventDelivery` (`models.py:285`, columns `last_response_status` / `attempts` / `last_error`) joined to `Event`, newest first with `?limit=` (default 200).
+- **Verified**: `routers/webhooks.py:377 list_webhook_deliveries` serves `GET /api/v1/webhooks/{endpoint_id}/deliveries`, returning `WebhookDeliveryOut` rows (delivery_id, event_type, http_status, attempt_count, response_body_preview truncated to 500 chars, created_at, completed_at) read from `models.EventDelivery` (`models.py:285`, columns `last_response_status` / `attempts` / `last_error`) joined to `Event`, newest first with `?limit=` (default 200).
 - **Priority**: medium
 - **Depends On**: None
 - **Description**:
@@ -127,36 +127,36 @@
 
 ## Task 7: Landing API Docs Page Full Rewrite (Correct Paths + 6 New Groups + Getting Started Curl Panels)
 - **Status**: `partial`
-- **Verified**: the rewrite landed and holds today in `web/landing/app/api/docs/page.tsx` — a corrected `endpointGroups` array (e.g. `GET/POST /v1/keys`, `/v1/khqr/from-link`, `/v1/reports/payments.csv`; no `/v1/auth/api-keys` string) plus a `quickStartPanels` component with 6 curl/Node.js blocks — but the spec's "Admin (Platform Owner)" and "Platform (SaaS Sub-Merchants)" groups (and the raw `/_dev` rail group) are gone, because those routers were removed by `supabase/migrations/6-drop-kyc.sql` and `supabase/migrations/4-merge-sub-merchants-into-stores.sql`.
+- **Verified**: the rewrite landed and holds today in `web/landing/app/api/docs/page.tsx` — a corrected `endpointGroups` array (e.g. `GET/POST /api/v1/keys`, `/api/v1/khqr/from-link`, `/api/v1/reports/payments.csv`; no `/api/v1/auth/api-keys` string) plus a `quickStartPanels` component with 6 curl/Node.js blocks — but the spec's "Admin (Platform Owner)" and "Platform (SaaS Sub-Merchants)" groups (and the raw `/_dev` rail group) are gone, because those routers were removed by `supabase/migrations/6-drop-kyc.sql` and `supabase/migrations/4-merge-sub-merchants-into-stores.sql`.
 - **Priority**: high
 - **Depends On**: None (but we write docs groups based on actual routes after backend tasks 1-6 so route list is accurate; run docs edit last to reflect reality)
 - **Description**:
   - **Rewite `endpointGroups` array** in `web/landing/app/api/docs/page.tsx` (lines 28-66):
-    - Rename old "Authentication" to "API Keys" with correct prefix `/v1/keys`. Correct 3 rows: `GET /v1/keys` "List current keys", `POST /v1/keys` "Create a key (account or store scope, live/test mode)", `POST /v1/keys/{key_id}/revoke` "Revoke a key", `POST /v1/keys/{key_id}/rotate` "Rotate (create new + deprecate old)". (4 rows total now, not 3 old wrong ones)
-    - Fix "Payments" group: 4 rows kept but paths corrected: `POST /v1/payments` "Create a payment intent", `GET /v1/payments` "List own payments (filters, paginated)", `GET /v1/payments/{public_id}` "Get single payment + events". Remove the old POST /poll row from this group (it belongs under Transactions).
-    - Add new group **"Stores"**: 5 rows — `POST /v1/stores` "Create a store", `GET /v1/stores` "List stores (paginated)", `GET /v1/stores/{public_id}` "Get store + destination", `PUT /v1/stores/{public_id}/link` "Update payment destination link", `POST /v1/stores/{public_id}/disable` "Disable a store".
-    - Rework **"KHQR"** group: 4 rows — `POST /v1/khqr/from-link` "KHQR from an ABA PayWay share link", `POST /v1/khqr/from-account` "KHQR from bank code + account or direct Bakong ID", `GET /v1/khqr/bank-codes` "List supported bank codes + derivation rules", `POST /v1/khqr/probe-aba-status` "Check ABA PayWay SSR page status for a link slug".
-    - Add new **"Transactions"** group (12 rows total): `POST /v1/transactions/search` "Bakong search by raw criteria", `POST /v1/transactions/poll` "Long-poll Bakong until a match is found or timeout", `GET /v1/transactions/md5/{md5_value}` "Lookup by QR MD5 hash", `GET /v1/transactions/hash/{hash_value}` "Lookup by full hash", `GET /v1/transactions/short-hash/{short_hash}` "Lookup by short hash", `GET /v1/transactions/instruction-ref/{ref}` "Lookup by instruction ref", `GET /v1/transactions/external-ref/{ref}` "Lookup by external ref", `POST /v1/transactions/bulk` "Batch bulk search", `POST /v1/transactions/verify-receipt` "7-tier Bakong receipt cascade lookup", `POST /v1/transactions/account/check` "Preflight Bakong account routability", `POST /v1/transactions/token/renew` "Renew Bakong Open API token".
-    - Fix **"Webhooks"** group 4 rows (keep existing 3 + add deliveries): `GET /v1/webhooks` "List webhook endpoints", `POST /v1/webhooks` "Register a webhook endpoint", `PATCH /v1/webhooks/{endpoint_id}` "Edit endpoint URL/events/status", `DELETE /v1/webhooks/{endpoint_id}` "Deactivate an endpoint", `GET /v1/webhooks/{endpoint_id}/deliveries` "List delivery attempts (last 200)", `POST /v1/webhooks/{endpoint_id}/test` "Trigger a synthetic test event".
-    - Add new **"Billing"** group: `GET /v1/billing/plans` "List public plans with feature matrix", `POST /v1/billing/change-plan` "Change plan (upgrade/downgrade)", `GET /v1/billing/invoices` "List plan invoices", `GET /v1/billing/invoices/{id}/khqr` "Generate KHQR to pay an invoice (dog-foods our own gateway)".
-    - Add new **"Account & KYC"** group (session auth): `GET /v1/me` "Get profile", `PATCH /v1/me` "Update profile (name/email)", `POST /v1/kyc` "Submit KYC data (individual or business)", `GET /v1/kyc` "Get KYC status + required fields".
-    - Add new **"Platform (SaaS Sub-Merchants)"** group (Scale/Ent only): `POST /v1/platform/sub-merchants` "Create a sub-merchant (idempotent by external_id)", `GET /v1/platform/sub-merchants` "List sub-merchants", `GET /v1/platform/sub-merchants/{id}` "Get sub-merchant + counters", `PATCH /v1/platform/sub-merchants/{id}` "Edit destination/whitelabel/redirects", `POST /v1/platform/sub-merchants/{id}/disable` "Disable sub-merchant".
-    - Add new **"Admin (Platform Owner)"** group (is_platform_admin only): `GET /v1/admin/kyc/pending` "KYC review queue", `POST /v1/admin/kyc/{account_id}/approve` "Approve KYC", `POST /v1/admin/kyc/{account_id}/reject` "Reject KYC (with reason)".
-    - Add new **"Reports"** group (plan-gated): `GET /v1/reports/payments.csv` "CSV export (Starter: blocked)", `GET /v1/reports/payments.json` "JSON with pagination + totals summary".
+    - Rename old "Authentication" to "API Keys" with correct prefix `/api/v1/keys`. Correct 3 rows: `GET /api/v1/keys` "List current keys", `POST /api/v1/keys` "Create a key (account or store scope, live/test mode)", `POST /api/v1/keys/{key_id}/revoke` "Revoke a key", `POST /api/v1/keys/{key_id}/rotate` "Rotate (create new + deprecate old)". (4 rows total now, not 3 old wrong ones)
+    - Fix "Payments" group: 4 rows kept but paths corrected: `POST /api/v1/payments` "Create a payment intent", `GET /api/v1/payments` "List own payments (filters, paginated)", `GET /api/v1/payments/{public_id}` "Get single payment + events". Remove the old POST /poll row from this group (it belongs under Transactions).
+    - Add new group **"Stores"**: 5 rows — `POST /api/v1/stores` "Create a store", `GET /api/v1/stores` "List stores (paginated)", `GET /api/v1/stores/{public_id}` "Get store + destination", `PUT /api/v1/stores/{public_id}/link` "Update payment destination link", `POST /api/v1/stores/{public_id}/disable` "Disable a store".
+    - Rework **"KHQR"** group: 4 rows — `POST /api/v1/khqr/from-link` "KHQR from an ABA PayWay share link", `POST /api/v1/khqr/from-account` "KHQR from bank code + account or direct Bakong ID", `GET /api/v1/khqr/bank-codes` "List supported bank codes + derivation rules", `POST /api/v1/khqr/probe-aba-status` "Check ABA PayWay SSR page status for a link slug".
+    - Add new **"Transactions"** group (12 rows total): `POST /api/v1/transactions/search` "Bakong search by raw criteria", `POST /api/v1/transactions/poll` "Long-poll Bakong until a match is found or timeout", `GET /api/v1/transactions/md5/{md5_value}` "Lookup by QR MD5 hash", `GET /api/v1/transactions/hash/{hash_value}` "Lookup by full hash", `GET /api/v1/transactions/short-hash/{short_hash}` "Lookup by short hash", `GET /api/v1/transactions/instruction-ref/{ref}` "Lookup by instruction ref", `GET /api/v1/transactions/external-ref/{ref}` "Lookup by external ref", `POST /api/v1/transactions/bulk` "Batch bulk search", `POST /api/v1/transactions/verify-receipt` "7-tier Bakong receipt cascade lookup", `POST /api/v1/transactions/account/check` "Preflight Bakong account routability", `POST /api/v1/transactions/token/renew` "Renew Bakong Open API token".
+    - Fix **"Webhooks"** group 4 rows (keep existing 3 + add deliveries): `GET /api/v1/webhooks` "List webhook endpoints", `POST /api/v1/webhooks` "Register a webhook endpoint", `PATCH /api/v1/webhooks/{endpoint_id}` "Edit endpoint URL/events/status", `DELETE /api/v1/webhooks/{endpoint_id}` "Deactivate an endpoint", `GET /api/v1/webhooks/{endpoint_id}/deliveries` "List delivery attempts (last 200)", `POST /api/v1/webhooks/{endpoint_id}/test` "Trigger a synthetic test event".
+    - Add new **"Billing"** group: `GET /api/v1/billing/plans` "List public plans with feature matrix", `POST /api/v1/billing/change-plan` "Change plan (upgrade/downgrade)", `GET /api/v1/billing/invoices` "List plan invoices", `GET /api/v1/billing/invoices/{id}/khqr` "Generate KHQR to pay an invoice (dog-foods our own gateway)".
+    - Add new **"Account & KYC"** group (session auth): `GET /api/v1/me` "Get profile", `PATCH /api/v1/me` "Update profile (name/email)", `POST /api/v1/kyc` "Submit KYC data (individual or business)", `GET /api/v1/kyc` "Get KYC status + required fields".
+    - Add new **"Platform (SaaS Sub-Merchants)"** group (Scale/Ent only): `POST /api/v1/platform/sub-merchants` "Create a sub-merchant (idempotent by external_id)", `GET /api/v1/platform/sub-merchants` "List sub-merchants", `GET /api/v1/platform/sub-merchants/{id}` "Get sub-merchant + counters", `PATCH /api/v1/platform/sub-merchants/{id}` "Edit destination/whitelabel/redirects", `POST /api/v1/platform/sub-merchants/{id}/disable` "Disable sub-merchant".
+    - Add new **"Admin (Platform Owner)"** group (is_platform_admin only): `GET /api/v1/admin/kyc/pending` "KYC review queue", `POST /api/v1/admin/kyc/{account_id}/approve` "Approve KYC", `POST /api/v1/admin/kyc/{account_id}/reject` "Reject KYC (with reason)".
+    - Add new **"Reports"** group (plan-gated): `GET /api/v1/reports/payments.csv` "CSV export (Starter: blocked)", `GET /api/v1/reports/payments.json` "JSON with pagination + totals summary".
     - Add new **"Public Checkout"** group (no auth): `GET /pay/{public_id}` "Hosted branded checkout page", `GET /pay/{public_id}/status` "JSON status endpoint (for checkout page poller)".
     - Add new **"Dev Rail (Test only)"** group (dev gateway flag): `POST /_dev/payments/{id}/scan` "Mark as scanned (test)", `POST /_dev/payments/{id}/pay` "Mark as paid (test bypass rail)".
   - **Add Getting Started Curl Panels**: Below `<GettingStarted />` existing 4 cards section, insert a new React component (inline or extract `QuickStartPanels()`) that contains 6 terminal-code blocks with 6 labels. Structure: each block uses existing `.docs-signature-panel` + `.docs-signature-panel-head` + `.docs-signature-code` classes. Do NOT add inline styles — any required new CSS class names (e.g. `docs-qs-grid`, `docs-qs-block`, `docs-qs-title`) go to `globals.css` ONLY. Code content snippets:
-    1. Block 1 "Create Store": curl POST /v1/stores with sample body name/city + Authorization Bearer session placeholder + create store response 201.
-    2. Block 2 "Attach PayWay Link": curl PUT /v1/stores/{st_}/link, body {link_type, raw_link}.
-    3. Block 3 "Create Key": curl POST /v1/keys scope=store, store_id, mode=live → returns raw_key once.
-    4. Block 4 "Create Payment": curl POST /v1/payments amount 5.50 ref_id, returns qr_string, checkout_url, pay_ id.
-    5. Block 5 "Poll Until Paid": curl POST /v1/transactions/poll, with qr_md5, timeout 30s.
+    1. Block 1 "Create Store": curl POST /api/v1/stores with sample body name/city + Authorization Bearer session placeholder + create store response 201.
+    2. Block 2 "Attach PayWay Link": curl PUT /api/v1/stores/{st_}/link, body {link_type, raw_link}.
+    3. Block 3 "Create Key": curl POST /api/v1/keys scope=store, store_id, mode=live → returns raw_key once.
+    4. Block 4 "Create Payment": curl POST /api/v1/payments amount 5.50 ref_id, returns qr_string, checkout_url, pay_ id.
+    5. Block 5 "Poll Until Paid": curl POST /api/v1/transactions/poll, with qr_md5, timeout 30s.
     6. Block 6 "Verify Webhook Signature (Node.js)": reuse existing signature section code verbatim but label "(6) Verify Webhook Signature" consistent with Step 5.
   - **CSS updates**: If any new layout classes needed for the 6-block grid, add them to `web/landing/app/globals.css` — never inline `style={{}}`.
 - **Acceptance Criteria Addressed**: AC-1, AC-2, AC-15, AC-16
 - **Test Requirements**:
   - `rule` TR-7.1: endpointGroups length after rewrite contains at least the 12 required groups enumerated above. Evidence: count groups array len >=12, each group.title string matches the names listed (case-insensitive).
-  - `rule` TR-7.2: No documented path references `/v1/auth/api-keys` (old wrong prefix). grep-assert on page.tsx for that string returns zero matches. Evidence: grep command.
+  - `rule` TR-7.2: No documented path references `/api/v1/auth/api-keys` (old wrong prefix). grep-assert on page.tsx for that string returns zero matches. Evidence: grep command.
   - `rule` TR-7.3: 6 curl code blocks rendered below GettingStarted section (each with a `<pre class="docs-signature-code">` or derived class — each block preceded by a head label that contains the required 6 title strings). Evidence: next build output TSX parse or grep of the built HTML for each of 6 required titles.
   - `rubric` TR-7.4: Docs accuracy. Dimension: path/verb accuracy rate vs backend openapi.json. Scale 1-5. Anchors: 1 = >5 mismatches; 3 = 2-4 mismatches; 5 = zero path/verb mismatches across all documented rows. Threshold >=4. Evidence: automated diff check or manual spot check of 20 docs rows vs backend routes.
 
@@ -164,7 +164,7 @@
 
 ## Task 8: Integration Verification, Rebuild + Regressions Cleanup
 - **Status**: `partial`
-- **Verified**: the verification intent survives as a standing test rather than a one-off run — `tests/test_openapi_schema.py` (11 tests, green when run today) asserts `openapi.json` validity, that every published path is on the docs page (`test_every_published_path_is_documented_or_declared_internal`), and that `/v1/admin` + `/_dev` are deliberately kept out of the schema; `tests/test_migrations.py` covers the model↔migration diff — but TR-8.3's "Platform" tag no longer exists (router removed by `supabase/migrations/4-merge-sub-merchants-into-stores.sql`) and the admin router is hidden from `openapi.json` on purpose, so two of its three required tags are moot.
+- **Verified**: the verification intent survives as a standing test rather than a one-off run — `tests/test_openapi_schema.py` (11 tests, green when run today) asserts `openapi.json` validity, that every published path is on the docs page (`test_every_published_path_is_documented_or_declared_internal`), and that `/api/v1/admin` + `/_dev` are deliberately kept out of the schema; `tests/test_migrations.py` covers the model↔migration diff — but TR-8.3's "Platform" tag no longer exists (router removed by `supabase/migrations/4-merge-sub-merchants-into-stores.sql`) and the admin router is hidden from `openapi.json` on purpose, so two of its three required tags are moot.
 - **Priority**: high
 - **Depends On**: Tasks 1, 2, 3, 4, 5, 6, 7
 - **Description**:

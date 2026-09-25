@@ -238,8 +238,8 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
   as a single row. That invariant is asserted by the Wave 2 tests and by
   `test_paying_after_a_freeze_bills_from_the_day_they_paid`.
 - **The three ways out of a freeze** (Pay / choose Free / choose a paid tier) all reach the
-  billing page's own routes — `POST /v1/billing/invoices/{id}/khqr` and
-  `POST /v1/billing/change-plan` — so T-23 is a UI task plus the allowlist in T-22, not a
+  billing page's own routes — `POST /api/v1/billing/invoices/{id}/khqr` and
+  `POST /api/v1/billing/change-plan` — so T-23 is a UI task plus the allowlist in T-22, not a
   service extraction.
 
 ---
@@ -361,7 +361,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
 - **The merchant-visible gap this task left, now closed.** The billing page's usage bar read
   "40,000 / 15,000" while codes still worked, because the counter is the month's count and the
   allowance now starts at the boundary. Each number was true; the page simply never said *why* they
-  disagreed. It does now: `GET /v1/billing/subscription` reports `quota_deferred_until` — the
+  disagreed. It does now: `GET /api/v1/billing/subscription` reports `quota_deferred_until` — the
   instant enforcement starts, `null` when it already has — and the usage card prints one line under
   the bar when, and only when, that changes what the bar *means* (`used >= included`). Under the
   allowance the deferral is invisible to the merchant and a note would be noise.
@@ -394,8 +394,8 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
     transactions, reports
   - `get_current_session_account` (`routers/auth.py:365-387`) — account settings, billing
 
-  `active` gets everything. `restricted` gets GET/HEAD plus the allowlist (`GET /v1/billing/*`,
-  `POST /v1/billing/change-plan`, and the invoice-KHQR mint) and `403 account_restricted` for
+  `active` gets everything. `restricted` gets GET/HEAD plus the allowlist (`GET /api/v1/billing/*`,
+  `POST /api/v1/billing/change-plan`, and the invoice-KHQR mint) and `403 account_restricted` for
   everything else. `suspended` keeps its 401 lockout and **outranks** `restricted`.
   `resolve_key_context` (`auth.py:54-55`) refuses `restricted` outright, which freezes the whole
   API in one line.
@@ -415,7 +415,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
   `test_every_mutating_route_refuses_a_frozen_account`,
   `test_a_frozen_account_can_sign_in_but_a_suspended_one_cannot`,
   `test_an_api_key_is_refused_for_a_frozen_account`.
-- **One finding worth keeping**: `GET /v1/transactions/check-status/{id}` is a *write* — it
+- **One finding worth keeping**: `GET /api/v1/transactions/check-status/{id}` is a *write* — it
   settles the payment it polls. It is therefore the one read the gate refuses; detection (W1)
   settles those payments on its own sweep, so nothing is lost. Discovered by auditing all 49 GET
   routes rather than by assuming GET means read.
@@ -431,7 +431,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
   - **Choose Free** — void the open invoice and unfreeze immediately, as an ordinary Free account.
   Every branch must end with **no open invoice and `status = active`**, or the merchant stays
   frozen while on the plan they just chose — the trap §7.5 exists to prevent.
-- **The banner is the entry point**: `GET /v1/billing/notices` returns `state: frozen` (T-10),
+- **The banner is the entry point**: `GET /api/v1/billing/notices` returns `state: frozen` (T-10),
   the CTA deep-links to `/dashboard/billing`, and the modal mints a fresh code on load. One tap,
   from the banner to a payable code.
 - **Test**: A-24, A-22, A-18.
@@ -444,20 +444,20 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
 - **The UI half**: the frozen-state copy on `/dashboard/billing` naming the three options, and
   T-19's store chooser for a merchant landing on Starter with more stores than the plan allows.
   The routes it needs already exist, which is why the allowlist is only `POST
-  /v1/billing/change-plan` plus reads.
+  /api/v1/billing/change-plan` plus reads.
 - **Shipped (UI)**: a `Your account is on hold` panel above the subscription panel, carrying the
   amount and due date of the invoice the freeze is keyed on and a real `<ol>` of the three ways
   out — `Pay $9.99` (opens the existing `InvoicePaymentModal` for `outstanding_invoice_id`,
   falling back to the oldest unpaid invoice), `Choose Free` and `Choose a plan` (both anchors to
   the plan cards, which are the two writes the allowlist permits). It reads the hold from
-  `/v1/me`'s `status` rather than inferring it from an overdue invoice — `restricted` is a
+  `/api/v1/me`'s `status` rather than inferring it from an overdue invoice — `restricted` is a
   property of the account, and an operator can freeze one with no invoice at all, which is why
   the copy has a no-amount variant rather than quoting $0.00.
 - **Browser-verified, and it is the reason for the T-19 fix**: while frozen the page shows the
   hold panel, `Pay $9.99` enabled, the chooser absent from the DOM, and the ordering
   hold → subscription → plans → invoices. The account's own terms gate does not interfere
   (`terms_accepted_version` must match `terms_required_version`; a stale seeded account meets the
-  gate *instead of* the page, and cannot clear it while restricted — `POST /v1/me/terms` is
+  gate *instead of* the page, and cannot clear it while restricted — `POST /api/v1/me/terms` is
   correctly not in the allowlist).
 
 ### T-14 — Do not treat a suspended or admin account as a dunning target
@@ -502,7 +502,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
 
 ## Wave 4 — Surfaces
 
-### T-10 — `GET /v1/billing/notices` and invoice serialization
+### T-10 — `GET /api/v1/billing/notices` and invoice serialization
 - **Status**: `done` · **Priority**: S2 · **Depends on**: T-08
 - **Description**: New endpoint returning at most one notice, most urgent first, with
   server-computed `level`, `state`, `days_until_due`, `message` and `action_url` (§6). **The state
@@ -511,7 +511,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
   outranks every tier and is the only state that can be returned with **no invoice involved at all**
   — a frozen account is a property of the account, not of a row (T-22). Add `period_start`,
   `period_end`, `due_at`, `days_until_due`, `is_overdue` to `_serialize_invoice` and to
-  `GET /v1/billing/subscription` (`current_period_end`, `outstanding_invoice_id`). Both belong in
+  `GET /api/v1/billing/subscription` (`current_period_end`, `outstanding_invoice_id`). Both belong in
   `tests/test_openapi_schema.py`.
 - **Test**: A-12, A-17. Field names are pinned by the OpenAPI test so the portal cannot
   drift onto a field the API stopped returning — the failure mode `period_month`/`period`
@@ -520,7 +520,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
   its urgency rank), `DISMISSIBLE_LEVELS`, `derive_notices`, `_render_notice`, `_notice_rank`.
   `services/notifications.py` — `billing_notice` (the §5.2.2 table), `_local_date`/`_period_window`
   rendering in `Asia/Phnom_Penh`, `money` made public for the formatted amount.
-  `routers/billing.py` — `GET /v1/billing/notices`, plus `current_period_end` and
+  `routers/billing.py` — `GET /api/v1/billing/notices`, plus `current_period_end` and
   `outstanding_invoice_id` on `SubscriptionOut`. The new path is on the public docs page, so the
   schema test's "published means documented" rule still holds. Tests: `tests/test_billing_notices.py`.
 - **Two deliberate additions to the payload**, beyond the fields §6 listed: `title`/`body`/`action_label`
@@ -537,7 +537,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
 
 ### T-11 — Portal: banner, billing rows, plan card
 - **Status**: `complete` · **Priority**: S2 · **Depends on**: T-10
-- **Description**: A shell banner on `/dashboard/*` driven by `/v1/billing/notices`, with
+- **Description**: A shell banner on `/dashboard/*` driven by `/api/v1/billing/notices`, with
   per-level styling consistent with the existing design tokens. Billing page invoice rows
   gain `Due <date>` and a status badge (`Open` / `Overdue Nd` / `Paid` / `Void`). The
   dashboard plan card shows the renewal date or the overdue state. The action link opens
@@ -558,7 +558,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
   `(invoice_id, state)` so a new state on the same invoice is visible again, `role="alert"` for
   `critical`, and a plain `<a>` CTA so the KHQR is minted by a full navigation);
   `DashboardShell` gained `notice` / `readOnly`; `app/dashboard/layout.tsx` fetches
-  `/v1/billing/notices` on the existing `chmabapay:plan-changed` refresh path; the billing page
+  `/api/v1/billing/notices` on the existing `chmabapay:plan-changed` refresh path; the billing page
   gained the Due column, the derived `Overdue Nd` badge and `OpenInvoiceFromUrl` (Suspense-wrapped,
   honouring the server's `action_url`); the dashboard plan card gained its second line;
   `apiError.ts` gained the `account_restricted` copy.
@@ -576,10 +576,10 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
 
 ### T-12 — Admin console: void, and overdue visibility
 - **Status**: `complete` · **Priority**: S3 · **Depends on**: T-09
-- **Description**: Add `void` to `POST /v1/admin/invoices/{id}/resolve` (it must not
+- **Description**: Add `void` to `POST /api/v1/admin/invoices/{id}/resolve` (it must not
   activate a subscription, unlike `mark-paid`, which must now run the same
   `billing.settle_invoice` as the QR path so a transfer resolves exactly like a QR payment).
-  Add `due_at` and a derived overdue filter to `GET /v1/admin/invoices` and to
+  Add `due_at` and a derived overdue filter to `GET /api/v1/admin/invoices` and to
   `web/admin/app/invoices/page.tsx`, so an operator can see what is about to lapse without
   opening each row.
 - **Interaction to verify**: voiding an invoice whose window is still in force must not
@@ -592,7 +592,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
   `_RESOLVED_INVOICE_STATUS`, its own branch (no `paid_at`, no `activate_subscription`, no
   `extend_coverage`, so the sweep may raise the window again), `period_start`/`period_end`/`due_at`/
   `is_overdue`/`voided_at`/`void_reason` on `_invoice_row`, and `overdue=true` on
-  `GET /v1/admin/invoices` (unpaid, `due_at` in the past, ordered most-overdue-first).
+  `GET /api/v1/admin/invoices` (unpaid, `due_at` in the past, ordered most-overdue-first).
   `web/admin/app/invoices/page.tsx` — the Due column, a derived `overdue Nd` badge, a `void` pill
   and filter option, the Void action, and per-action copy because a single "puts the pending
   subscription in force" sentence would be wrong for one of the four.
@@ -611,7 +611,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
   Postgres returns aware, so production is unaffected; it is the same SQLite/PG asymmetry the
   billing work kept meeting. Reported, deliberately not fixed here.
 
-### T-19 — The resource chooser, and `POST /v1/stores/{id}/activate`
+### T-19 — The resource chooser, and `POST /api/v1/stores/{id}/activate`
 - **Status**: `complete` · **Priority**: S2 · **Depends on**: T-18, T-23, D8
 - **Description**: After a chosen downgrade leaves the account over its allowance, the billing page
   offers a chooser: swap which stores stay live, up to the plan's allowance. The endpoint holds
@@ -628,7 +628,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
 - **Shipped**: `services/stores.py` — `plan_max_stores` (extracted from the router's
   `_enforce_max_stores`, which now calls it) and `move_store_slot`, returning a
   `StoreSlotMove(store, displaced, moved)`. `routers/stores.py` —
-  `POST /v1/stores/{public_id}/activate` answering `StoreSlotOut`. `schemas.StoreOut` gained
+  `POST /api/v1/stores/{public_id}/activate` answering `StoreSlotOut`. `schemas.StoreOut` gained
   `billing_suspended_at`, which is what lets a client see which stores are held. The billing
   page's chooser is in `web/landing/app/dashboard/billing/page.tsx`.
 - **The count is preserved, not merely bounded.** The requested store is released, then the
@@ -658,10 +658,10 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
   `POST /{public_id}/enable`'s job), and nothing moves — the refusal is not a partial swap.
 - **A regression this route introduced, found much later.** `test_audit.py`'s
   `test_every_mutating_route_on_the_privileged_surface_is_classified` walks `app.openapi()` and
-  requires every mutating route under `/v1/{keys,webhooks,stores}` to be either in `AUDITED` or in
+  requires every mutating route under `/api/v1/{keys,webhooks,stores}` to be either in `AUDITED` or in
   `NOT_A_MUTATION`. The new route was in neither, so the suite was red from T-19 onward — nobody
   ran `test_audit.py` while shipping the later waves, which is exactly the gap that test exists to
-  close. Fixed by classifying it as `("post", "/v1/stores/{public_id}/activate"): ("store.slot_moved",)`,
+  close. Fixed by classifying it as `("post", "/api/v1/stores/{public_id}/activate"): ("store.slot_moved",)`,
   matching the action `move_store_slot` writes. It is a real mutation (it decides whether money can
   be taken) so `AUDITED` is correct, not `NOT_A_MUTATION`.
 - **The allowance comes off the live plan, not off the last cap.** `move_store_slot` counts against
@@ -677,7 +677,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
 - **A defect the browser check found, and the fix**: a frozen account that also holds stores (a
   merchant who downgraded and *then* stopped paying) rendered the chooser, and every "Bring back"
   answered `403 account_restricted` — the §7.4 allowlist is reads plus
-  `POST /v1/billing/change-plan`, deliberately not this route. The chooser is now **hidden while
+  `POST /api/v1/billing/change-plan`, deliberately not this route. The chooser is now **hidden while
   frozen** rather than disabled: the freeze stops every store regardless of the cap, so the panel
   would be a list of buttons that can only fail, and the hold panel above it already names the
   three writes that do work. It returns the moment the hold lifts.
@@ -717,7 +717,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
   the billing writes, so the button could only ever answer 403. This is the same decision as the
   chooser's, made in the second place it applies.
 - **Tests**: `tests/test_billing_invoices.py::test_a_held_store_is_refused_with_its_own_code` — the
-  integrator's half of A-18: `POST /v1/payments` against a held store answers `400
+  integrator's half of A-18: `POST /api/v1/payments` against a held store answers `400
   store_billing_suspended` while the store that kept its slot still mints. And
   `tests/test_openapi_schema.py::test_every_refusal_a_caller_must_tell_apart_is_documented` — the
   three codes appear in the published 400/403 descriptions *and* in `docs/api.md`, read from disk
@@ -742,7 +742,7 @@ Legend: **S1** blocker (revenue or correctness) · **S2** major · **S3** minor
 - **Shipped**: `docs/api.md` — the payments error table and the payment-creation paragraph already
   gained both codes under T-20; this adds a `## Billing and plan renewal` section with the
   `D-7 → D+7` timeline, the three ways out of a freeze, the late-payment rule, the store cap, the
-  plan-invoice field table with the full status set including `void`, and `GET /v1/billing/notices`
+  plan-invoice field table with the full status set including `void`, and `GET /api/v1/billing/notices`
   (its states, that `frozen` outranks every tier and describes the account rather than a row, and
   that the state is derived on read so a worker outage cannot hide a warning). The `## Quota`
   section gained the mid-month deferral rule. `docs/data-model.md` — `stores.billing_suspended_at`
@@ -908,7 +908,7 @@ reversible indefinitely.
       environmental, not a defect.
 - [x] The route-coverage test from T-22 passes, and deliberately fails when a new mutating route is
       added without the gate — **it caught a real one rather than a planted one**. The
-      `POST /v1/stores/{public_id}/activate` route added in T-19 was never classified in
+      `POST /api/v1/stores/{public_id}/activate` route added in T-19 was never classified in
       `test_audit.py`'s `AUDITED`, so the suite was red from that task onward and the gate named the
       route in its failure message. Classified as `store.slot_moved` (the action
       `move_store_slot` writes) — it decides whether money can be taken, so it is a mutation to be
@@ -950,7 +950,7 @@ reversible indefinitely.
       | chooser | brought back `Branch 05`, displaced `Branch 04`, `moved=true`, still **5/50**; re-picking an already-live store `moved=false`, `displaced=null`, still 5; re-running `apply_store_cap` held 0 more and left the same set |
 
       Two things the walk taught, recorded so the next one is not misread:
-      - **The rate limiter, not the freeze, explains a partial refusal.** `POST /v1/payments`
+      - **The rate limiter, not the freeze, explains a partial refusal.** `POST /api/v1/payments`
         allows 60 creations per key per minute, so the first attempt at phase 2 read
         "refused 10/50" — the baseline's 50 had already spent the budget and the other 40 came
         back `429 rate_limited: payment_create`. The walk now turns the limiter off for its run
@@ -964,7 +964,7 @@ reversible indefinitely.
         "an upgrade releases the holds" keeps true.
 - [x] The route-coverage test from T-22 passes, and deliberately fails when a new mutating route is
       added without the gate — recorded above, where it caught a **real** unclassified route rather
-      than a planted one (`POST /v1/stores/{public_id}/activate`, added in T-19, was never
+      than a planted one (`POST /api/v1/stores/{public_id}/activate`, added in T-19, was never
       classified in `test_audit.py`'s `AUDITED` and the suite was red from that task onward). No
       planted route is needed to keep the claim true: the mutating set is enumerated from the app's
       own route table, so a new route enters the comparison the moment it is registered. That bullet

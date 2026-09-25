@@ -123,9 +123,9 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - `rule` TR-7.2: Business live account, kyc_live_blocked=True → create_payment with mode=live key → HTTP 402 detail as specified. Same with test key → 200 OK. Individ live payment 1-10 → all 200 OK; 11th → response header X-ChmabaPay-Warning present as specified; body still 200. Evidence: httpx tests.
   - `rule` TR-7.3: Ind with 5 stores → create 6th → 400 upgrade message. Same for account_scope key → 400. Evidence: tests.
 
-## Task 8a: Router Auth — Google OAuth + Session Cookie JWT + /auth/signout + `/v1/me` endpoints
+## Task 8a: Router Auth — Google OAuth + Session Cookie JWT + /auth/signout + `/api/v1/me` endpoints
 - **Status**: `complete`
-- **Verified**: `routers/auth.py` google_login/google_callback implement the Google OAuth flow, _make_session_jwt/_verify_jwt carry the httpOnly session cookie and get_current_session_account gates routes, /auth/signout and /_dev/login exist, and `/v1/me` is served by `routers/account.py` (the account_type JWT claim is gone per alembic/versions/0008_drop_account_type.py; TTL is settings.jwt_ttl_seconds).
+- **Verified**: `routers/auth.py` google_login/google_callback implement the Google OAuth flow, _make_session_jwt/_verify_jwt carry the httpOnly session cookie and get_current_session_account gates routes, /auth/signout and /_dev/login exist, and `/api/v1/me` is served by `routers/account.py` (the account_type JWT claim is gone per alembic/versions/0008_drop_account_type.py; TTL is settings.jwt_ttl_seconds).
 - **Priority**: high
 - **Depends On**: T6 (Account cols + subscription auto-created)
 - **Description**:
@@ -137,44 +137,44 @@ T1 → T2 → T3 → T4+T5 (parallel OK) → T6 → T7 → T8 (T8a b c parallel)
   - Mount router in main.py include_router.
 - **Acceptance Criteria Addressed**: AC-8 (sign/in out + session), AC-15 (TTL), AC-6/KYC later
 - **Test Requirements**:
-  - `rule` TR-8a.1: Dev login enabled → POST /auth/_dev/login → Set-Cookie header JWT session; Max-Age near 86400; HttpOnly flag present; SameSite=Lax present. GET /v1/me with that cookie → 200 account JSON. POST /auth/signout → cookie cleared. Next /v1/me → 401. Evidence: httpx TestClient test.
+  - `rule` TR-8a.1: Dev login enabled → POST /auth/_dev/login → Set-Cookie header JWT session; Max-Age near 86400; HttpOnly flag present; SameSite=Lax present. GET /api/v1/me with that cookie → 200 account JSON. POST /auth/signout → cookie cleared. Next /api/v1/me → 401. Evidence: httpx TestClient test.
   - `rule` TR-8a.2: Manually forged JWT with other secret → 401 (verification works). Expired JWT → 401. Evidence: pytest.
 
 ## Task 8b: Routers Account + Keys + Webhooks (Session/Key Authed CRUD)
 - **Status**: `partial`
-- **Verified**: `routers/account.py` /v1/me GET+PATCH, `routers/keys.py` list/create/revoke/rotate and `routers/webhooks.py` CRUD + POST /{id}/test all exist, but the POST/GET /v1/kyc endpoints were removed by supabase/migrations/6-drop-kyc.sql.
+- **Verified**: `routers/account.py` /api/v1/me GET+PATCH, `routers/keys.py` list/create/revoke/rotate and `routers/webhooks.py` CRUD + POST /{id}/test all exist, but the POST/GET /api/v1/kyc endpoints were removed by supabase/migrations/6-drop-kyc.sql.
 - **Priority**: high
 - **Depends On**: T8a (get_current_session_account defined), T6 (AuditLog table ready), T7 (plan gates in place)
 - **Description**:
   - `routers/account.py`:
-    - GET /v1/me → profile.
-    - PATCH /v1/me → update name/email.
-    - POST /v1/kyc → KYC payload → save ALL company/director/kyc cols; kyc_status='submitted'; AuditLog.write(action='kyc.submitted').
-    - GET /v1/kyc → return current status + reject reason if any.
+    - GET /api/v1/me → profile.
+    - PATCH /api/v1/me → update name/email.
+    - POST /api/v1/kyc → KYC payload → save ALL company/director/kyc cols; kyc_status='submitted'; AuditLog.write(action='kyc.submitted').
+    - GET /api/v1/kyc → return current status + reject reason if any.
   - `routers/keys.py`:
-    - GET /v1/keys (works for BOTH session auth AND Bearer key via existing resolve_key_context — merge both Depends with OR).
-    - POST /v1/keys → create with scope. Plan enforcement from T7: Indiv scope=account 400.
-    - POST /v1/keys/{id}/rotate → new prefix + revoke old; sets revoked_at.
-    - POST /v1/keys/{id}/revoke → revoke now.
+    - GET /api/v1/keys (works for BOTH session auth AND Bearer key via existing resolve_key_context — merge both Depends with OR).
+    - POST /api/v1/keys → create with scope. Plan enforcement from T7: Indiv scope=account 400.
+    - POST /api/v1/keys/{id}/rotate → new prefix + revoke old; sets revoked_at.
+    - POST /api/v1/keys/{id}/revoke → revoke now.
   - `routers/webhooks.py`:
-    - GET / POST / PATCH / DELETE /v1/webhooks.
-    - POST /v1/webhooks/{id}/test → builds payment.completed test event, signs with endpoint secret, POSTS to url; returns success/fail status + response body snippet to caller (max 500 chars in response).
+    - GET / POST / PATCH / DELETE /api/v1/webhooks.
+    - POST /api/v1/webhooks/{id}/test → builds payment.completed test event, signs with endpoint secret, POSTS to url; returns success/fail status + response body snippet to caller (max 500 chars in response).
   - Mount all 3 new routers in main.py.
 - **Acceptance Criteria Addressed**: AC-9 (KYC submit + AuditLog), AC-10 (Dual auth modes keys), AC-11 (test sign+send)
 - **Test Requirements**:
-  - `rule` TR-8b.1: POST /v1/kyc business payload → db Account cols populated; kyc_status='submitted'. AuditLog count +1 with correct action/type/id. Evidence: pytest assertions.
-  - `rule` TR-8b.2: GET /v1/keys with session cookie → 200 list; same with Bearer ck_xxx header → 200 filtered to scope of that key. Bad token → 401. Evidence: httpx tests.
-  - `rule` TR-8b.3: POST /v1/webhooks/1/test with httpx mock POST intercept → request header ChmabaPay-Signature matches t=<ts>,v1=<hmac> format. Verify signature locally (secret=endpoint.secret_key) → VALID. Evidence: test mock httpx transport verify locally.
+  - `rule` TR-8b.1: POST /api/v1/kyc business payload → db Account cols populated; kyc_status='submitted'. AuditLog count +1 with correct action/type/id. Evidence: pytest assertions.
+  - `rule` TR-8b.2: GET /api/v1/keys with session cookie → 200 list; same with Bearer ck_xxx header → 200 filtered to scope of that key. Bad token → 401. Evidence: httpx tests.
+  - `rule` TR-8b.3: POST /api/v1/webhooks/1/test with httpx mock POST intercept → request header ChmabaPay-Signature matches t=<ts>,v1=<hmac> format. Verify signature locally (secret=endpoint.secret_key) → VALID. Evidence: test mock httpx transport verify locally.
 
 ## Task 8c: Router Billing CRUD (plans list + change plan) + Test mode 5s delay bypass
 - **Status**: `partial`
-- **Verified**: `routers/billing.py` GET /v1/billing/plans and POST /v1/billing/change-plan exist and `workers/w1_payment_detection.py` _test_mode_bypass does the 5s test-mode mark_paid (source='test-mode-fake-delay'), but the Starter→Growth account_type='business' auto-switch was removed (alembic/versions/0008_drop_account_type.py; docs/production-readiness.md records the field was hardcoded False before the drop).
+- **Verified**: `routers/billing.py` GET /api/v1/billing/plans and POST /api/v1/billing/change-plan exist and `workers/w1_payment_detection.py` _test_mode_bypass does the 5s test-mode mark_paid (source='test-mode-fake-delay'), but the Starter→Growth account_type='business' auto-switch was removed (alembic/versions/0008_drop_account_type.py; docs/production-readiness.md records the field was hardcoded False before the drop).
 - **Priority**: high
 - **Depends On**: T6 (Plan tables + seed), T7 (plan logic), T1-T5 (W1 ready so enqueue test mode job works)
 - **Description**:
   - `routers/billing.py`:
-    - GET /v1/billing/plans → public list, 4 rows; include feature gates.
-    - POST /v1/billing/change-plan body: {plan_code}. Validates allowed transition (downgrade allowed immediately, refunds later M2). Creates new PlanSubscription row (or updates existing). New plan = Growth or higher AND account_type='individual' → auto-switch account_type='business' (AC-12). Writes AuditLog action='plan.changed'.
+    - GET /api/v1/billing/plans → public list, 4 rows; include feature gates.
+    - POST /api/v1/billing/change-plan body: {plan_code}. Validates allowed transition (downgrade allowed immediately, refunds later M2). Creates new PlanSubscription row (or updates existing). New plan = Growth or higher AND account_type='individual' → auto-switch account_type='business' (AC-12). Writes AuditLog action='plan.changed'.
   - Test mode bypass AC-13: In W1 PaymentDetectionWorker.process(job), first check if payment.api_key.mode == 'test' (resolve key from payment store → owner account → keys → get mode from key used; OR simpler: add `api_key_mode` payload field to create_payment enqueue so W1 can see it directly without DB lookup). If mode='test', after 5 second asyncio.sleep → call mark_paid directly without Bakong/PayWay external fetch. attempt_history[0] = {source='test-mode-fake-delay'}.
 - **Acceptance Criteria Addressed**: AC-12 (auto business type switch), AC-13 (test mode 5s delay), NFR-7 tests green
 - **Test Requirements**:

@@ -11,7 +11,7 @@ Ordering notes:
 
 ## Task 1: Backend - unify auth context (session cookie OR Bearer key) for CRUD routers
 - **Status**: `complete`
-- **Verified**: `src/chmabapay/auth.py` defines `AuthContext` and `get_current_auth_context` (session cookie OR Bearer key), consumed by `routers/stores.py`, `routers/payments.py`, `routers/keys.py`, `routers/webhooks.py`, `routers/reports.py` and `routers/transactions.py`; cookie auth on those CRUD routes is exercised by `tests/test_account_security.py::test_a_frozen_account_reads_and_pays_but_cannot_write` (GET `/v1/stores`, `/v1/payments`, `/v1/keys`, `/v1/webhooks` over `session_client`), `/auth/signout` POST lives in `src/chmabapay/routers/auth.py`, and the safe `?next=` redirect is covered by `tests/test_account_security.py::test_the_sign_in_redirect_survives_the_oauth_round_trip` (the spec's `tests/routers/test_auth_context.py` was never created).
+- **Verified**: `src/chmabapay/auth.py` defines `AuthContext` and `get_current_auth_context` (session cookie OR Bearer key), consumed by `routers/stores.py`, `routers/payments.py`, `routers/keys.py`, `routers/webhooks.py`, `routers/reports.py` and `routers/transactions.py`; cookie auth on those CRUD routes is exercised by `tests/test_account_security.py::test_a_frozen_account_reads_and_pays_but_cannot_write` (GET `/api/v1/stores`, `/api/v1/payments`, `/api/v1/keys`, `/api/v1/webhooks` over `session_client`), `/auth/signout` POST lives in `src/chmabapay/routers/auth.py`, and the safe `?next=` redirect is covered by `tests/test_account_security.py::test_the_sign_in_redirect_survives_the_oauth_round_trip` (the spec's `tests/routers/test_auth_context.py` was never created).
 - **Priority**: high
 - **Depends On**: None (blocking prerequisite)
 - **Description**:
@@ -24,8 +24,8 @@ Ordering notes:
   - Optional: Google login accept `?next=/dashboard/stores` → after cookie set, 302 to safe same-origin next. If not provided, default to `settings.post_login_redirect_url`.
 - **Acceptance Criteria Addressed**: AC-1, AC-2, AC-3, AC-4, AC-5, AC-6, AC-8 (all cookie-auth CRUD + login redirect query)
 - **Test Requirements**:
-  - `rule` TR-1.1: New `pytest -xvs tests/routers/test_auth_context.py` cases: GET /v1/stores with Cookie header (no Bearer) → 200 if session JWT signed correctly; with no auth → 401.
-  - `rule` TR-1.2: POST /v1/stores via session cookie returns 201 for 1st store; on 6th store for Starter user via cookie: returns 400 "Upgrade to Growth plan" same as key-based.
+  - `rule` TR-1.1: New `pytest -xvs tests/routers/test_auth_context.py` cases: GET /api/v1/stores with Cookie header (no Bearer) → 200 if session JWT signed correctly; with no auth → 401.
+  - `rule` TR-1.2: POST /api/v1/stores via session cookie returns 201 for 1st store; on 6th store for Starter user via cookie: returns 400 "Upgrade to Growth plan" same as key-based.
   - `rule` TR-1.3: Existing key-based tests (all pytest suite) still pass 6/6 green; regression zero.
   - `rubric` TR-1.4: AuthContext backward compat; scale 1-5. 1 = breaks old key consumers; 3 = mixed works but guards differ; 5 = identical behavior old routes + session works. Threshold >= 4. Evidence: pytest diff old/new.
 - **Notes**: Existing `_enforce_max_stores` already operates on ctx.account — zero structural change, only wrap resolver into AuthContext.
@@ -37,13 +37,13 @@ Ordering notes:
 - **Depends On**: T1
 - **Description**:
   - Extract layout + sidebar shell from existing [dashboard/page.tsx](file:///e:/Development/chmabapay/web/landing/app/dashboard/page.tsx) into `web/landing/components/portal/PortalLayout.tsx`.
-  - Hook `useSession()` in `web/landing/components/portal/useSession.ts` → handles: fetch `/v1/me` on mount with credentials include; state `{ loading, profile, error }`; `logout()` method POST form submit hidden `/auth/signout` form; redirect 401 → location.replace with ?next=.
+  - Hook `useSession()` in `web/landing/components/portal/useSession.ts` → handles: fetch `/api/v1/me` on mount with credentials include; state `{ loading, profile, error }`; `logout()` method POST form submit hidden `/auth/signout` form; redirect 401 → location.replace with ?next=.
   - Each portal page (dashboard/stores/...) wraps children with `<PortalLayout activeNav="stores">{children}</PortalLayout>`; component:
     - useEffect → calls useSession.
     - loading skeleton.
     - error 401 redirect.
     - banner stack order: Platform admin, KYC status, kyc_live_blocked.
-    - Plan gates: render lock badges on nav per profile fields + subscription fetch `/v1/billing/subscription` optional.
+    - Plan gates: render lock badges on nav per profile fields + subscription fetch `/api/v1/billing/subscription` optional.
   - Append new CSS classes to globals.css only for anything introduced by PortalLayout reuse (should be minimal; mostly existing `.dash-*` classes).
   - Wire sign out in PortalLayout footer with same POST form as current dashboard page.
 - **Acceptance Criteria Addressed**: AC-1 (session guard), AC-7 (banner display), AC-9 (Reports nav hidden Starter), AC-13 (plan gate UI), FR-P1..P7
@@ -55,16 +55,16 @@ Ordering notes:
 
 ## Task 3: Dashboard Overview page (/dashboard) enhancement with real data-backed stats + today activity payments list
 - **Status**: `complete`
-- **Verified**: `web/landing/app/dashboard/page.tsx` renders the four metric cards (Paid today / Settled / Avg. payment / Active stores), the "Get started in 3 steps" panel and a last-5 "Recent activity" list, taking its real totals from server-side aggregates at `GET /v1/reports/payments.json` (`summary.total_matching_paid_amount_cents`) rather than a client-side sum of 200 payments.
+- **Verified**: `web/landing/app/dashboard/page.tsx` renders the four metric cards (Paid today / Settled / Avg. payment / Active stores), the "Get started in 3 steps" panel and a last-5 "Recent activity" list, taking its real totals from server-side aggregates at `GET /api/v1/reports/payments.json` (`summary.total_matching_paid_amount_cents`) rather than a client-side sum of 200 payments.
 - **Priority**: high
 - **Depends On**: T2
 - **Description**:
   - Keep existing design shell (it is good).
-  - Add: fetch `/v1/payments?limit=200` (latest) via session cookie → client-aggregate:
+  - Add: fetch `/api/v1/payments?limit=200` (latest) via session cookie → client-aggregate:
     - Paid today sum → `Paid today` metric card
     - `Settled` sum = all paid today minus (if refunds exist M2, skip)
     - Average payment = avg of paid amounts
-    - Active stores = fetch `/v1/stores` count
+    - Active stores = fetch `/api/v1/stores` count
   - Today activity panel: show last 5 payments with colored status pills + link to payment detail `/dashboard/payments/[id]`. No payments → dashed empty state with Create payment CTA.
   - Open question resolution (in spec): use aggregate from last 200 payments client-side; server endpoint not needed M1.
   - CTA create first store button: link to `/dashboard/stores/new` (new subroute)
@@ -131,7 +131,7 @@ Ordering notes:
 
 ## Task 7: Webhooks endpoints page (list + add + signing secret reveal once + rotate secret + edit/disable/delete)
 - **Status**: `complete`
-- **Verified**: `web/landing/app/dashboard/webhooks/page.tsx` lists endpoints and implements add/edit-with-event-checkboxes, disable, delete, signing-secret reveal-once (`RevealSecretModal`) and rotate (`POST /v1/webhooks/{id}/rotate-secret`), plus test-send and a deliveries log — note the real event names are `payment.completed/expired/superseded/reversed`, not the spec's `payment.created/paid/expired/refunded`.
+- **Verified**: `web/landing/app/dashboard/webhooks/page.tsx` lists endpoints and implements add/edit-with-event-checkboxes, disable, delete, signing-secret reveal-once (`RevealSecretModal`) and rotate (`POST /api/v1/webhooks/{id}/rotate-secret`), plus test-send and a deliveries log — note the real event names are `payment.completed/expired/superseded/reversed`, not the spec's `payment.created/paid/expired/refunded`.
 - **Priority**: high
 - **Depends On**: T2
 - **Description**:
@@ -148,14 +148,14 @@ Ordering notes:
 
 ## Task 8: Billing & Plans page (plan matrix + upgrade CTAs + subscription card)
 - **Status**: `partial`
-- **Verified**: `web/landing/app/dashboard/billing/page.tsx` renders the plan matrix, the subscription card and upgrade CTAs calling `POST /v1/billing/change-plan`; the described Starter→Growth "redirect to /dashboard/keys with Account scope pre-enabled" and Growth→Scale "Sub-Merchants nav unlocks" steps are absent, and the Starter/Growth/Scale/Enterprise plans themselves were deleted by `supabase/migrations/7-retire-dead-plan-and-store-config.sql` (plans are now Free/Starter/Pro).
+- **Verified**: `web/landing/app/dashboard/billing/page.tsx` renders the plan matrix, the subscription card and upgrade CTAs calling `POST /api/v1/billing/change-plan`; the described Starter→Growth "redirect to /dashboard/keys with Account scope pre-enabled" and Growth→Scale "Sub-Merchants nav unlocks" steps are absent, and the Starter/Growth/Scale/Enterprise plans themselves were deleted by `supabase/migrations/7-retire-dead-plan-and-store-config.sql` (plans are now Free/Starter/Pro).
 - **Priority**: high
 - **Depends On**: T2
 - **Description**:
   - Route `/dashboard/billing/page.tsx`
   - Plans matrix 4 cols copy exact BRD §3.1 rows. Current plan highlighted violet card.
   - Subscription card: status (trial|active|canceled), trial_ends_at, next_billing_at, monthly fee, plan name/code.
-  - Upgrade: call POST `/v1/billing/plan-change` with body plan_code. On 201 show success; refetch `/v1/me` & subscription.
+  - Upgrade: call POST `/api/v1/billing/plan-change` with body plan_code. On 201 show success; refetch `/api/v1/me` & subscription.
   - On plan change from Starter→Growth success: client redirect to `/dashboard/keys/new` with Account scope tab pre-enabled (onboarding hint to make shared key).
   - On Growth→Scale success: next render Sub-Merchants nav unlocked.
 - **Acceptance Criteria Addressed**: AC-6, AC-9 (Reports unlock), AC-13 plan gate consistency
@@ -172,14 +172,14 @@ Ordering notes:
 - **Description**:
   - Route `/dashboard/settings/page.tsx`
   - Tabs: Profile | KYC | Billing | Features (shown only for whitelabel_enabled=true OR is_platform_admin)
-  - Profile: name edit, email read-only from /v1/me.
-  - KYC: 2 radio Individual/Business. Show form per selection. Submit via POST /v1/kyc body match schemas KycIndividualIn/KycBusinessIn from backend.
+  - Profile: name edit, email read-only from /api/v1/me.
+  - KYC: 2 radio Individual/Business. Show form per selection. Submit via POST /api/v1/kyc body match schemas KycIndividualIn/KycBusinessIn from backend.
   - Open question resolution (in spec): file URLs pasted as string inputs only (not file picker).
   - Billing tab: shortcut with subscription card info (reuse Billing page component) + link to plans matrix.
   - Features (admin only): brand logo domain, whitelabel domain fields (readonly M1 — placeholder input).
 - **Acceptance Criteria Addressed**: AC-7 (KYC submit → kyc_status updated → banner at Overview top)
 - **Test Requirements**:
-  - `rule` TR-9.1: Settings KYC Individual submitted → /v1/kyc 200 → /v1/me kyc_status no longer "none". Overview shows KYC banner yellow reviewing.
+  - `rule` TR-9.1: Settings KYC Individual submitted → /api/v1/kyc 200 → /api/v1/me kyc_status no longer "none". Overview shows KYC banner yellow reviewing.
   - `rule` TR-9.2: Profile PATCH name change → success & hero welcome text updates without full page reload.
   - `rubric` TR-9.3: Form UX quality (scale 1-5). 1 = unlabeled inputs; 3 = labels + basic placeholder; 5 = field-level error messages from backend 400 detail, submit disabled on invalid, server-validation toast success. Threshold >= 4.
 
@@ -189,7 +189,7 @@ Ordering notes:
 - **Priority**: medium
 - **Depends On**: T2
 - **Description**:
-  - Sub-Merchants route `/dashboard/sub-merchants/page.tsx` → hidden & redirect to billing upgrade for users without allow_saas_sub_merchants. M1 skeleton: list + add wizard via POST `/v1/platform/sub-merchants` (session cookie enabled via T1).
+  - Sub-Merchants route `/dashboard/sub-merchants/page.tsx` → hidden & redirect to billing upgrade for users without allow_saas_sub_merchants. M1 skeleton: list + add wizard via POST `/api/v1/platform/sub-merchants` (session cookie enabled via T1).
   - Reports route `/dashboard/reports/page.tsx` → nav item hidden for Starter users via PortalLayout. Growth+ users see buttons: Payments CSV (30d) Export / Stores CSV Export. Download via fetch + Blob + hidden anchor click. Empty state if reports router returns 501 (handled gracefully).
 - **Acceptance Criteria Addressed**: AC-9 (Reports hidden Starter), AC-6 (Sub-Merchants on Scale)
 - **Test Requirements**:

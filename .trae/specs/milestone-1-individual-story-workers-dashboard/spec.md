@@ -41,10 +41,10 @@
 - **FR-5 DB Plan Tables + Seed**: New tables `Plan`, `PlanSubscription`, `PlanInvoice`, `PlanLedgerEntry`, `AuditLog`. Seed 4 default plans: Starter ($0, Ind-only, max_stores=5, allow_account_scope_keys=False, allow_saas=False), Growth ($29/mo, Business, max_stores=50, allow_account_scope_keys=True, allow_saas=False, allow_whitelabel=False), Scale ($99/mo, allow_saas=True, max_sub_merchants=500, allow_whitelabel=True), Enterprise (custom). Default new signup auto-subscribed to Starter trial.
 - **FR-6 Plan Enforcement**: `create_store()` enforces `Plan.max_stores` cap; `ApiKey` create blocks INDIVIDUAL users trying to create account_scope keys; PlanLedgerEntry incremented atomically in `mark_paid()` using `UPDATE col=col+1 WHERE id`.
 - **FR-7 Auth Router**: New `routers/auth.py` with Google OAuth login/redirect, JWT session in httpOnly cookie (max-age 24h, Secure if not localhost, SameSite Lax), `/auth/signout` clears cookie. Uses session auth Depends function that returns Account row.
-- **FR-8 Account Router**: New `routers/account.py` with `/v1/me` GET profile, `/v1/me` PATCH update name/email, `/v1/kyc` POST upload data (saves all KYC cols + kyc_status=submitted + writes AuditLog), `/v1/kyc` GET current status.
+- **FR-8 Account Router**: New `routers/account.py` with `/api/v1/me` GET profile, `/api/v1/me` PATCH update name/email, `/api/v1/kyc` POST upload data (saves all KYC cols + kyc_status=submitted + writes AuditLog), `/api/v1/kyc` GET current status.
 - **FR-9 Keys Router (Session)**: New `routers/keys.py` (session Depends) + works with Bearer key too for API. List/Create/Revoke/Rotate. Create shows account_scope radio disabled for Individual; enforces `Plan.max_keys_per_store`.
 - **FR-10 Webhooks Router (Session)**: New `routers/webhooks.py`. List/Create/Update/Delete endpoints. Sign test event button that POSTs Stripe-style `t=<ts>,v1=<hmac>` signature to endpoint URL with `compare_digest` constant-time + 300s max age verification (documented).
-- **FR-11 Billing Router**: New `routers/billing.py`. `GET /v1/billing/plans` returns public plans matrix (matches CutLuy). `POST /v1/billing/change-plan` → validates, changes PlanSubscription, auto-switches `account_type=business` if upgrading from Starter→Growth, writes AuditLog.
+- **FR-11 Billing Router**: New `routers/billing.py`. `GET /api/v1/billing/plans` returns public plans matrix (matches CutLuy). `POST /api/v1/billing/change-plan` → validates, changes PlanSubscription, auto-switches `account_type=business` if upgrading from Starter→Growth, writes AuditLog.
 - **FR-12 Test-Mode Bypass**: Payment created with key.mode=test. Creates W1 dedup job → after 5s, W1 worker process() marks_paid (no Bakong/PayWay network call). Payment.attempt_history list contains one JSON attempt entry.
 - **FR-13 Frontend Next.js User Portal**: App 2 (per EDD §11). pnpm workspace `web/user` + `web/admin` (admin M2 empty placeholder) + `web/shared` component library. Page list matches BRD §7.2: Login → Dashboard Overview → Stores (list/create wizard 3-step destination ABA/Paste PayWay Link/Bank account Bakong derivation Style B) → Payments (list + filter + detail KHQR card + timeline) → Keys → Webhooks → Settings (profile tab / KYC tab / Billing plan table + upgrade). All pages use Design Tokens `theme.ts` values.
 - **FR-14 Khmer-First + Dark Mode Enforcement**: Khmer-first text on Individual pages and public `/pay/{id}`. Individual user pages → `showThemeToggle()` returns FALSE → dark switcher completely hidden. Business users see dark mode toggle.
@@ -104,7 +104,7 @@
 ### AC-3: Enqueue-on-write for create_payment + Event insert
 - **Type**: `rule`
 - **Given**: Running dev server with enable_dev_gateway=True, test mode API key
-- **When**: `POST /v1/payments` creates payment → commits → no other trigger
+- **When**: `POST /api/v1/payments` creates payment → commits → no other trigger
 - **Then**: Within 200ms, InProcessTransport queue `payments.detection` length becomes 1 with job dedup_key = payment_public_id. Second POST same idempotency → same dedup key → job count still 1 (not 2).
 - **Pass Condition**: Test key payment → 5s later payment.status=paid via W1 job.
 - **Evidence**: Dev rail sink test case; or test calling services.payments.create_payment then assert mark_paid event fired.
@@ -144,14 +144,14 @@
 - **Type**: `rule`
 - **Given**: Valid Google OAuth creds (or dev fake login if dev gateway enabled)
 - **When**: User clicks Login with Google → redirected → callback verifies token → sets httpOnly JWT cookie session
-- **Then**: `GET /v1/me` returns 200 with account.id matching. Cookie: Secure=True if not localhost, HttpOnly=True, SameSite=Lax, Max-Age 86400. POST /auth/signout returns Set-Cookie session deleted. Subsequent /v1/me returns 401.
+- **Then**: `GET /api/v1/me` returns 200 with account.id matching. Cookie: Secure=True if not localhost, HttpOnly=True, SameSite=Lax, Max-Age 86400. POST /auth/signout returns Set-Cookie session deleted. Subsequent /api/v1/me returns 401.
 - **Pass Condition**: 4 requests flow as described.
 - **Evidence**: httpx TestClient test in tests/test_auth.py.
 
 ### AC-9: KYC submit (session) saves cols + writes AuditLog
 - **Type**: `rule`
 - **Given**: Logged-in session account
-- **When**: POST /v1/kyc with Business KYC payload
+- **When**: POST /api/v1/kyc with Business KYC payload
 - **Then**: Account.company_name_registered, company_registration_number, director_name etc saved; kyc_status='submitted'; kyc_live_blocked=True (still needs admin approve). AuditLog 1 row with action='kyc.submitted', target_type='Account', target_id=account.id, admin_account_id=account.id (self-submit).
 - **Pass Condition**: row queries return correct values.
 - **Evidence**: test file assertions.
@@ -159,7 +159,7 @@
 ### AC-10: Keys router works with BOTH Bearer key auth AND session auth
 - **Type**: `rule`
 - **Given**: Existing API key ck_xxx OR session cookie
-- **When**: GET /v1/keys with either header Authorization: Bearer ck_xxx OR session cookie
+- **When**: GET /api/v1/keys with either header Authorization: Bearer ck_xxx OR session cookie
 - **Then**: Both return 200 list of keys visible within their scope (bearer store-scoped key sees only its store; account scoped sees all account; session sees all under their account).
 - **Pass Condition**: Two auth modes, both 200.
 - **Evidence**: pytest httpx tests.
@@ -167,7 +167,7 @@
 ### AC-11: Webhook test event signs + verifies
 - **Type**: `rule`
 - **Given**: Webhook endpoint created with secret_key = "test-secret"
-- **When**: Click "Send test event" (POST /v1/webhooks/1/test)
+- **When**: Click "Send test event" (POST /api/v1/webhooks/1/test)
 - **Then**: Outbound POST contains header `ChmabaPay-Signature: t=<10-digit-ts>,v1=<64-hex-hmac>`. Server verification with same secret using constant-time compare + 300s clock skew → VALID. 301s old timestamp with modified payload → INVALID.
 - **Pass Condition**: Signature verify unit tests 3 scenarios: valid, ts expired, payload tampered.
 - **Evidence**: pytest tests/test_webhooks_signature.py.
@@ -175,7 +175,7 @@
 ### AC-12: Billing change-plan auto-switches Individual→Business
 - **Type**: `rule`
 - **Given**: account_type='individual' with Starter plan
-- **When**: POST /v1/billing/change-plan {"plan_code": "growth"}
+- **When**: POST /api/v1/billing/change-plan {"plan_code": "growth"}
 - **Then**: New subscription: plan_id=Growth, status='trial' (trial_days=14). Account.account_type='business' AUTOMATICALLY flipped. Keys page now shows account_scope radio enabled. AuditLog action='plan.changed'.
 - **Pass Condition**: DB rows as described + type field flipped.
 - **Evidence**: pytest DB assertions.

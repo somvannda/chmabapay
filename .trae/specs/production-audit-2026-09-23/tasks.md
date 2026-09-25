@@ -65,7 +65,7 @@ the one net-new build in this plan, and not launch-blocking on its own.
   `whsec_…` secret. The row read `https://example.com/webhooks/chmabapay` /
   `All events` / `active` / `Sep 23, 2026`, with Edit, Send test, Deliveries, Rotate
   secret, Disable, Delete. "Delete" → the "Delete this endpoint?" confirmation →
-  "Delete endpoint" → the page returned to "No webhook endpoints yet." No `/v1/*`
+  "Delete endpoint" → the page returned to "No webhook endpoints yet." No `/api/v1/*`
   request answered 4xx or 5xx during the run. The endpoint was created against the
   local database and deleted again, so no production state changed.
 
@@ -135,7 +135,7 @@ the one net-new build in this plan, and not launch-blocking on its own.
 - **Problem**: `PasswordChangeIn.new_password` is bounded in characters
   (`max_length=200`), but bcrypt hashes at most 72 **bytes** and `hash_password` raises
   a bare `ValueError` past that. A 73-character ASCII password, or 25 Khmer characters
-  (75 bytes), produced an unhandled 500 on `POST /v1/me/password`.
+  (75 bytes), produced an unhandled 500 on `POST /api/v1/me/password`.
 - **Files**: `src/chmabapay/routers/account.py:88,253`, `src/chmabapay/security.py:37-46`
 - **Action**: check the byte length against `MAX_PASSWORD_BYTES` and answer
   `400 password_too_long`. Checked in bytes, because a character bound cannot catch the
@@ -171,12 +171,12 @@ the one net-new build in this plan, and not launch-blocking on its own.
 
 ### PA-05 — Remove the non-payable KHQR helpers from the integration surface
 - **Status**: `complete` · **Priority**: S2 · **Gaps**: B-02 · **Depends on**: —
-- **Problem**: `POST /v1/khqr/from-link` is documented as returning a code that "is
-  not payable", and `POST /v1/khqr/probe-aba-status` as "advisory only" and able to
+- **Problem**: `POST /api/v1/khqr/from-link` is documented as returning a code that "is
+  not payable", and `POST /api/v1/khqr/probe-aba-status` as "advisory only" and able to
   be wrong in either direction. Neither is integration surface.
 - **Files**: `web/landing/app/api/docs/page.tsx:95-105`
 - **Action**: remove both rows from the public page. Keep
-  `POST /v1/khqr/payway/checkout` and `/payway/status`, which are the payable and
+  `POST /api/v1/khqr/payway/checkout` and `/payway/status`, which are the payable and
   authoritative routes.
 - **Acceptance**: the KHQR group contains only the payable/authoritative rows.
 - **Shipped (2026-09-23)**: `from-link` and `probe-aba-status` removed, and the group
@@ -290,7 +290,7 @@ and fail when the two drift apart.
   code may be one nothing raises. That second test is the direct descendant of C-12,
   where a code was mapped for months while a different one was being raised.
 - **Found while doing this**: `invalid_link`, `payload_too_long` and `invalid_payload`
-  are reachable from documented `/v1/khqr` routes and were about to be excluded as
+  are reachable from documented `/api/v1/khqr` routes and were about to be excluded as
   withheld surface. Checked before excluding, and documented instead.
 - **Note**: the regex reads `detail="token"` and the parenthesised multi-line f-string
   form. Two rows are deliberately not machine codes — the three `Max …` plan-limit
@@ -299,7 +299,7 @@ and fail when the two drift apart.
 - **Defect found by the render check**: a browser pass over the new page found literal
   backtick characters on screen. The inline-code convention (`RichText`) was applied to
   the new tables but not to the two endpoint summaries that already used backticks, nor
-  to the rate-limit column — those rendered `` `ck_live_` `` and `` `POST /v1/payments` ``
+  to the rate-limit column — those rendered `` `ck_live_` `` and `` `POST /api/v1/payments` ``
   as raw text with visible ticks. Pre-existing for the summaries, introduced for the
   limits table, fixed for both by routing `summary`, `description` and `applies` through
   the same renderer. `tsc` cannot see this class of fault; only looking at the page did.
@@ -327,7 +327,7 @@ and fail when the two drift apart.
 - **Acceptance**: the page states the live-only reality or documents the sandbox.
 - **Shipped (2026-09-23)**: "One key authenticates every store" covers the Bearer form,
   the show-once/hash-at-rest property, and the routes that are session-only because they
-  change the account itself (`/v1/me`, `/v1/account`, `/v1/billing/*`) — an API key is
+  change the account itself (`/api/v1/me`, `/api/v1/account`, `/api/v1/billing/*`) — an API key is
   refused there, which is the kind of thing a reader otherwise discovers as a 401 they
   cannot explain. "There is no sandbox" states the live-only reality per D-2 and gives
   the safe path: point a store at your own PayWay link, mint one 0.01 payment, verify the
@@ -342,7 +342,7 @@ and fail when the two drift apart.
   Pagination, Versioning, Errors. Each states the rule and where it bites rather than
   restating the schema: `idempotency_key` must be **in the body** (a header is not read,
   which is the mistake worth preventing), `amount` is a decimal while every `*_cents` is
-  an integer, `GET /v1/stores` is deliberately not paginated, and `/v1` takes additive
+  an integer, `GET /api/v1/stores` is deliberately not paginated, and `/api/v1` takes additive
   changes while a break would arrive as `/v2`.
 
 ### PA-14 — Stop the page drifting from the runtime
@@ -370,12 +370,12 @@ and fail when the two drift apart.
 - **Problem**: the `Bearer ck_` branch precedes the amr check, so an admin API key
   plus any valid session cookie reaches every admin route without the password claim.
 - **Files**: `src/chmabapay/routers/admin.py:87-108`
-- **Action**: per D-6 (recommended **(a)**) reject `ck_` on `/v1/admin/*`. Also
+- **Action**: per D-6 (recommended **(a)**) reject `ck_` on `/api/v1/admin/*`. Also
   correct the claim in `web/admin/README.md` so the documentation matches the code.
 - **Acceptance**: a pytest case sends a platform-admin `ck_` key with a valid
-  password-less session cookie to `GET /v1/admin/overview` and receives 403.
+  password-less session cookie to `GET /api/v1/admin/overview` and receives 403.
 - **Shipped (2026-09-23)**: the `Bearer ck_` branch is **deleted**, not merely
-  unreachable — so the identity on `/v1/admin/*` is always a password session and the
+  unreachable — so the identity on `/api/v1/admin/*` is always a password session and the
   refusal is structural. `get_hybrid_admin_context` lost its `authorization` and
   `session` parameters; `HybridAuthContext` lost its two now-unusable fields
   (`key_ctx`, `is_session`, neither of which any handler read); the
@@ -392,7 +392,7 @@ and fail when the two drift apart.
 ### PA-16 — Let an operator resolve a refund dispute
 - **Status**: `complete` · **Priority**: S2 · **Gaps**: D-02 · **Depends on**: —
 - **Files**: `src/chmabapay/routers/admin.py`, `web/admin/app/payments/[public_id]/page.tsx`
-- **Action**: `POST /v1/admin/payments/{public_id}/reverse` reusing
+- **Action**: `POST /api/v1/admin/payments/{public_id}/reverse` reusing
   `services.payments.reverse_payment`, with a mandatory reason, the same terminal
   state guards, an audit row, and a UI action on the payment detail page behind a
   confirmation modal that echoes the payment id and amount.
@@ -429,7 +429,7 @@ and fail when the two drift apart.
   and `public_id` and spells out the consequence in each direction (exempt from merchant
   volume and quota, takings reported as platform revenue) plus the warning that an
   ordinary merchant store marked this way stops being billed. Sent as
-  `PUT /v1/admin/stores/{id}/internal` with `{is_internal}`; the API's `changed` flag picks
+  `PUT /api/v1/admin/stores/{id}/internal` with `{is_internal}`; the API's `changed` flag picks
   the message, so a repeat says so rather than claiming a change. The GMV/quota acceptance
   is the pre-existing `test_an_internal_store_is_not_metered_and_reports_as_platform_revenue`,
   which already drives the endpoint directly. `web/admin/README.md` now says the route is
@@ -497,7 +497,7 @@ and fail when the two drift apart.
 - **Action**: give the row retry route the same `include_successes` opt-in the
   payment-level route has, and send it from the modal.
 - **Acceptance**: retrying without the flag leaves a `success` row untouched.
-- **Shipped (2026-09-23)**: `POST /v1/admin/deliveries/{id}/retry` takes
+- **Shipped (2026-09-23)**: `POST /api/v1/admin/deliveries/{id}/retry` takes
   `include_successes` (default false) and returns `retried: false` without touching a
   `success` row — the route's own "quiet on a repeat" convention rather than a new error
   code. The modal's checkbox is now what sends it (`retry(row, includeSuccesses)`), its
@@ -542,23 +542,23 @@ and fail when the two drift apart.
   the payments feed already searches.
 - **Shipped (2026-09-23)**:
   - **Audit range + export** — `_audit_filters` is now the one filter builder for the list
-    route and the new `GET /v1/admin/audit-logs/export` (`?format=csv|json`), so the export
+    route and the new `GET /api/v1/admin/audit-logs/export` (`?format=csv|json`), so the export
     cannot disagree with the view it came from; `?from`/`?to` reuse `reports.py`'s
     day-boundary helpers. `AUDIT_EXPORT_CAP = 10_000` with `X-Total-Rows` /
     `X-Rows-Returned` headers, and `Content-Disposition: inline; filename="audit-log-<stamp>.<fmt>"`.
     The page grew the two date inputs and the two export buttons; a truncated export says so
     in the toast.
-  - **Health page** — `GET /v1/admin/health` (app, database probe, worker transport, dev
+  - **Health page** — `GET /api/v1/admin/health` (app, database probe, worker transport, dev
     gateway, metrics-scrape state, expected queues, heartbeat max age, per-queue worker
     signals) and `/health` in the console. No connection strings: a console page may report
     *whether* the scrape is secured, not how to reach anything.
   - **Key mint/rotate on a merchant's behalf** — `mint_key` / `rotate_key_instance` moved into
     `routers/keys.py` and shared with the merchant routes rather than copied, because a second
     copy is a second place for the hash-at-rest rule, the scope, the prefix and the trail to
-    drift. `POST /v1/admin/accounts/{id}/keys` and `POST /v1/admin/keys/{id}/rotate`; the
+    drift. `POST /api/v1/admin/accounts/{id}/keys` and `POST /api/v1/admin/keys/{id}/rotate`; the
     console has **Mint a key** and per-row **Rotate**, and the raw key is shown once in a
     copy-and-close dialog.
-  - **Search by store id / key prefix** — `GET /v1/admin/accounts?q=` matches email, name, a
+  - **Search by store id / key prefix** — `GET /api/v1/admin/accounts?q=` matches email, name, a
     store's `public_id` and a key prefix. The query is sliced to twelve characters before it is
     compared, so a whole key pasted from a merchant's message resolves while the raw key and
     its hash are never read or stored.
@@ -600,17 +600,17 @@ and fail when the two drift apart.
   totals the endpoint already returns.
 - **Acceptance**: a merchant can export one store's paid payments without
   post-filtering a spreadsheet.
-- **Shipped (2026-09-23)**: the payments export grew a store select (from `/v1/stores`),
+- **Shipped (2026-09-23)**: the payments export grew a store select (from `/api/v1/stores`),
   an external-ID field, seven status checkboxes and three totals cards — matched rows,
   paid amount and count, refunded amount and count — read from
-  `/v1/reports/payments.json` with `per_page=1`. One `filterParams` builder feeds both the
+  `/api/v1/reports/payments.json` with `per_page=1`. One `filterParams` builder feeds both the
   totals and the CSV, so the count above the button cannot disagree with the file below
   it. The external ID applies on blur or Enter rather than per keystroke (the split the
   console's account search uses), and the totals blank to an em dash while a recount is in
   flight rather than showing the previous filters' numbers. A failed count says so and
   leaves the export usable; a failed *export* is a toast, not a page-level error state.
   Verified live: ticking "Paid" issues
-  `GET /v1/reports/payments.json?from=…&to=…&statuses=paid&page=1&per_page=1`, the matched
+  `GET /api/v1/reports/payments.json?from=…&to=…&statuses=paid&page=1&per_page=1`, the matched
   count moves from 1 to 0, and Download CSV fetches the same filters and saves the file.
 
 ### PA-26 — Expose `idempotency_key`, `merchant` and `hosted_qr` on payment create
@@ -653,9 +653,9 @@ and fail when the two drift apart.
 - **Action**: hide the button unless the dev gateway is mounted, or delete it.
 - **Acceptance**: no control in production leads to a 404.
 - **Shipped (2026-09-23)**: deleted rather than gated. Hiding it needs a signal the portal
-  does not have — `/_dev/*` is mounted by a backend setting and `/v1/me` does not report it,
+  does not have — `/_dev/*` is mounted by a backend setting and `/api/v1/me` does not report it,
   so any client-side check would be a guess (and a probe request to find out). It is also
-  no longer needed: the console carries a supported `POST /v1/admin/payments/{public_id}/mark-paid`
+  no longer needed: the console carries a supported `POST /api/v1/admin/payments/{public_id}/mark-paid`
   that settles through the same `mark_paid` service, requires a reason and writes
   `admin.payment_mark_paid`. Removed with it: the handler, its `markingPaid` state, and the
   `useSession` read that existed only to decide whether to show the button.
@@ -666,7 +666,7 @@ and fail when the two drift apart.
 - **Action**: render plan numbers from the plan payload, or correct the hardcoded
   copy to match live plans.
 - **Acceptance**: help numbers equal the live plan payload.
-- **Shipped (2026-09-23)**: the page reads `/v1/billing/plans` and builds the three answers
+- **Shipped (2026-09-23)**: the page reads `/api/v1/billing/plans` and builds the three answers
   that quote plans from it — the key limits, the per-plan allowances, and which plans carry
   priority support. When the read fails the answers drop the numbers and point at Billing
   instead of falling back to a remembered set, and a "Loading your plan limits" line says
@@ -727,7 +727,7 @@ and fail when the two drift apart.
   fixture asserting the key is refused: the `bad_credentials` list (`lowercase_scheme`,
   `no_scheme`, `tab_after_scheme`, `unknown_key`, `empty_key_body`, `double_space`,
   `very_long_key`) and one AUTH case whose `expect` is `401 unauthorized` for
-  `POST /v1/khqr/from-link`. That is the acceptance clause exactly. `grep -rn "ck_test_"
+  `POST /api/v1/khqr/from-link`. That is the acceptance clause exactly. `grep -rn "ck_test_"
   web/` → none, so no prompt or hint in either app still implies a sandbox.
   `tests/test_khqr.py` mentions the AUTH cases in a comment only and holds its own 401
   assertions, so the SETUP-004 text change cannot break it. `ruff check src/chmabapay
@@ -895,7 +895,7 @@ and fail when the two drift apart.
      field. The final landing and admin builds both cover the current source.
   4. Live browser pass — see PA-01's "Verified live" block, and the two findings below.
      Full lifecycle green: create → 201 → show-once secret modal → row rendered → delete
-     → empty state, with **no `/v1/*` request answering 4xx or 5xx** and no app-level
+     → empty state, with **no `/api/v1/*` request answering 4xx or 5xx** and no app-level
      console error on `/`, `/api/docs`, `/terms`, `/privacy` or `/dashboard/webhooks`.
   5. Read-only production re-probe, `GET` only, against `https://pay.chmaba.com`:
 
@@ -935,12 +935,12 @@ and fail when the two drift apart.
   3. **B-01 and B-02 closed** — PA-04's ten Bakong ledger lookups and PA-05's two
      non-payable KHQR helpers are off the public page, both re-verified by `grep` against
      the page source. ✅ · **A-08 is NOT closed.** Pro still advertises priority support
-     (`priority_support: True` in `db.py` for Pro, served by `/v1/billing/plans` and shown
+     (`priority_support: True` in `db.py` for Pro, served by `/api/v1/billing/plans` and shown
      on the plan matrix) and Wave 9 does not exist, so nothing tracks the promise. The
      gate allows either closing it by shipping Wave 9 or by withholding the claim until
      it ships. **This is a decision for the operator, not a task** — until it is taken,
      the launch gate is open on this criterion alone. ❌
-  4. **D-02** — closed. `POST /v1/admin/payments/{public_id}/reverse` exists in
+  4. **D-02** — closed. `POST /api/v1/admin/payments/{public_id}/reverse` exists in
      `admin.py`, calls the same `reverse_payment` service as the merchant route with the
      same `409` guards, and records `admin.payment_reversed` with the operator and a
      required reason. ✅
@@ -1075,7 +1075,7 @@ that no system tracks.
     header, so a thread has one order and one shape and no reader special-cases the first
     message; and **`priority` is copied from the plan at open time** rather than derived on
     read, so an account that downgrades later keeps the queue position it was promised.
-  - **PA-37 / F-03.** `routers/support.py`, five routes under `/v1/support`. Every lookup
+  - **PA-37 / F-03.** `routers/support.py`, five routes under `/api/v1/support`. Every lookup
     goes through `_load_request`, which scopes on `ctx.account.id` and answers **404** for
     another tenant's request. Verified independently: all five routes carry the scope and
     the 404 is raised in one place.
@@ -1140,7 +1140,7 @@ that no system tracks.
   attributed to `You` with a timestamp; `Close request` asked **"Close this request?"** and
   explained the consequence before confirming; afterwards the row read `RESOLVED`, `Waiting
   on: —`, and the thread became read-only with no reply box. **No console errors and no
-  `/v1/*` 4xx or 5xx.**
+  `/api/v1/*` 4xx or 5xx.**
 - **Verified live — operator console (F-08)**: signed in at `/login` with a password (two
   fields, no Google button), then `/support`. Columns `Request · Account · Subject · Category
   · Status · Priority · Opened · First response`, with status / priority / account-id filters
@@ -1152,7 +1152,7 @@ that no system tracks.
   from the breach flag to a concrete timestamp and moved status `open` → `waiting`, which is
   F-06 working. Assigning `11` produced `Account #11` linking to `/accounts/11`. Closing
   showed a dialog that **echoed both the request id and its subject** in the body before
-  confirming. **No `/v1/*` 4xx or 5xx.**
+  confirming. **No `/api/v1/*` 4xx or 5xx.**
 - **One gap the live pass found, and it was mine**: the console's navigation had no Support
   entry, so `/support` was reachable only by typing the URL — the shell had the section label
   for the breadcrumb but the nav list was never given the item. Added, with its own icon;
@@ -1183,23 +1183,23 @@ groups was reachable with an API key.
 
 ### PA-44 — Make key management session-only
 - **Status**: `complete` · **Priority**: **S2** · **Gaps**: D-8 · **Depends on**: —
-- **Problem**: `/v1/keys` used `AUTH_SECURITY`, so a merchant's API key could create,
+- **Problem**: `/api/v1/keys` used `AUTH_SECURITY`, so a merchant's API key could create,
   revoke and rotate keys. A leaked key could therefore mint itself a replacement and
   outlive its own revocation, and could revoke every other key on the account — locking
-  the merchant out of the automation the key was stolen from. `/v1/me`, `/v1/account`
-  and `/v1/billing/*` were already session-only for the same class of reason.
+  the merchant out of the automation the key was stolen from. `/api/v1/me`, `/api/v1/account`
+  and `/api/v1/billing/*` were already session-only for the same class of reason.
 - **Files**: `src/chmabapay/routers/keys.py`, `tests/conftest.py`,
   `tests/test_account_security.py`, `tests/test_audit.py`
 - **Action**: switch the router to `SESSION_SECURITY` and the handlers to
   `get_current_session_account`; add a test asserting an API key is refused; update the
   tests that minted keys with a key.
-- **Acceptance**: an API key gets `401 invalid_session` on every `/v1/keys` route, and
+- **Acceptance**: an API key gets `401 invalid_session` on every `/api/v1/keys` route, and
   key creation still works from a session.
 - **Shipped (2026-09-23)**: router and handlers converted. `session_client` moved into
   `conftest.py` rather than being re-derived per file, which is what the change needed —
   three test files now drive session-only routes. New test
   `test_an_api_key_cannot_manage_api_keys` asserts 401 `invalid_session` on list, create,
-  revoke and rotate, and that the same key still authenticates `/v1/stores`, so the
+  revoke and rotate, and that the same key still authenticates `/api/v1/stores`, so the
   change is scoped to key management and not to the credential.
 - **Note**: the refusal is `401 invalid_session`, not 403. That is the ordinary
   missing-session answer the account and billing routes already give, rather than a
@@ -1317,7 +1317,7 @@ groups was reachable with an API key.
   Penh — including the ones that are not. The settings page then required a non-blank city,
   so the wrong value was also the one a merchant had to notice and correct by hand. `city`
   is not decoration: it is in the stores CSV the reports page generates from
-  `GET /v1/stores?limit=500` and downloads as `chmabapay-stores-<date>.csv`, and it is named
+  `GET /api/v1/stores?limit=500` and downloads as `chmabapay-stores-<date>.csv`, and it is named
   in the privacy policy's data inventory.
 - **Files**: `web/landing/app/dashboard/stores/new/page.tsx`
 - **Fix**: a required `City` field between Store name and Merchant ID, `maxLength={15}` to
@@ -1325,12 +1325,12 @@ groups was reachable with an API key.
   field has been visited (`cityTouched`, set on blur), because the create form starts empty
   and an error under an untouched required input on first paint is noise rather than help.
 - **Verified live (2026-09-23)**: created "PA34 Siem Reap Store" with city "Siem Reap"
-  through the form. `POST /v1/stores` → **201**, and the value was confirmed two ways that
+  through the form. `POST /api/v1/stores` → **201**, and the value was confirmed two ways that
   do not share a code path: the generated `chmabapay-stores-20260923.csv` reads
   `st_rNN_A5JVDfbnkzFRw3ldyHCd,PA34 Siem Reap Store,active,Siem Reap,…`, and
-  `GET /v1/stores?limit=500` returns `city: "Siem Reap"`. Also checked: the submit button is
+  `GET /api/v1/stores?limit=500` returns `city: "Siem Reap"`. Also checked: the submit button is
   disabled while the form is blank, no error shows before the field is visited, and the
-  error "A store needs a city." appears once a real `focusout` is delivered. No `/v1/*`
+  error "A store needs a city." appears once a real `focusout` is delivered. No `/api/v1/*`
   request answered 4xx or 5xx. `tsc` clean.
 
 ### OP-02 — 57 dead `docs-*` CSS rules in the admin console
@@ -1505,7 +1505,7 @@ groups was reachable with an API key.
   `data.merchant.external_id`; `payment.expired` carried `financial: false`. So an integrator
   can filter reconciliation on `financial` rather than on a list of event names. 644 bytes,
   `Content-Type: application/json`, `User-Agent: ChmabaPay-Webhook/1.0`.
-- **Found while doing it**: `PATCH /v1/webhooks/1` through the landing dev server's rewrite
+- **Found while doing it**: `PATCH /api/v1/webhooks/1` through the landing dev server's rewrite
   returned **`HTTP 000`** with nothing at all in the API log — the request never left Next.
   Worth knowing before blaming the API for a dev-server failure; the repoint was done at the
   database. Reaching the sink from the worker only works because the API is native; if it is
