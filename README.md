@@ -208,6 +208,13 @@ Two things that are easy to get wrong:
   migration tests fail for reasons unrelated to the code.
 - **The test database name must contain `test`.** `tests/conftest.py` refuses anything
   else, so an ambient `DATABASE_URL` cannot aim its destructive fixtures at real data.
+- **Clear an exported `WORKER_TRANSPORT`.** An exported variable outranks `.env`, so a
+  shell still carrying `WORKER_TRANSPORT=redis` from an earlier session hands it to the
+  test process as well — and nothing fails loudly. `test_admin_overview.py`'s
+  `test_the_worker_signals_are_absent_rather_than_zero_in_process` just reports
+  `watched: true`, because the app now believes it is reading a shared Redis. Clear it
+  with `$env:WORKER_TRANSPORT = $null`: a `Remove-Item Env:` can be caught by a shell
+  profile that routes removals through the recycle bin, and quietly do nothing.
 
 The speed difference is not the tests: SQLite on Windows spends ~13 s per test dropping
 and recreating every table, which dwarfs the assertions. That is why CI runs Postgres.
