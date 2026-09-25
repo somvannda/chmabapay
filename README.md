@@ -98,47 +98,76 @@ via the `@shared/*` path alias.
 
 ---
 
-## Phase 1 POC — run it locally
+## Running it locally
 
-Status: **working vertical slice**. This walkthrough uses the dev rail (`/_dev`, fake
-Bakong); the real ABA PayWay path is implemented and was proven against live money on
-2026-09-17 — two settled payments, the second with a signature-verified webhook
-(`docs/production-readiness.md` P0-2). SQLite default, no external services needed here.
+Status: **working vertical slice**. The real ABA PayWay path is implemented and was proven
+against live money on 2026-09-17 — two settled payments, the second with a
+signature-verified webhook (`docs/production-readiness.md` P0-2).
 
-```bash
-uv sync --all-groups          # install deps into .venv
-uv run python -m chmabapay.tools.sink &   # terminal 1: local webhook sink on :9000
-uv run python -m chmabapay.cli bootstrap  # terminal 2: seed tenant + stores + keys
-# note the account API key, a store id, and (if WEBHOOK_SINK_URL was set) the signing secret
-uv run uvicorn chmabapay.main:app --port 8000   # terminal 3: the platform API
-```
+There are exactly two ways to run this, and **pick one; do not mix them.** The
+application refuses to boot on a mix (see below), because the two mistakes it covers
+both *succeed* at connecting and then read the wrong database.
 
-Set `WEBHOOK_SINK_URL=http://127.0.0.1:9000/hook` in your environment **before** bootstrap if you
-want the shared account-level webhook created automatically (it prints the signing secret).
+### The Docker stack — the way to run it
 
-Then simulate the whole loop:
+Everything in containers, behind the nginx edge on **http://localhost:8080**; the console
+is on the `admin.localhost` host. No host process is involved.
 
 ```bash
-# 1. create a payment against one sub-merchant (money would go to THAT store's link)
-curl -X POST http://127.0.0.1:8000/v1/payments \
-  -H "Authorization: Bearer ck_live_<ACCOUNT_KEY>" \
-  -H "Content-Type: application/json" \
-  -d '{"amount": 1.50, "reference_id": "order_1", "store": "<st_...>"}'
-# 2. open the returned checkout_url in a browser (QR card + live status)
-# 3. simulate the customer paying on the fake rail
-curl -X POST http://127.0.0.1:8000/_dev/payments/<payment_id>/pay
-# 4. watch the shared webhook arrive at http://127.0.0.1:9000/hook
+cp deploy/.env.local.example deploy/.env.local   # once; then fill in JWT_SECRET_KEY
+docker compose --env-file deploy/.env.local up -d --build
 ```
 
-Dev routes under `/_dev` are the fake Bakong rail — **never enable outside development**
-(`ENABLE_DEV_GATEWAY=false`, which is the default; the local `.env` turns it on explicitly).
-Store provisioning API: `POST /v1/stores`, `PUT /v1/stores/{id}/link`.
+`--env-file deploy/.env.local` is not optional — without it Compose reads the repository
+root `.env`, which is the *host* file, and a `CHMABAPAY_RUNTIME` guard in the compose file
+refuses to render. `deploy/.env.local` keeps the fake Bakong rail (`/_dev`) **on** so a
+payment can be settled locally, and keeps the production Telegram and Resend credentials
+**out**, so a local test cannot page the ops chat or email a real merchant.
 
-For the backing services only, run `docker compose up -d db redis` and point `DATABASE_URL` at
-`postgresql+asyncpg://chmaba:chmaba@localhost:55432/chmabapay`. The compose database is published
-on **55432**, not 5432, so it cannot collide with a Postgres already running on the host. Running
-`docker compose up -d` without naming services starts the entire stack instead — API, both
-frontends and the nginx edge on :8080; see `docs/deploy.md`.
+`http://localhost:8080` is the website and the merchant dashboard; the API is also on
+:8000 for `curl`. See `docs/deploy.md` §3 for the startup order and what healthy looks
+like.
+
+### On the host — for the test suite, and for one-off CLI work
+
+No container in the path: SQLite, the in-process queue, and the API on :8000. This is what
+`uv run pytest` uses. It is **not** the container's database, and pointing it at one is the
+mix the guard refuses.
+
+```bash
+uv sync --all-groups
+uv run python -m chmabapay.cli bootstrap          # seed tenant + stores + keys
+uv run uvicorn chmabapay.main:app --port 8000     # the platform API
+```
+
+Its environment is the repository-root `.env`, which sets `CHMABAPAY_RUNTIME=local` and a
+SQLite `DATABASE_URL`. Note that **an exported shell variable beats that file** — if a host
+run seems to ignore `.env`, check `$env:DATABASE_URL` first. That is not hypothetical: the
+development machine this was written on had `DATABASE_URL`, `REDIS_URL` and
+`WORKER_TRANSPORT=redis` left exported from an earlier session, so every host process
+started from that shell used the container's database regardless of the file.
+
+### Why mixing is refused
+
+`assert_runtime_matches_configuration` (`src/chmabapay/config.py`) refuses to start when
+the configuration belongs to the other runtime. The two failures worth knowing:
+
+- a container given `localhost:55432` resolves it to *itself* and answers from a second,
+  empty database — every query succeeds, against the wrong rows;
+- a host process given `localhost:55432` reaches the stack's published port and reads the
+  same rows the containers do — so the host and the stack disagree about the same data,
+  and neither one errors.
+
+`deploy/.env.local` and the root `.env` are therefore not interchangeable, and the failure
+is a boot refusal naming the variable and the file to use. `docs/deploy.md` §2 has the
+full picture.
+
+### The dev rail
+
+Dev routes under `/_dev` are the fake Bakong rail — **never enable them outside
+development**. `ENABLE_DEV_GATEWAY` defaults to off; the Docker stack turns it on from
+`deploy/.env.local`, the host from `.env`, and `deploy/docker-compose.prod.yml` hardcodes
+it off. Store provisioning API: `POST /v1/stores`, `PUT /v1/stores/{id}/link`.
 
 ### Running the tests
 
