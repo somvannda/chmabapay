@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useAccount } from "@/components/accountSession";
 import { MobileNav } from "@/components/MobileNav";
-import type { Profile } from "@/components/portal/useSession";
 
 /**
  * The header's account slot.
@@ -11,14 +11,10 @@ import type { Profile } from "@/components/portal/useSession";
  * merchant who was already signed in still saw both: Google login returns them to
  * `/`, which is the homepage. This renders their name and a menu instead.
  *
- * It is a client component on purpose. `app/layout.tsx` is a server component and
- * the homepage is statically rendered (`revalidate = 60`); reading the session
- * cookie there would opt every marketing route out of static rendering, so the
- * check runs in the browser against the same-origin `GET /v1/me`.
- *
- * Unlike `useSession`, a 401 here means "anonymous visitor" and must not redirect
- * to the login gateway — that hook's redirect is right for `/dashboard/*` and
- * fatal for a page whose whole job is to be readable signed out.
+ * It is a client component on purpose, and it shares the page's single session check
+ * with every `SessionCta` — see `accountSession`. The reasoning for reading the session
+ * in the browser rather than the server, and for treating a 401 as "anonymous visitor"
+ * rather than a redirect, lives there.
  */
 const SIGN_IN_HREF = "/auth/google/login";
 
@@ -32,33 +28,10 @@ function initialsOf(value: string): string {
 }
 
 export function HeaderAccount() {
-  const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const account = useAccount();
   const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const res = await fetch("/v1/me", { credentials: "include" });
-        // Any non-2xx — 401 included — is treated as "not signed in". There is
-        // nothing useful to show for an error here, and the signed-out buttons are
-        // the correct fallback for both cases.
-        if (!res.ok) return;
-        const data = (await res.json()) as Profile;
-        if (alive) setProfile(data);
-      } catch {
-        // Offline, or the API is down. Same fallback as above.
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -86,12 +59,13 @@ export function HeaderAccount() {
     window.location.href = "/";
   }
 
-  const email = profile?.email || "";
-  const displayName = profile?.name || email;
+  const email = account.status === "signed-in" ? account.profile.email || "" : "";
+  const displayName =
+    account.status === "signed-in" ? account.profile.name || email : "";
 
   // Placeholder, not the signed-out buttons: showing "Sign in" to someone who is
   // signed in — even for a frame — is the bug being fixed here.
-  if (loading) {
+  if (account.status === "loading") {
     return (
       <>
         <span className="landing-account-skeleton" aria-hidden="true" />
@@ -100,7 +74,7 @@ export function HeaderAccount() {
     );
   }
 
-  if (!profile) {
+  if (account.status === "anonymous") {
     return (
       <>
         <a className="landing-header-signin" href={SIGN_IN_HREF}>
@@ -165,7 +139,11 @@ export function HeaderAccount() {
           </div>
         )}
       </div>
-      <MobileNav profile={profile} onSignOut={handleSignOut} signingOut={signingOut} />
+      <MobileNav
+        profile={account.profile}
+        onSignOut={handleSignOut}
+        signingOut={signingOut}
+      />
     </>
   );
 }

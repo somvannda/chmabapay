@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SessionCta } from "@/components/SessionCta";
 
 /**
  * The homepage canonical. Every other public page declares one; without this the
@@ -20,7 +21,11 @@ export const metadata: Metadata = {
  */
 export const revalidate = 60;
 
-const primaryCtaHref = "/auth/google/login";
+/**
+ * Where the page's calls to action send an anonymous visitor. `SessionCta` sends a
+ * signed-in one to the workspace instead of back through Google's consent screen.
+ */
+const signedOutCtaHref = "/auth/google/login";
 
 const featureCards = [
   {
@@ -109,9 +114,13 @@ function HeroSection() {
             </p>
 
             <div className="landing-button-row landing-hero-actions">
-              <a className="landing-button-primary" href={primaryCtaHref}>
+              <SessionCta
+                className="landing-button-primary"
+                href={signedOutCtaHref}
+                hrefWhenSignedIn="/dashboard"
+              >
                 Start free
-              </a>
+              </SessionCta>
               <a className="landing-button-secondary" href="#how-it-works">
                 See payment flow
               </a>
@@ -335,12 +344,13 @@ async function PricingSection() {
                   ))}
                 </div>
 
-                <a
+                <SessionCta
                   className={plan.is_featured ? "landing-button-dark-primary" : "landing-button-dark-secondary"}
-                  href={primaryCtaHref}
+                  href={signedOutCtaHref}
+                  hrefWhenSignedIn="/dashboard/billing"
                 >
                   {`Choose ${plan.name}`}
-                </a>
+                </SessionCta>
               </div>
             );
           })}
@@ -380,9 +390,13 @@ function ClosingSection() {
             <div className="landing-cta-eyebrow">Ready when you are</div>
             <h3 className="landing-cta-title">Your next better payment day starts here.</h3>
             <p className="landing-cta-copy">Set up your first workspace free. No card needed.</p>
-            <a className="landing-button-primary landing-cta-button" href={primaryCtaHref}>
+            <SessionCta
+              className="landing-button-primary landing-cta-button"
+              href={signedOutCtaHref}
+              hrefWhenSignedIn="/dashboard"
+            >
               Open your workspace
-            </a>
+            </SessionCta>
           </div>
         </div>
       </div>
