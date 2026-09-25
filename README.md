@@ -180,7 +180,7 @@ uv run pytest        # ~35 min on Windows: SQLite default, rebuilds the schema p
 ```
 
 Point it at a Postgres `chmabapay_test` database — the same thing CI does — and the
-same suite takes about **2.5 minutes**:
+same suite takes about **11 minutes** instead of 35:
 
 ```powershell
 # The development stack's own Postgres. docker-compose.yml publishes it on 55432 and
@@ -204,7 +204,10 @@ is published on 56379, and DB 15 keeps the test keys clear of the API's own DB 0
 $env:CHMABAPAY_TEST_REDIS_URL = "redis://localhost:56379/15"
 ```
 
-Two things that are easy to get wrong:
+The 11 minutes above is measured without it. A real server adds roughly three, which is
+a fair price for exercising the commands the queue is actually built on, and CI pays it.
+
+Three things that are easy to get wrong:
 
 - **`uv run pytest`, never `python -m pytest`.** `test_migrations.py` shells out to
   `python -m alembic`, and `pythonpath = ["src"]` applies only to the pytest process, so
