@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { brandColors } from "@shared/theme";
-import { MobileNav } from "@/components/MobileNav";
+import { HeaderAccount } from "@/components/HeaderAccount";
 import "./globals.css";
 
 // The latin subsets are vendored in `app/fonts/` instead of coming from
@@ -80,8 +80,6 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-const signInHref = "/auth/google/login";
-
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
@@ -132,15 +130,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </a>
             </div>
 
-            {/* Right Nav */}
+            {/* Right Nav. `HeaderAccount` is client-side because the session lives
+                in an httpOnly cookie and reading it here would make every marketing
+                route dynamic; it renders the signed-out buttons or the account menu. */}
             <div className="landing-header-actions">
-              <a className="landing-header-signin" href={signInHref}>
-                Sign in
-              </a>
-              <a href={signInHref} className="nav-cta-primary">
-                Start free
-              </a>
-              <MobileNav />
+              <HeaderAccount />
             </div>
           </nav>
         </header>

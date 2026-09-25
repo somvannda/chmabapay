@@ -6,9 +6,25 @@
 # that carries both the marketing pages and the merchant dashboard, and one platform
 # console.
 #
-#   docker compose up -d --build      # everything
-#   docker compose up -d db redis     # only the backing services, for the local
-#                                     # `uv run uvicorn` dev loop in README
+#   docker compose --env-file deploy/.env.local up -d --build   # everything
+#   docker compose --env-file deploy/.env.local up -d db redis  # only the backing
+#                                                              # services, for a
+#                                                              # host `uv run`
+#                                                              # loop that has its
+#                                                              # own database
+#
+# `--env-file` is not optional. Without it compose interpolates the repository-root
+# `.env`, which is the *host* file — an origin on http://localhost:3001, a database
+# on localhost:55432, whatever a developer last put there. `deploy/.env.local` is this
+# stack's own file, and `CHMABAPAY_RUNTIME` below is required, so a bare
+# `docker compose up` refuses at parse time rather than starting a mixed stack.
+# The application refuses it at boot as well; see `assert_runtime_matches_configuration`.
+#
+# One thing no file here can override: a variable *exported in the shell* wins over
+# both `.env` and `--env-file` for interpolation. The three runtime variables that
+# matter (DATABASE_URL, REDIS_URL, WORKER_TRANSPORT) are hardcoded or guarded below,
+# but a stray `$env:WORKER_TRANSPORT='redis'` from an earlier session still reaches
+# the API. Check the shell before blaming the file.
 #
 # The edge is on :8080. `http://localhost:8080` is the website; the console answers
 # to the `admin.localhost` host (see deploy/nginx/nginx.conf).
@@ -27,6 +43,12 @@ x-backend-env: &backend-env
   # documented address rather than being invented later.
   REDIS_URL: redis://redis:6379/0
   LOG_LEVEL: ${LOG_LEVEL:-info}
+  # Declares which runtime these values are written for, and is *required* — `:?`
+  # makes compose refuse to render without it, which is what stops a bare
+  # `docker compose up` from interpolating the repository-root `.env` instead of
+  # deploy/.env.local. The application checks the same declaration against the
+  # process it finds itself in, and refuses to boot on a disagreement.
+  CHMABAPAY_RUNTIME: ${CHMABAPAY_RUNTIME:?run with --env-file deploy/.env.local - see deploy/.env.local.example}
 
 x-api-env: &api-env
   <<: *backend-env
@@ -47,19 +69,26 @@ x-api-env: &api-env
   # not at head. It never migrates — the `migrate` service does that, and `api`
   # waits for it. See P0-1.
   SCHEMA_CHECK: "true"
-  # The fake Bakong rail, hardcoded OFF rather than interpolated.
+  # The fake Bakong rail — interpolated again, but only because the file it reads
+  # from changed.
   #
-  # This was `${ENABLE_DEV_GATEWAY:-false}`, which reads as safe and is not: compose
-  # resolves that from the project's `.env`, and a developer's `.env` is exactly where
-  # `ENABLE_DEV_GATEWAY=true` lives for the local `uv run uvicorn` loop. A plain
-  # `docker compose up` therefore started the stack with the dev rail live, and
-  # `GET /auth/_dev/login` — reachable, because nginx routes the whole `/auth/` prefix
-  # to the API — minted a valid `chmabapay_session` for any email you named, straight
-  # off the edge. A default is only a default if the variable has to be supplied
-  # deliberately; a value inherited from an unrelated dev file is not one.
+  # This was hardcoded `"false"` after being `${ENABLE_DEV_GATEWAY:-false}`, and the
+  # reason is worth keeping: compose resolves that variable from the *project's* `.env`,
+  # and a developer's `.env` is exactly where `ENABLE_DEV_GATEWAY=true` lives for the
+  # host `uv run uvicorn` loop. A plain `docker compose up` therefore started the stack
+  # with the dev rail live, and `GET /auth/_dev/login` — reachable, because nginx routes
+  # the whole `/auth/` prefix to the API — minted a valid `chmabapay_session` for any
+  # email you named, straight off the edge.
   #
-  # Turn it on by editing this line, in a stack you have chosen to expose that way.
-  ENABLE_DEV_GATEWAY: "false"
+  # What changed is the source, not the reasoning. The value now comes from
+  # deploy/.env.local, this stack's own file, which is passed by name on the command
+  # line — so it cannot be inherited from a file written for a different runtime, and
+  # the stack still refuses to render without it. A local stack has no Bakong token to
+  # poll with, so with the rail off it cannot settle a payment at all.
+  #
+  # `deploy/docker-compose.prod.yml` hardcodes it off regardless, so this can never
+  # reach production. Leave it false in any stack reachable from outside this machine.
+  ENABLE_DEV_GATEWAY: ${ENABLE_DEV_GATEWAY:-false}
   # Required, and required *loudly*: the application's default is a well-known dev
   # placeholder. `:?` makes compose refuse to start rather than sign sessions with
   # a secret that is in the repository.
@@ -69,6 +98,14 @@ x-api-env: &api-env
   METRICS_TOKEN: ${METRICS_TOKEN:-}
   TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
   OPS_TELEGRAM_CHAT_ID: ${OPS_TELEGRAM_CHAT_ID:-}
+  # The team feed — settled payments, raised invoices, unhandled exceptions — posted
+  # to a Telegram *group*, as opposed to the single operator chat above. Omitted from
+  # this list until now, which made it a setting the console offers no switch for and
+  # this stack silently ignored.
+  ACTIVITY_TELEGRAM_CHAT_ID: ${ACTIVITY_TELEGRAM_CHAT_ID:-}
+  # Routes only the ABA PayWay fetches through a proxy, for a host ABA answers 403
+  # while an ordinary connection gets 200.
+  PAYWAY_PROXY_URL: ${PAYWAY_PROXY_URL:-}
   # Google OAuth. Without these the sign-in button the marketing header and the hero
   # CTA both point at returns 400 `google_oauth_not_configured`, so the whole portal is
   # unreachable — the stack used to pass none of them and could not sign anyone in.

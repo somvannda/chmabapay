@@ -1379,7 +1379,9 @@ no dashboards, no proxy, no deploy doc.
 healthcheck), one parameterised `web/Dockerfile` for both Next apps, and seven
 compose services — `db`, `redis`, `migrate`, `api`, `landing`, `admin`, `proxy` —
 with `api` gated on `migrate` exiting 0. `ENABLE_DEV_GATEWAY` is hardcoded false
-rather than interpolated. `docs/deploy.md` is the operator document.
+rather than interpolated. (Superseded: it is interpolated again, but from the stack's
+own `deploy/.env.local` rather than the host `.env` — see `docs/deploy.md` §2 and §6.)
+`docs/deploy.md` is the operator document.
 
 **Cold start, executed.** From no containers, no volumes and no cached images:
 all six long-running services reached `healthy` and `migrate` exited 0. The
@@ -1401,7 +1403,10 @@ title; admin `ChmabaPay Admin`).
    hardcodes the flag false, `config.py` defaults it to `False` so an omitted
    variable no longer produces the insecure state, and `api-locations.inc`
    refuses `/_dev/` and `/auth/_dev/` with an explicit `return 404`. Absence of a
-   `location` is not a refusal.
+   `location` is not a refusal. (The compose hardcode was later replaced by a
+   dedicated env file, which removes the *cause* — an unrelated file being read by
+   default — rather than the flag; `api-locations.inc` and the `config.py` default
+   are unchanged.)
 2. **The stack could not sign anyone in.** The API's environment carried seven
    variables and none of the Google OAuth ones, so the header and hero CTAs both
    pointed at a route answering `400 google_oauth_not_configured`. Bakong,

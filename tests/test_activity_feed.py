@@ -21,7 +21,7 @@ import httpx
 import pytest
 from conftest import make_account, make_store
 
-from chmabapay import models
+from chmabapay import alerts, models
 from chmabapay.config import Settings
 from chmabapay.db import session_factory
 from chmabapay.services import billing as billing_svc
@@ -44,6 +44,20 @@ def outbound(monkeypatch):
 
     monkeypatch.setattr(telegram, "http_post", fake_post)
     return sent
+
+
+@pytest.fixture(autouse=True)
+def _a_deployment_that_may_page(monkeypatch):
+    """Keep the delivery guard from silencing these tests.
+
+    The suite runs with the dev gateway on, which `alerts.delivery_allowed()` reads as
+    "a development deployment" — the guard working, and it means an unhandled error
+    would reach nobody here. `ALERTS_ALLOW_NON_PRODUCTION` is the documented override a
+    development machine uses to exercise the alert path; this is that, with no file.
+    """
+    monkeypatch.setattr(
+        alerts, "get_settings", lambda: Settings(alerts_allow_non_production=True)
+    )
 
 
 @pytest.fixture

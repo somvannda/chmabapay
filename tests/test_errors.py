@@ -11,6 +11,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import httpx
+from sqlalchemy.exc import InterfaceError
 
 from chmabapay import errors, observability
 from chmabapay.main import app
@@ -93,13 +94,14 @@ async def test_the_next_window_carries_how_many_were_suppressed(monkeypatch):
     assert len(sent) == 1
 
     # Past the window the error is worth mentioning again, and the point of the
-    # repeat is the count: "still happening, 2 more times" is different news from
+    # repeat is the count: "still happening, 4 in total" is different news from
     # "it happened once".
     now[0] += 400
     await errors.report_exception(ValueError("boom"), where="api")
 
     assert len(sent) == 2
-    assert "2 more of this same error" in sent[1]
+    assert "still happening" in sent[1]
+    assert "Count:   4 since" in sent[1]
 
 
 async def test_the_window_is_per_error_not_global(monkeypatch):
@@ -214,11 +216,13 @@ async def test_an_unhandled_route_exception_is_reported_and_still_answers_500(
 
     assert res.status_code == 500
     assert len(sent) == 1
-    assert sent[0].startswith("UNHANDLED api GET /v1/me")
+    assert sent[0].startswith("ChmabaPay · ERROR · API request")
+    assert "What:    RuntimeError: dependency exploded" in sent[0]
+    assert "Call:    GET /v1/me" in sent[0]
     # The trace id is bound only for the life of the request, and the report is the
     # one place it can still be quoted — which is why the capture happens before the
     # middleware releases it.
-    assert "trace   -" not in sent[0]
+    assert "Trace:   none" not in sent[0]
 
 
 async def test_a_worker_exception_is_reported_with_its_queue(monkeypatch):
@@ -243,5 +247,25 @@ async def test_a_worker_exception_is_reported_with_its_queue(monkeypatch):
     )
 
     assert len(sent) == 1
-    assert sent[0].startswith("UNHANDLED worker:w1 RuntimeError")
-    assert "detect:pmt_1 attempt 1" in sent[0]
+    assert sent[0].startswith("ChmabaPay · ERROR · background worker")
+    assert "What:    RuntimeError: detection blew up" in sent[0]
+    assert "Worker:  w1" in sent[0]
+    assert "Job:     detect:pmt_1 (attempt 1 of 1)" in sent[0]
+
+
+async def test_a_known_infrastructure_failure_is_explained_not_just_quoted(monkeypatch):
+    """`InterfaceError: connection is closed` means nothing to the person paged.
+
+    The type name and the message stay, because they are what a search turns up; what
+    is added is the sentence that says the database is gone and everything stops.
+    """
+    sent = _capture(monkeypatch)
+
+    await errors.report_exception(
+        InterfaceError("SELECT 1", None, Exception("connection is closed")),
+        where="worker:webhooks.send",
+    )
+
+    assert sent[0].startswith("ChmabaPay · OUTAGE · background worker")
+    assert "Meaning: The platform lost its connection" in sent[0]
+    assert "Worker:  Webhook delivery (webhooks.send)" in sent[0]

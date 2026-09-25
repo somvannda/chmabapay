@@ -45,16 +45,24 @@ with anything mentioning a version.
 ## 2. Prerequisites
 
 - Docker with Compose v2.
-- A `.env` in the repository root, or an `--env-file` pointed at one, supplying at
-  minimum `JWT_SECRET_KEY`. Compose refuses to start without it:
+- `deploy/.env.local` — this stack's own environment file. Copy the template and fill
+  in at minimum `JWT_SECRET_KEY`:
 
-  > `set JWT_SECRET_KEY (see .env.example) - the built-in default is a published dev placeholder`
+  ```bash
+  cp deploy/.env.local.example deploy/.env.local
+  ```
 
-  That refusal is intentional, and it is now the *second* line of defence. The
-  application's built-in default is `generated-dev-secret-change-in-prod`, which is in
-  this repository — sessions signed with it can be forged by anyone who has read the
-  source. So `assert_session_secret_is_chosen` refuses to complete startup on that
-  value or on an empty one, and the process exits rather than serving:
+  Compose refuses to start without `CHMABAPAY_RUNTIME` in it, which is the marker that
+  says which of the three environment files you meant:
+
+  > `required variable CHMABAPAY_RUNTIME is missing a value: run with --env-file deploy/.env.local - see deploy/.env.local.example`
+
+- The same file must supply `JWT_SECRET_KEY`, and that refusal is intentional — it is
+  the *second* line of defence. The application's built-in default is
+  `generated-dev-secret-change-in-prod`, which is in this repository, so sessions
+  signed with it can be forged by anyone who has read the source.
+  `assert_session_secret_is_chosen` refuses to complete startup on that value or on an
+  empty one, and the process exits rather than serving:
 
   ```
   chmabapay.config.InsecureSessionSecretError: JWT_SECRET_KEY is the built-in
@@ -68,16 +76,50 @@ with anything mentioning a version.
   compose at all. Generate a value with
   `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
 
-> **`.env` is a development file.** It holds `ENABLE_DEV_GATEWAY=true` for the local
-> `uv run uvicorn` loop and `PUBLIC_ORIGIN=http://localhost:3001`. Compose reads it
-> for interpolation, so the localhost origin does flow into the stack. For a real
-> deployment use a separate file — `docker compose --env-file .env.production up -d`
-> — rather than editing `.env`.
+### The three environment files, and why they are three
+
+| File | Belongs to | Reads |
+|------|-----------|-------|
+| `.env` (repository root) | a process on the **host** — `uv run uvicorn`, `uv run pytest` | nothing container-related; `DATABASE_URL` is a SQLite file |
+| `deploy/.env.local` | **this stack**, every service in a container | passed by name: `--env-file deploy/.env.local` |
+| `deploy/.env` | the production stack (§12) | `--env-file deploy/.env` |
+
+They are not interchangeable, and `assert_runtime_matches_configuration`
+(`src/chmabapay/config.py`) refuses to boot when one is used for another. There are two
+failure modes, and **neither one fails where it happens** — which is the whole reason
+the guard exists:
+
+- a container handed `localhost:55432` resolves it to *itself*, so the queries succeed
+  against a second, empty database;
+- a host process handed `localhost:55432` reaches the stack's published port and reads
+  the same rows the containers do, so two environments disagree about the same data
+  without either one erroring.
+
+`--env-file` is therefore not optional, and the reason it is a flag rather than a
+default is Compose's own behaviour: without it, interpolation reads the *project
+directory's* `.env` — the host file — so `PUBLIC_ORIGIN=http://localhost:3001` (the host
+dev server, not running) and a host `DATABASE_URL` flow into the containers. Before the
+split, that is exactly what happened: the stack's public origin was whatever the
+developer's host file last said.
+
+> **An exported variable beats every file here.** The first run of the guard's own tests
+> failed for this reason: the shell had `DATABASE_URL`, `REDIS_URL` and
+> `WORKER_TRANSPORT=redis` left over from an earlier session, and pydantic-settings
+> ranks the environment above `.env`. Every process started from that shell used the
+> container's database regardless of what the file said. If a host run behaves like it
+> is ignoring `.env`, check `$env:DATABASE_URL` (PowerShell) or `env | grep CHMABA`
+> first — and note that the guard will now refuse the mix, naming the variable.
+>
+> `--env-file` does not change that precedence either: an exported variable wins over the
+> file for Compose interpolation too. The container's `DATABASE_URL` and `REDIS_URL` are
+> hardcoded, so those two are safe, but a leftover `$env:WORKER_TRANSPORT='redis'` still
+> reaches the API. Open a fresh shell, or clear the three variables, before starting the
+> stack from a terminal you have been running host commands in.
 
 ## 3. First run
 
 ```bash
-docker compose up -d --build
+docker compose --env-file deploy/.env.local up -d --build
 ```
 
 Order is enforced by `depends_on`, not by luck:
@@ -146,6 +188,15 @@ TELEGRAM_BOT_TOKEN); conditions will be logged, not sent
 That line is the honest statement of coverage: without it, every alert is a log line
 on a machine nobody is reading.
 
+Credentials are necessary but not sufficient. Delivery also requires that this
+deployment is one where an alert could mean something — `alerts.delivery_allowed`
+suppresses sending when `ENABLE_DEV_GATEWAY` is on or `PUBLIC_ORIGIN` is a local
+address, and says so at startup. Both signals have to be right for the product to work
+at all, so neither can be wrong quietly. A blank `PUBLIC_ORIGIN` is treated as
+*unknown* rather than as evidence, so an unset variable can never silence a production
+page. `ALERTS_ALLOW_NON_PRODUCTION=true` overrides the guard, and is the only way to
+exercise the alert path from a development machine — against a throwaway chat.
+
 ### What pages, and how often
 
 `ALERT_INTERVAL_SECONDS=30` evaluates the conditions. Each is reported on its
@@ -154,9 +205,20 @@ for an hour sends one message, not one a minute.
 
 | Condition | Raised when |
 |---|---|
-| `worker never started — <queue>` | No dequeue has *ever* happened on that queue. Checked against the queues that should exist, not the ones that happen to be reporting, because a loop that never started is invisible to the latter. |
-| `worker stalled — <queue>` | No dequeue for `ALERT_WORKER_STALL_SECONDS` (60). A healthy loop asks every ~0.05s, so this means the loop is gone, not busy. |
+| `worker never started — <worker>` | No dequeue has *ever* happened on that queue. Checked against the queues that should exist, not the ones that happen to be reporting, because a loop that never started is invisible to the latter. |
+| `worker stalled — <worker>` | No dequeue for `ALERT_WORKER_STALL_SECONDS` (60). A healthy loop asks every ~0.05s, so this means the loop is gone, not busy. |
 | `webhook backlog` | More than `ALERT_WEBHOOK_BACKLOG` (50) deliveries waiting — merchants are not being told about payments. |
+| `webhooks failing` | More than `ALERT_WEBHOOK_FAILURE_RATE` (10 %) of delivery attempts failed inside the window, once at least `ALERT_WEBHOOK_FAILURE_MIN_SAMPLE` (20) were tried. The one condition the backlog cannot see: every delivery is being attempted, and failing. |
+
+`<worker>` is the queue named in words — `Webhook delivery`, not `webhooks.send` —
+with the transport id kept beside it, because that is the name the metrics and the
+config use. Every alert also carries why it matters in business terms and the time it
+was raised, and each `RESOLVED` message carries how long the condition lasted; the
+point of the format is that the person holding the phone can triage without a
+terminal. The same applies to the unhandled-exception reports described in
+`docs/production-readiness.md`: a severity, a plain-English meaning for the faults we
+recognise (a lost database connection, for one), where it happened, when, and how many
+times — never a bare stack-trace header.
 
 Two more arrive through the same notifier but are one-off rather than conditions, so
 they go out immediately instead of on the timer: a **suspected double charge** (the
@@ -238,10 +300,19 @@ by accident once:
   matched the ordinary `/auth/` rule and was proxied through. It answered
   `307` with a valid session cookie.
 
-Two changes make that specific failure impossible: compose now hardcodes
-`ENABLE_DEV_GATEWAY: "false"` rather than interpolating it, and
-`deploy/nginx/api-locations.inc` refuses `/_dev/` and `/auth/_dev/` explicitly.
-Absence of a `location` is not a refusal; `return 404` is.
+Two changes make that specific failure impossible. `deploy/nginx/api-locations.inc`
+refuses `/_dev/` and `/auth/_dev/` explicitly — absence of a `location` is not a
+refusal; `return 404` is. And the value is now read from `deploy/.env.local`, this
+stack's own file, which is named on the command line and cannot be reached at all
+without it.
+
+It is deliberately **on** in `deploy/.env.local`. The rail was hardcoded off for a
+while after the incident, and that cost the local stack the ability to settle a payment
+at all — there is no Bakong token to poll with. What made interpolation unsafe was the
+*source*: an unrelated host file that happened to be read by default. That is a property
+of the file, not of the flag, and naming the file fixed it. Production is unaffected
+either way: `deploy/docker-compose.prod.yml` hardcodes the rail off and does not read
+`deploy/.env.local`.
 
 ### Why `/metrics` is not published
 
@@ -342,8 +413,8 @@ peer arrived as `203.0.113.9`.
 ## 9. Redeploying
 
 ```bash
-docker compose up -d --build          # rebuild and recreate what changed
-docker compose exec proxy nginx -s reload   # only if you edited deploy/nginx/*
+docker compose --env-file deploy/.env.local up -d --build   # rebuild what changed
+docker compose --env-file deploy/.env.local exec proxy nginx -s reload   # nginx only
 ```
 
 **Before a deploy that carries a migration, take a backup and drill it — §14.** A
@@ -389,11 +460,12 @@ the drains into a process of their own (P2-3):
 
 ```bash
 # Linux/macOS
-API_WORKERS_ENABLED=false WORKER_TRANSPORT=redis docker compose --profile workers up -d
+API_WORKERS_ENABLED=false WORKER_TRANSPORT=redis \
+    docker compose --env-file deploy/.env.local --profile workers up -d
 
 # PowerShell
 $env:API_WORKERS_ENABLED='false'; $env:WORKER_TRANSPORT='redis'
-docker compose --profile workers up -d
+docker compose --env-file deploy/.env.local --profile workers up -d
 ```
 
 Both variables are needed and the application enforces that:
@@ -430,9 +502,10 @@ report it either, because it shares the event loop that stopped making progress.
 
 ### Scaling
 
-`docker compose up -d --scale api=3` on its own gives three APIs each with their own
-private in-process queue, which is worse than one. Replicas only make sense with
-`WORKER_TRANSPORT=redis`, where a consumer group divides the work between them.
+`docker compose --env-file deploy/.env.local up -d --scale api=3` on its own gives
+three APIs each with their own private in-process queue, which is worse than one.
+Replicas only make sense with `WORKER_TRANSPORT=redis`, where a consumer group divides
+the work between them.
 
 Two consequences worth knowing before scaling:
 
@@ -1022,7 +1095,14 @@ One run, in order:
 5. Copied to `BACKUP_REMOTE` if that is set — **and loudly warned about if it is not**
    — then pruned locally and remotely to `RETENTION_DAYS`.
 6. Non-zero exit on any failure, with an alert to the operator chat that reads
-   Telegram's response body rather than trusting the HTTP status.
+   Telegram's response body rather than trusting the HTTP status. The alert names the
+   host, the time, what the exit code means and the last line the job logged — which is
+   the failure reason, since every `FATAL` path logs it immediately before exiting —
+   so the message is actionable without opening the server. It also distinguishes the
+   two failure shapes, because "no restore point was produced" is only true before the
+   dump is published: after that step the dump is verified and in the rotation, and the
+   alert says so and names the file, since the usual failure from there is the off-host
+   copy.
 
 Configuration is entirely from the environment, so nothing needs editing on the host:
 

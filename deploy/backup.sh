@@ -58,7 +58,13 @@ DRILL_COUNTS="SELECT (SELECT count(*) FROM accounts) AS accounts, \
 # Output, and the one alert that matters
 # ---------------------------------------------------------------------------- #
 
-log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; }
+log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"; LAST_LOG="$*"; }
+
+# The line the alert quotes if the job fails. Every failure path here logs its reason
+# immediately before exiting, so the last line written is the reason — and when `set -e`
+# catches a command that did not, the last line is the step it died on, which is the
+# next best thing and still far better than "exit 2".
+LAST_LOG=""
 
 # Read one key out of the env file without sourcing it. `source` would execute the
 # file, and a `.env` is not a shell script: one unquoted `#` or space in a value
@@ -108,6 +114,23 @@ CLEANUP=""
 # on a typo is one that gets muted, and then the real failure at 03:00 is muted too.
 DELIBERATE=""
 
+# The dump that was verified and renamed into the rotation, if that step has happened.
+# It decides which of the two failures the alert reports — see on_exit. Empty means no
+# restore point was produced.
+PUBLISHED=""
+
+# What a non-zero exit code means here, said plainly. These are the shell's codes, not
+# this script's, so the alert states what it can rather than inventing a taxonomy.
+exit_reason() {
+    case "$1" in
+        1) printf 'a required step failed' ;;
+        2) printf 'a command was rejected, or the shell refused the script' ;;
+        126) printf 'a command was found but could not be run' ;;
+        127) printf 'a command was not found on PATH' ;;
+        *) printf 'an unexpected command failed' ;;
+    esac
+}
+
 on_exit() {
     status=$?
     # shellcheck disable=SC2086 # deliberate word splitting: a list of paths
@@ -117,7 +140,37 @@ on_exit() {
         log "exit ${status} was a deliberate refusal; no alert sent"
         return 0
     fi
-    alert "ChmabaPay backup FAILED on $(hostname) (exit ${status}). No restore point was produced. See docs/deploy.md section 14."
+
+    # Which failure this is depends on one fact: was the dump published before the
+    # failure? Most of the run is after that point — the off-host copy, the prune — and
+    # "no restore point was produced" is simply wrong when the local dump is sitting in
+    # the rotation. The reverse would be worse: promising a backup that never verified.
+    if [ -n "$PUBLISHED" ]; then
+        headline="ChmabaPay BACKUP INCOMPLETE — dump saved locally, the run did not finish"
+        dump_line="Dump:   ${PUBLISHED}"
+        closing="Tonight's dump was written and verified, so there is a local restore point.
+A later step failed — most often the off-host copy — so it may not have left this
+machine."
+    else
+        headline="ChmabaPay BACKUP FAILED — no new restore point was produced"
+        dump_line="Dump:   none — the dump did not get as far as being verified"
+        closing="The newest restore point is still an earlier night's, so the window of
+history this platform can recover is now one day longer than it should be."
+    fi
+
+    # Every line answers a question the operator asks while holding a phone: whose host,
+    # when, how bad, what actually broke, and whether a backup exists. The message this
+    # replaces answered the first of those and pointed at a document they were not holding.
+    alert "${headline}
+
+Host:   $(hostname)
+Time:   $(date -u '+%Y-%m-%d %H:%M UTC')
+Exit:   ${status} ($(exit_reason "$status"))
+Last:   ${LAST_LOG}
+${dump_line}
+
+${closing}
+The full output is in the cron log (docs/deploy.md section 14)."
 }
 trap on_exit EXIT
 
@@ -290,6 +343,11 @@ backup() {
 
     mv "$incoming" "$final"
     chmod 600 "$final"
+
+    # From here the run can still fail — the meta sidecar, the config archive, the
+    # off-host copy, the prune — but a restore point now exists, and the alert says so.
+    # See on_exit.
+    PUBLISHED="$final"
 
     # The schema revision, kept beside the dump. It is the first question anyone
     # asks during a restore — what does this correspond to — and the answer is not

@@ -352,19 +352,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             </nav>
 
             <div className="cp-topbar-actions">
-              {/* The public schema, not the console's own. `routers/admin.py` sets
-                  `include_in_schema=False`, so `/openapi.json` documents no admin route;
-                  labelled "OpenAPI" from inside the console it read as this console's
-                  contract and answered a question the operator was not asking. */}
-              <a
-                className="cp-toplink"
-                href="/openapi.json"
-                target="_blank"
-                rel="noreferrer"
-                title="The merchant-facing API schema. Console routes are not published."
-              >
-                Merchant API schema
-              </a>
               <div className="cp-menu" ref={menuRef}>
                 <button
                   type="button"

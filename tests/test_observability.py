@@ -11,10 +11,12 @@ import asyncio
 import logging
 import time
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from conftest import make_account, make_key, make_store
 
+from chmabapay import alerts as alerting
 from chmabapay import observability
 from chmabapay.alerts import AlertWatcher, Condition, TelegramNotifier
 from chmabapay.config import get_settings
@@ -473,11 +475,15 @@ async def test_each_condition_is_sent_once_on_its_edge_and_once_on_recovery():
     await watcher.check_once()
     # Still down after a minute: one message, not one per tick.
     assert len(notifier.sent) == 1
-    assert notifier.sent[0].startswith("ALERT worker stalled")
+    assert notifier.sent[0].startswith("ChmabaPay · ALERT · worker stalled")
+    # The queue is named in words as well as by its transport id, so the reader does
+    # not have to know what `payments.detection` is to triage it.
+    assert "Payment detection (payments.detection)" in notifier.sent[0]
 
     transport._heartbeats[Q_DETECTION] = time.monotonic()
     await watcher.check_once()
-    assert notifier.sent[-1] == f"RESOLVED worker stalled — {Q_DETECTION}"
+    assert notifier.sent[-1].startswith("ChmabaPay · RESOLVED · worker stalled")
+    assert "has cleared after" in notifier.sent[-1]
 
     # And it does not announce the recovery twice either.
     await watcher.check_once()
@@ -561,7 +567,7 @@ async def test_a_failure_rate_that_cannot_be_measured_neither_pages_nor_clears()
     )
 
     await watcher.check_once()
-    assert notifier.sent[0].startswith("ALERT webhooks failing")
+    assert notifier.sent[0].startswith("ChmabaPay · ALERT · webhooks failing")
 
     # The database cannot answer. That is not evidence that the rail recovered.
     await watcher.check_once()
@@ -573,7 +579,7 @@ async def test_a_failure_rate_that_cannot_be_measured_neither_pages_nor_clears()
 
     watcher.delivery_outcomes = healthy
     await watcher.check_once()
-    assert notifier.sent[-1] == "RESOLVED webhooks failing"
+    assert notifier.sent[-1].startswith("ChmabaPay · RESOLVED · webhooks failing")
 
 
 async def test_the_failure_rate_is_not_consulted_when_no_reader_is_supplied():
@@ -615,3 +621,76 @@ async def test_an_undeliverable_alert_reports_failure_rather_than_pretending():
     watcher = make_watcher(FakeTransport(heartbeats={}, metrics={}), notifier=notifier)
     # The watcher keeps running; it just cannot deliver.
     assert await watcher.check_once()
+
+
+# --------------------------------------------------------------------------- #
+# Configured is not the same as allowed to speak
+# --------------------------------------------------------------------------- #
+# The regression this guards was real: the production token was removed from the dev
+# `.env` and alerts still arrived, because the launcher exported settings into the process
+# environment. Credentials are not a deployment's permission to page.
+def _config(**overrides):
+    """Only the settings `delivery_allowed` reads, without the rest of `Settings`."""
+    base = {
+        "enable_dev_gateway": False,
+        "public_origin": "https://pay.chmaba.com",
+        "alerts_allow_non_production": False,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_a_production_deployment_may_page(monkeypatch):
+    monkeypatch.setattr(alerting, "get_settings", lambda: _config())
+    assert alerting.delivery_allowed() is True
+    assert alerting.development_reason() is None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"enable_dev_gateway": True},
+        {"public_origin": "http://localhost:3001"},
+        {"public_origin": "http://127.0.0.1:8000"},
+    ],
+)
+def test_a_development_deployment_is_not_allowed_to_page(monkeypatch, overrides):
+    monkeypatch.setattr(alerting, "get_settings", lambda: _config(**overrides))
+    assert alerting.delivery_allowed() is False
+    assert alerting.development_reason() is not None
+
+
+def test_an_unknown_origin_does_not_silence_a_production_page(monkeypatch):
+    """An empty `PUBLIC_ORIGIN` is unknown, not evidence: fail toward alerting."""
+    monkeypatch.setattr(alerting, "get_settings", lambda: _config(public_origin=None))
+    assert alerting.delivery_allowed() is True
+
+
+def test_the_override_lets_a_development_deployment_page_on_purpose(monkeypatch):
+    monkeypatch.setattr(
+        alerting,
+        "get_settings",
+        lambda: _config(
+            public_origin="http://localhost:3001", alerts_allow_non_production=True
+        ),
+    )
+    assert alerting.delivery_allowed() is True
+
+
+async def test_the_guard_stops_a_message_before_it_reaches_telegram(monkeypatch):
+    """The credentials are present and it still must not send. That is the point."""
+    sent: list[str] = []
+
+    async def fake_send(chat_id: str, text: str) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr(alerting.telegram, "send_message", fake_send)
+    monkeypatch.setattr(alerting.telegram, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        alerting, "get_settings", lambda: _config(public_origin="http://localhost:3001")
+    )
+
+    notifier = TelegramNotifier("ops-chat")
+
+    assert await notifier.send("ChmabaPay · ALERT · test") is False
+    assert sent == []

@@ -152,10 +152,17 @@ class QueueTransport(ABC):
             # first retry is the earliest signal that something new is broken. Repeats
             # of the same exception are counted rather than sent, so a job that burns
             # ten attempts is one alert carrying a count, not ten messages.
+            #
+            # The context is written for the reader of the alert, not the log: the job
+            # identity and how far through its retries it is, which is what decides
+            # whether "it failed" means "one bad job" or "this queue is dying".
             await errors.report_exception(
                 exc,
                 where=f"worker:{queue_name}",
-                context=f"{job.dedup_key or 'job'} attempt {job.attempts}",
+                context=(
+                    f"{job.dedup_key or 'unnamed job'} "
+                    f"(attempt {job.attempts} of {job.max_attempts})"
+                ),
             )
             if job.attempts >= job.max_attempts:
                 result = {"error": f"dead:{type(exc).__name__}:{exc}"}

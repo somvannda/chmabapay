@@ -29,7 +29,7 @@ import signal
 from types import FrameType
 
 from . import observability
-from .config import Settings, get_settings
+from .config import Settings, assert_runtime_matches_configuration, get_settings
 from .db import ensure_schema
 from .workers.runtime import build_transport, start_workers, worker_registry
 
@@ -74,6 +74,11 @@ async def run_worker(settings: Settings | None = None) -> int:
             choice,
         )
         return 2
+
+    # Same guard the API runs, and it matters at least as much here: a worker
+    # pointed at the other runtime's database drains a queue belonging to a stack
+    # it cannot see, and reports healthy while doing it.
+    assert_runtime_matches_configuration(settings)
 
     # Verify, never migrate: the schema path is Alembic's alone (P0-1), and a worker
     # booting onto a database behind the code would read columns that are not there.

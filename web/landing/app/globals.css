@@ -325,6 +325,19 @@ body {
   color: var(--ink);
 }
 
+/* Holds the width of the signed-out pair (or the signed-in chip) while the
+   `/v1/me` check is in flight, so the bar does not reflow when it resolves. It is
+   `visibility: hidden` rather than a shimmer on purpose: a signed-in merchant must
+   not see "Sign in" even for the frame before their profile arrives, and a spinner
+   in a 76px marketing bar reads as a defect. Removed at 480px and below, where the
+   header hides both buttons anyway. */
+.landing-account-skeleton {
+  display: inline-block;
+  width: 165px;
+  height: 36px;
+  visibility: hidden;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Mobile navigation. The desktop links are hidden at 768px and below, which   */
 /* used to leave no way to reach any of them on a phone.                       */
@@ -407,6 +420,30 @@ body {
 
 .landing-mobile-cta:hover {
   background: var(--violet-hover);
+}
+
+/* "Sign out" in the signed-in panel. It wears `.landing-mobile-link` so it matches
+   its siblings, plus the button resets that class does not cover. Kept red rather
+   than violet: it is the one destructive row in the list, and the violet fill is
+   reserved for the call to action. */
+.landing-mobile-signout {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: #b91c1c;
+}
+
+.landing-mobile-signout:hover {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.landing-mobile-signout:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .landing-section {
@@ -2239,7 +2276,8 @@ body {
    the menu panel, so showing them twice is what makes a 360px phone overflow. */
 @media (max-width: 480px) {
   .landing-header-actions .landing-header-signin,
-  .landing-header-actions .nav-cta-primary {
+  .landing-header-actions .nav-cta-primary,
+  .landing-account-skeleton {
     display: none;
   }
 }

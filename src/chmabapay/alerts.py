@@ -34,6 +34,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 
@@ -42,9 +43,125 @@ from .config import get_settings
 from .db import session_factory
 from .observability import ALERTS_RAISED
 from .services import telegram
-from .workers import Q_WEBHOOK
+from .workers import Q_BILLING, Q_DETECTION, Q_EXPIRY, Q_RETENTION, Q_WEBHOOK
+from .workers.w6_billing_lifecycle import QUEUE as Q_LIFECYCLE
 
 log = logging.getLogger(__name__)
+
+# --------------------------------------------------------------------------- #
+# Operator-facing vocabulary
+# --------------------------------------------------------------------------- #
+# The queue name is the transport's identifier: it appears in the metrics, the config
+# and the logs, and it is deliberately kept in every message. It is not, though, what
+# someone holding a phone at 3am should have to decode before knowing whether this is
+# a wake-up. So each queue carries a name in words and, more to the point, the reason
+# anyone should care.
+DISPLAY_TZ = ZoneInfo("Asia/Phnom_Penh")
+
+QUEUE_LABELS: dict[str, str] = {
+    Q_DETECTION: "Payment detection",
+    Q_WEBHOOK: "Webhook delivery",
+    Q_BILLING: "Plan invoicing",
+    Q_EXPIRY: "Payment expiry sweep",
+    Q_RETENTION: "Retention sweep",
+    Q_LIFECYCLE: "Billing lifecycle",
+}
+
+# What stops happening while this queue is not draining, in the terms the business
+# uses. "worker stalled — webhooks.send" says nothing about whether money is moving;
+# "merchants are not being told about payments" says all of it.
+QUEUE_IMPACT: dict[str, str] = {
+    Q_DETECTION: "payments that have already been made may never be marked as paid",
+    Q_WEBHOOK: "merchants are not being told about payments",
+    Q_BILLING: "plan invoices are not being raised, so the platform is not billing",
+    Q_EXPIRY: "unpaid payment codes are not being expired",
+    Q_RETENTION: "old data is not being pruned",
+    Q_LIFECYCLE: "billing reminders and account freezes are not running",
+}
+
+_UNKNOWN_IMPACT = "work on this queue is not being processed"
+
+
+def queue_label(queue: str) -> str:
+    """`webhooks.send` as an operator says it: `Webhook delivery (webhooks.send)`."""
+    name = QUEUE_LABELS.get(queue)
+    return f"{name} ({queue})" if name else queue
+
+
+def queue_impact(queue: str) -> str:
+    """Why a stalled queue matters, or a plain fallback for one with no script."""
+    return QUEUE_IMPACT.get(queue, _UNKNOWN_IMPACT)
+
+
+# --------------------------------------------------------------------------- #
+# The guard that keeps a development deployment off the operator chat
+# --------------------------------------------------------------------------- #
+# Blank credentials in `.env` are not enough, and that was learned the expensive way: the
+# real bot token was removed from the dev config and alerts still arrived, because the
+# launcher exported `WORKERS_ENABLED` into the process environment and a stray credential
+# delivered regardless. A page that fires because a laptop's database is stopped teaches
+# the reader to mute the channel, and a muted channel is the same as none.
+#
+# Two signals, each conclusive on its own, because both have to be right for the product
+# to work at all: `enable_dev_gateway` mounts the fake payment rail, and the production
+# compose file hardcodes it false rather than interpolating it; `PUBLIC_ORIGIN` is the
+# origin merchants are sent to, which cannot be a local address where real payments are
+# taken. An empty `PUBLIC_ORIGIN` is *unknown* rather than evidence, so it suppresses
+# nothing — losing a production page would be far worse than the noise this prevents.
+_LOCAL_ORIGINS = ("localhost", "127.0.0.1", "0.0.0.0", "[::1]", "host.docker.internal")
+
+
+def development_reason() -> str | None:
+    """Why this deployment must not page, or `None` when nothing says it must not."""
+    settings = get_settings()
+    if settings.enable_dev_gateway:
+        return "ENABLE_DEV_GATEWAY is on, so this is a development deployment"
+    origin = (settings.public_origin or "").strip().lower()
+    if origin and any(host in origin for host in _LOCAL_ORIGINS):
+        return f"PUBLIC_ORIGIN is a local address ({settings.public_origin})"
+    return None
+
+
+def delivery_allowed() -> bool:
+    """Whether an alert may leave this deployment at all.
+
+    `ALERTS_ALLOW_NON_PRODUCTION=true` overrides it, which is the only way to exercise
+    the alert path from a development machine — deliberately against a throwaway chat.
+    """
+    if get_settings().alerts_allow_non_production:
+        return True
+    return development_reason() is None
+
+
+def local_now() -> datetime:
+    """The wall clock the timestamps in an alert are written against.
+
+    Instants are stored and compared in UTC; a message is read by a person, and a bare
+    `2026-09-24 12:11` with no zone is an invitation to misread it. Cambodia has no
+    DST, but the named zone is still what to hold — a hardcoded +07:00 is correct until
+    the day it is not, and it would then mis-render every historical instant.
+    """
+    return datetime.now(DISPLAY_TZ)
+
+
+def format_moment(moment: datetime) -> str:
+    """`24 Sep 2026, 17:31 +07` — a time someone can line up against their own watch."""
+    local = moment.astimezone(DISPLAY_TZ)
+    # `%z` is `+0700`; the minutes are noise for a zone that is always on the hour.
+    offset = local.strftime("%z")[:3]
+    return f"{local.day} {local:%b %Y}, {local:%H:%M} {offset}"
+
+
+def format_elapsed(seconds: float) -> str:
+    """`48s`, `4m 12s`, `2h 05m` — a duration in the units a person thinks in."""
+    total = max(0, int(round(seconds)))
+    if total < 60:
+        return f"{total}s"
+    minutes, secs = divmod(total, 60)
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s" if secs else f"{minutes}m"
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}h {mins:02d}m" if mins else f"{hours}h"
 
 # (failed, total) deliveries over the window. Callable so the watcher does not have to
 # open a database session to be evaluated.
@@ -81,6 +198,59 @@ class Condition:
     key: str
     summary: str
     detail: str
+    # What the business loses while this is true. Optional so a condition that has no
+    # consequence worth stating does not have to invent one.
+    impact: str = ""
+
+
+@dataclass
+class _Firing:
+    """A condition that is true right now, and when it started being true.
+
+    `condition` is replaced on every tick so the recovery message can quote the last
+    reading; `since` never moves, because "how long was this broken" is measured from
+    the first observation, not from the most recent one.
+    """
+
+    condition: Condition
+    since: datetime
+
+
+def format_condition_raised(condition: Condition, *, since: datetime) -> str:
+    """One condition starting, as the message a person actually receives.
+
+    ```
+    ChmabaPay · ALERT · worker stalled — Webhook delivery
+
+    No job has been picked up on Webhook delivery (webhooks.send) for 73s. ...
+
+    Why it matters: merchants are not being told about payments
+    Time: 24 Sep 2026, 17:31 +07
+    ```
+    """
+    lines = [f"ChmabaPay · ALERT · {condition.summary}", "", condition.detail]
+    if condition.impact:
+        lines += ["", f"Why it matters: {condition.impact}"]
+    lines.append(f"Time: {format_moment(since)}")
+    return "\n".join(lines)
+
+
+def format_condition_resolved(firing: _Firing) -> str:
+    """One condition clearing, with how long it lasted.
+
+    The duration is the point: "the webhook sender stalled" is not the same news at 40
+    seconds as it is at 40 minutes, and the recovery message is often the first one
+    anyone reads.
+    """
+    lasted = format_elapsed((local_now() - firing.since).total_seconds())
+    return "\n".join(
+        [
+            f"ChmabaPay · RESOLVED · {firing.condition.summary}",
+            "",
+            f"This has cleared after {lasted}. It started at "
+            f"{format_moment(firing.since)}.",
+        ]
+    )
 
 
 class TelegramNotifier:
@@ -99,6 +269,14 @@ class TelegramNotifier:
             return False
         if not telegram.is_configured():
             log.error("ALERT NOT SENT (TELEGRAM_BOT_TOKEN unset): %s", text)
+            return False
+        if not delivery_allowed():
+            log.error(
+                "ALERT NOT SENT (development deployment: %s; set "
+                "ALERTS_ALLOW_NON_PRODUCTION=true to page from here anyway): %s",
+                development_reason(),
+                text,
+            )
             return False
         try:
             await telegram.send_message(self.chat_id, text)
@@ -125,10 +303,15 @@ async def alert_discrete(summary: str, detail: str) -> None:
     """
     ALERTS_RAISED.labels(condition=summary).inc()
     log.error("ALERT %s: %s", summary, detail)
+    # The detail is written for a person already; what it needs is a title they can
+    # triage from and the time it happened. No second copy of the wording.
+    text = (
+        f"ChmabaPay · ALERT · {summary}\n\n"
+        f"{detail}\n\n"
+        f"Time: {format_moment(local_now())}"
+    )
     try:
-        await TelegramNotifier(get_settings().ops_telegram_chat_id).send(
-            f"ALERT {summary}: {detail}"
-        )
+        await TelegramNotifier(get_settings().ops_telegram_chat_id).send(text)
     except Exception as exc:  # noqa: BLE001 - an alert must never break its caller
         log.error("alert delivery raised (%s): %s", exc, detail)
 
@@ -160,11 +343,17 @@ class AlertWatcher:
         self.failure_rate = failure_rate
         self.failure_window_seconds = failure_window_seconds
         self.failure_min_sample = failure_min_sample
-        self._firing: dict[str, Condition] = {}
+        self._firing: dict[str, _Firing] = {}
         if not notifier.configured:
             log.warning(
                 "alert delivery is not configured (set OPS_TELEGRAM_CHAT_ID and "
                 "TELEGRAM_BOT_TOKEN); conditions will be logged, not sent"
+            )
+        elif not delivery_allowed():
+            log.warning(
+                "alert delivery is suppressed (%s); conditions will be logged, not "
+                "sent. Set ALERTS_ALLOW_NON_PRODUCTION=true to page from here anyway.",
+                development_reason(),
             )
 
     @classmethod
@@ -195,11 +384,14 @@ class AlertWatcher:
                 conditions.append(
                     Condition(
                         key=f"worker_stalled:{queue}",
-                        summary=f"worker never started — {queue}",
+                        summary=f"worker never started — {QUEUE_LABELS.get(queue, queue)}",
                         detail=(
-                            f"no dequeue has ever happened on {queue}; nothing on "
-                            "that queue is being processed"
+                            f"Nothing has ever been picked up on {queue_label(queue)}. "
+                            "A drain loop that never started is the most urgent case "
+                            "there is: no job on this queue has been processed since "
+                            "the worker came up."
                         ),
+                        impact=queue_impact(queue),
                     )
                 )
                 continue
@@ -208,8 +400,14 @@ class AlertWatcher:
                 conditions.append(
                     Condition(
                         key=f"worker_stalled:{queue}",
-                        summary=f"worker stalled — {queue}",
-                        detail=f"no dequeue on {queue} for {age:.0f}s",
+                        summary=f"worker stalled — {QUEUE_LABELS.get(queue, queue)}",
+                        detail=(
+                            f"No job has been picked up on {queue_label(queue)} for "
+                            f"{format_elapsed(age)}. A healthy loop asks several times "
+                            "a second, so this is a loop that has stopped, not one "
+                            "that is busy."
+                        ),
+                        impact=queue_impact(queue),
                     )
                 )
 
@@ -222,9 +420,10 @@ class AlertWatcher:
                     summary="webhook backlog",
                     detail=(
                         f"{backlog} deliveries waiting on {Q_WEBHOOK} "
-                        f"(threshold {self.backlog_threshold}); merchants are not "
-                        "being told about payments"
+                        f"(alert threshold {self.backlog_threshold}). More is being "
+                        "queued than is being sent, so the queue is growing."
                     ),
+                    impact=queue_impact(Q_WEBHOOK),
                 )
             )
 
@@ -240,7 +439,7 @@ class AlertWatcher:
                 log.warning("webhook failure rate could not be measured: %s", exc)
                 previous = self._firing.get("webhook_failure_rate")
                 if previous is not None:
-                    conditions.append(previous)
+                    conditions.append(previous.condition)
             else:
                 minutes = self.failure_window_seconds / 60
                 if total >= self.failure_min_sample and failed / total > self.failure_rate:
@@ -251,10 +450,12 @@ class AlertWatcher:
                             detail=(
                                 f"{failed} of {total} delivery attempts failed in the "
                                 f"last {minutes:.0f} min "
-                                f"({failed / total:.0%}, threshold "
-                                f"{self.failure_rate:.0%}); merchants' systems are "
-                                "missing payments even though the queue is moving"
+                                f"({failed / total:.0%}, alert threshold "
+                                f"{self.failure_rate:.0%}). The queue is moving, so the "
+                                "backlog alert cannot see this: every delivery is "
+                                "being attempted, and failing."
                             ),
+                            impact="merchants' systems are missing payments",
                         )
                     )
         return conditions
@@ -265,17 +466,25 @@ class AlertWatcher:
         active = {condition.key for condition in conditions}
 
         for condition in conditions:
-            if condition.key in self._firing:
+            firing = self._firing.get(condition.key)
+            if firing is not None:
+                # Still down. Keep the newest reading so the recovery message describes
+                # the state that cleared rather than the one that first tripped, but
+                # send nothing — one message per edge is the whole point.
+                firing.condition = condition
                 continue
-            self._firing[condition.key] = condition
+            firing = _Firing(condition=condition, since=local_now())
+            self._firing[condition.key] = firing
             ALERTS_RAISED.labels(condition=condition.key).inc()
-            await self.notifier.send(f"ALERT {condition.summary}: {condition.detail}")
+            await self.notifier.send(
+                format_condition_raised(condition, since=firing.since)
+            )
 
         for key in list(self._firing):
             if key in active:
                 continue
-            resolved = self._firing.pop(key)
-            await self.notifier.send(f"RESOLVED {resolved.summary}")
+            firing = self._firing.pop(key)
+            await self.notifier.send(format_condition_resolved(firing))
 
         return conditions
 

@@ -29,10 +29,6 @@ const nextConfig = {
         destination: `${backend}/v1/:path*`,
       },
       {
-        source: "/openapi.json",
-        destination: `${backend}/openapi.json`,
-      },
-      {
         source: "/health",
         destination: `${backend}/health`,
       },
