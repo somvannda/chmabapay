@@ -661,7 +661,7 @@ API, not before.
 
 ### The origin port, and the Cloudflare rule that makes it work
 
-Cloudflare proxies to this origin on **8443**. Two things have to be true in the
+Cloudflare proxies to this origin on **8443**. Three things have to be true in the
 Cloudflare dashboard:
 
 1. **An Origin Rule with a destination-port override.** By default Cloudflare connects
@@ -681,6 +681,20 @@ Cloudflare dashboard:
 2. **SSL/TLS mode Full (strict)**, so the Origin CA certificate is actually verified.
    `Full` would accept any certificate including a wrong one; `Flexible` would send
    plaintext to a port expecting TLS, and fail.
+3. **Always Use HTTPS**, under **SSL/TLS → Edge Certificates**. This is what upgrades a
+   visitor who types `http://pay.chmaba.com`, and it has to be here rather than at the
+   origin: the only redirect in the repo is the `:80` block in
+   `deploy/nginx/nginx.prod.conf`, and nothing publishes port 80 — the visitor arrives
+   at Cloudflare on 80, and Cloudflare reaches this stack on 8443.
+
+   With the toggle off, Cloudflare forwards those plain HTTP requests to the origin
+   **as plaintext on 8443**, and a TLS listener answers
+   `400 The plain HTTP request was sent to HTTPS port` — observed live on both
+   `http://pay.chmaba.com` and `http://admin-pay.chmaba.com`, and easy to mistake for a
+   redirect because the response does carry the vhost's security headers. The origin's
+   `error_page 497` (same file) converts that 400 into a 301 so the upgrade still
+   happens if the toggle is ever off, but the redirect belongs at the edge: it costs no
+   origin round trip and it is the layer that already terminates TLS.
 
 8443 is worth having been chosen carefully: it is on Cloudflare's list of HTTPS ports
 that the proxy accepts. A port outside that list cannot be proxied without Spectrum,
