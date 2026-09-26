@@ -606,6 +606,45 @@ Worth stating because the POS project's own `docs/deploy.md` refers to
 nobody verified is how a backup script, a cron entry or a deploy document ends up
 pointing at nothing.
 
+**A redeploy does not always reach the running edge.** `--build` recreates the
+services whose images it rebuilt, and `proxy` has no image of its own — so `up -d
+--build` leaves the running proxy exactly as it is, holding the config it started
+with. That matters more than it sounds, because the mounts in
+`deploy/docker-compose.prod.yml` are **file** bind mounts and a file bind mount is
+to an *inode*: `git pull` writes the new file and renames it into place, so the
+container goes on reading the old inode, and `nginx -s reload` dutifully reloads the
+old config. `nginx -t` passes too — it validates the file as the container sees it,
+which is the stale one.
+
+Observed (2026-09-26): a redirect added to `nginx.prod.conf`, pulled on the host, and
+`nginx -t`-clean — with the edge still answering exactly as before, and `nginx -T`
+inside the container containing no trace of the new directive. The host file was
+inode `101336129`; the container was reading `101435878`.
+
+So a change under `deploy/nginx/` needs the container **recreated**, and the new
+config validated somewhere that can actually see it:
+
+```bash
+cd /opt/chmabapay && git pull --ff-only
+
+# Validate first, in a throwaway container: its mounts are fresh, and it publishes no
+# port, so it cannot collide with the running proxy or touch the apps.
+docker run --rm --network chmabapay-prod_default \
+  -v /opt/chmabapay/deploy/nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro \
+  -v /opt/chmabapay/deploy/nginx/api-locations.inc:/etc/nginx/api-locations.inc:ro \
+  -v /opt/chmabapay/deploy/nginx/security-headers.inc:/etc/nginx/security-headers.inc:ro \
+  -v /opt/chmabapay/deploy/certs:/etc/nginx/certs:ro \
+  nginx:1.27-alpine nginx -t
+
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env \
+  up -d --force-recreate --no-deps proxy
+```
+
+`--no-deps` is load-bearing: `proxy` depends on `api`, `landing` and `admin`, so
+`--force-recreate` without it would recreate the three applications too — a few
+seconds of avoidable downtime on the payment API. With it, the edge is the only
+container that moves.
+
 The host is small: **1.9 GB RAM, shared with the live POS stack.** That is why every
 service in the production file carries `mem_limit: 512m`. The limits are ceilings,
 not reservations — they change the failure mode from "the OOM killer picks a victim,
