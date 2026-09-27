@@ -5681,15 +5681,16 @@ body.dash-path-dashboard > .landing-footer {
   min-inline-size: 0;
 }
 /* The wrapper is a real box, so the page rhythm has to be re-declared one level in:
-   `.cp-main > * + *` above can no longer see these children. Both selectors are needed
-   here for the same reason they are above: a page that returns a fragment of sections is
-   spaced by the first, and one that wraps its sections in a plain (unclassed) div — the
-   store detail page — is spaced by the second, which the `.cp-main` version could only
-   reach before the fieldset was introduced. */
+   `.cp-main > * + *` above can no longer see these children. */
 .cp-readonly > * + * {
   margin-top: var(--sp-5);
 }
-.cp-readonly > div:not([class]) > * + * {
+/* The store section nests one box deeper still. Its layout wraps every store page in
+   `.cp-store`, so the fieldset's only child is that wrapper and the rule above reaches
+   nothing inside it. All three store pages hand back their blocks inside a plain
+   (unclassed) div, so it is the unclassed-div half of the pair that has to be re-declared
+   here — the fragment half has no store page on it. */
+.cp-store > div:not([class]) > * + * {
   margin-top: var(--sp-5);
 }
 .cp-main-readonly input,
