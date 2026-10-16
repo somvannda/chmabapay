@@ -18,7 +18,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import audit, models
-from ..schemas import LinkCreate, LinkIn, StoreCreate, StorePatch
+from ..config import get_settings
+from ..schemas import LinkCreate, LinkIn, StoreCreate, StorePatch, normalize_currency
 from . import payway_parser
 from .payments import gen_public_id
 
@@ -56,6 +57,52 @@ def _link_shape_error(raw_link: str) -> str | None:
     return None
 
 
+def _enforce_currency_allowed(
+    payload: LinkIn | LinkCreate, check: "payway_parser.PayWayLinkCheck"
+) -> None:
+    """Refuse a store currency the destination cannot honour.
+
+    Two independent conditions, both fail-closed:
+
+      * KHR is gated behind `enable_khr_currency` — off by default, because the
+        feature is new and an ABA PayWay link is single-currency.
+      * The requested currency must be *confirmed* to match what PayWay's own page
+        reported. A confirmed mismatch is refused; so is an unreadable currency for
+        anything other than the USD default. The SSR payload does not always carry
+        the currency, and "we could not tell" must never quietly become "trust the
+        merchant's choice" — that is how a KHR store ends up pointed at a USD link
+        and every payment fails reconciliation.
+    """
+    requested = normalize_currency(getattr(payload, "currency", None))
+    if requested == "KHR" and not get_settings().enable_khr_currency:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "khr_currency_disabled: KHR stores are not switched on for this "
+                "deployment yet."
+            ),
+        )
+
+    link_currency = normalize_currency(check.currency) if check.currency else None
+    if link_currency is not None and link_currency != requested:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"payway_link_currency_mismatch: this ABA PayWay link settles in "
+                f"{link_currency}, but the store was set to {requested}."
+            ),
+        )
+    if link_currency is None and requested != "USD":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "payway_link_currency_unverified: PayWay did not report this "
+                f"link's currency, so a {requested} store cannot be confirmed "
+                "against it. Use a link PayWay reports the currency for."
+            ),
+        )
+
+
 async def resolve_link(payload: LinkIn | LinkCreate) -> str:
     """Settle a link's verification against PayWay, or refuse it. Returns the state.
 
@@ -89,6 +136,11 @@ async def resolve_link(payload: LinkIn | LinkCreate) -> str:
                 "a mistyped link takes payments nowhere."
             ),
         )
+
+    # Runs for every outcome that reaches here — including `inconclusive`, because an
+    # unverified store still takes payments, so a currency we cannot confirm must be
+    # refused before the link is stored, not only when PayWay answers.
+    _enforce_currency_allowed(payload, check)
 
     if check.verified:
         # The caller's own name wins when they gave one: it is what the payer sees in
@@ -191,6 +243,26 @@ async def create_store(session: AsyncSession, account: models.Account, payload: 
     return store
 
 
+async def _carry_forward_currency(
+    session: AsyncSession,
+    store: models.Store,
+    payload: LinkIn | LinkCreate,
+) -> None:
+    """Keep the store's currency when a link payload omits it.
+
+    `LinkCreate.currency` defaults to USD so a new store is unambiguous, but that
+    same default makes a *partial* link update silently reset a KHR store to USD.
+    Preserving the existing value when the field was not actually sent keeps a PATCH
+    partial — otherwise an API caller updating only the link string would flip the
+    currency and then fail the PayWay currency check with a confusing mismatch.
+    """
+    if "currency" in getattr(payload, "model_fields_set", set()):
+        return
+    existing = await load_link(session, store.id)
+    if existing is not None and existing.currency:
+        payload.currency = existing.currency
+
+
 async def attach_link(
     session: AsyncSession,
     account: models.Account,
@@ -209,6 +281,7 @@ async def attach_link(
     if store.status == models.STORE_DISABLED:
         raise HTTPException(status_code=400, detail="store_disabled")
 
+    await _carry_forward_currency(session, store, payload)
     verification = await resolve_link(payload)
     await attach_link_to_store(session, store, payload, verification=verification)
     if verification == models.LINK_VERIFIED:
@@ -249,7 +322,11 @@ async def attach_link_to_store(
         raw_link=payload.raw_link,
         merchant_account_id=payload.merchant_account_id,
         merchant_name=payload.merchant_name,
-        currency="USD",
+        # The link's own currency, chosen when the store was set up. This used to be
+        # hardcoded to USD, which meant the API accepted a KHR store and then stored
+        # it as USD — silently. ABA settles a PayWay link in one currency, so the
+        # link is where that fact belongs.
+        currency=normalize_currency(getattr(payload, "currency", None)),
         verification=verification,
         status="active",
     )
@@ -550,6 +627,7 @@ async def update_store(
             details={"fields": sorted(payload.model_fields_set)},
         )
     if payload.link is not None:
+        await _carry_forward_currency(session, store, payload.link)
         verification = await resolve_link(payload.link)
         await attach_link_to_store(
             session, store, payload.link, verification=verification

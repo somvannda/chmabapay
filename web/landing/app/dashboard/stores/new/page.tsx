@@ -21,6 +21,12 @@ export default function DashboardStoresNewPage() {
   const [externalId, setExternalId] = useState("");
   const [paywayLink, setPaywayLink] = useState("");
   const [paywayMerchantName, setPaywayMerchantName] = useState("");
+  // The currency this store settles in. ABA PayWay links are single-currency, so
+  // this is stored on the destination itself — a USD link cannot be asked for riel.
+  const [currency, setCurrency] = useState<"USD" | "KHR">("USD");
+  // Whether KHR is offered at all. Gated behind the same decision as the API's
+  // `ENABLE_KHR_CURRENCY`; the backend refuses KHR when it is off regardless.
+  const khrEnabled = process.env.NEXT_PUBLIC_ENABLE_KHR === "true";
 
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -55,6 +61,7 @@ export default function DashboardStoresNewPage() {
         raw_link: link,
         merchant_account_id: paywaySlug(link),
         merchant_name: paywayMerchantName.trim() || name.trim(),
+        currency,
       },
     };
     if (externalId.trim()) body.external_id = externalId.trim();
@@ -201,6 +208,25 @@ export default function DashboardStoresNewPage() {
             ABA PayWay is the only supported payment destination.
           </div>
           {linkError && <div className="dash-field-error">{linkError}</div>}
+        </div>
+
+        <div className="dash-field">
+          <label htmlFor="store-currency">Currency</label>
+          <select
+            id="store-currency"
+            className="dash-input dash-select"
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value as "USD" | "KHR")}
+          >
+            <option value="USD">USD — US Dollar</option>
+            {khrEnabled ? (
+              <option value="KHR">KHR — Cambodian Riel</option>
+            ) : null}
+          </select>
+          <div className="dash-hint">
+            The currency your ABA PayWay link settles in. Payments for this store
+            are created in it.
+          </div>
         </div>
 
         <div className="dash-field">

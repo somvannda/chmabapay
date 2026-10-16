@@ -86,7 +86,11 @@ _CURRENCY_ISO_NUMERIC = {
 }
 
 
-def _format_amount(amount_cents: int) -> str:
+def _format_amount(amount_cents: int, currency: str = "USD") -> str:
+    """Tag 54 amount. The riel has no subunit, so a KHR amount is a whole number;
+    USD keeps its two decimals. A zero decimal is trimmed to match ABA's own QR."""
+    if (currency or "USD").strip().upper() == "KHR":
+        return f"{round(amount_cents / 100):d}"
     a = f"{(amount_cents / 100.0):.2f}"
     if a.endswith(".00"):
         a = a[:-3]
@@ -99,9 +103,13 @@ def build_khqr_payload(
     amount_cents: int,
     bill_number: str,
     expires_at: datetime,
+    currency: str | None = None,
 ) -> str:
 
-    currency_iso = _CURRENCY_ISO_NUMERIC.get(link.currency, link.currency)
+    # The caller may override the link's currency (a store that settles in both
+    # USD and KHR); otherwise the link's own currency is the payment's currency.
+    selected_currency = (currency or link.currency or "USD").strip().upper()
+    currency_iso = _CURRENCY_ISO_NUMERIC.get(selected_currency, selected_currency)
     try:
         int(currency_iso)
     except ValueError:
@@ -114,7 +122,7 @@ def build_khqr_payload(
 
     now_epoch = int(time.time())
 
-    amount_str = _format_amount(amount_cents)
+    amount_str = _format_amount(amount_cents, selected_currency)
 
     # --- build Tag 30 (merchant account template for the ABA Bakong switch) --
     # ABA's own QR carries three sub-tags here: 00 = the ABA switch GI,

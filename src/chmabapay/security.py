@@ -9,6 +9,18 @@ import time
 
 import bcrypt
 
+from .config import get_settings
+
+
+def _bcrypt_rounds() -> int:
+    """The configured work factor, clamped to bcrypt's accepted range (4–16).
+
+    Read per call rather than cached at import so a test that lowers it through the
+    environment takes effect — `get_settings` is itself cached, and the suite clears
+    that cache between tests.
+    """
+    return max(4, min(get_settings().bcrypt_rounds, 16))
+
 
 def new_api_key() -> tuple[str, str]:
     """Return (display_prefix, raw_key).
@@ -43,7 +55,7 @@ def hash_password(raw: str) -> str:
         raise ValueError("empty_password")
     if len(encoded) > MAX_PASSWORD_BYTES:
         raise ValueError(f"password_too_long: max {MAX_PASSWORD_BYTES} bytes")
-    return bcrypt.hashpw(encoded, bcrypt.gensalt()).decode("ascii")
+    return bcrypt.hashpw(encoded, bcrypt.gensalt(rounds=_bcrypt_rounds())).decode("ascii")
 
 
 def verify_password(raw: str, password_hash: str | None) -> bool:

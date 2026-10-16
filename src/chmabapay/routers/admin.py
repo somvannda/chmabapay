@@ -2374,28 +2374,36 @@ async def admin_overview(
     # Merchant volume excludes the platform's own internal stores. Without the join an
     # operator reading "Paid today" would see the plan fees merchants paid *us* reported
     # as though they were merchant GMV; that money is broken out below instead.
-    paid_today_count = (
+    #
+    # Grouped by currency: USD and KHR are different units, so the console shows one
+    # figure per currency rather than a single summed total that would be dollars
+    # added to riel.
+    paid_today_rows = (
         await session.execute(
-            select(func.count(models.Payment.id))
+            select(
+                models.Payment.currency,
+                func.count(models.Payment.id),
+                func.coalesce(func.sum(models.Payment.amount_cents), 0),
+            )
             .join(models.Store, models.Store.id == models.Payment.store_id)
             .where(
                 models.Store.is_internal.is_(False),
                 models.Payment.status == models.PAYMENT_PAID,
                 models.Payment.paid_at >= today_start,
             )
+            .group_by(models.Payment.currency)
         )
-    ).scalar_one() or 0
-    paid_today_cents = (
-        await session.execute(
-            select(func.coalesce(func.sum(models.Payment.amount_cents), 0))
-            .join(models.Store, models.Store.id == models.Payment.store_id)
-            .where(
-                models.Store.is_internal.is_(False),
-                models.Payment.status == models.PAYMENT_PAID,
-                models.Payment.paid_at >= today_start,
-            )
-        )
-    ).scalar_one()
+    ).all()
+    paid_today_by_currency: dict[str, dict[str, int]] = {}
+    paid_today_count = 0
+    paid_today_cents = 0
+    for currency, count, amount in paid_today_rows:
+        key = (currency or "USD").upper()
+        row = paid_today_by_currency.setdefault(key, {"count": 0, "cents": 0})
+        row["count"] += int(count or 0)
+        row["cents"] += int(amount or 0)
+        paid_today_count += int(count or 0)
+        paid_today_cents += int(amount or 0)
     # The platform's own revenue, from internal stores only — plan fees collected into
     # "ChmabaPay HQ". Reported separately rather than summed into merchant volume, which
     # is the whole reason internal stores exist as a category.
@@ -2458,6 +2466,7 @@ async def admin_overview(
         "mrr_cents": int(mrr_cents or 0),
         "paid_today_count": paid_today_count,
         "paid_today_cents": int(paid_today_cents or 0),
+        "paid_today_by_currency": paid_today_by_currency,
         "platform_revenue_today_cents": int(platform_revenue_today_cents or 0),
         "platform_revenue_this_month_cents": int(
             platform_revenue_this_month_cents or 0

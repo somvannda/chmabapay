@@ -33,6 +33,9 @@ type AdminOverview = {
   mrr_cents: number;
   paid_today_count: number;
   paid_today_cents: number;
+  // Merchant volume per currency. USD and KHR are different units and must not be
+  // summed; the console shows one figure per currency.
+  paid_today_by_currency?: Record<string, { count: number; cents: number }>;
   // Plan fees collected into the platform's own store. Kept apart from paid_today_*,
   // which is merchant volume only — the two are never summed.
   platform_revenue_today_cents: number;
@@ -45,6 +48,23 @@ const nf = new Intl.NumberFormat("en-US");
 
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+/** One figure per currency; dollars and riel are never summed. */
+function formatByCurrency(
+  byCurrency: Record<string, { count: number; cents: number }> | undefined,
+  fallbackCents: number,
+): string {
+  if (byCurrency && Object.keys(byCurrency).length > 0) {
+    return Object.entries(byCurrency)
+      .map(([cur, v]) =>
+        cur === "KHR"
+          ? `៛${Math.round(v.cents / 100).toLocaleString("en-US")}`
+          : `$${(v.cents / 100).toFixed(2)}`,
+      )
+      .join(" · ");
+  }
+  return formatCents(fallbackCents);
 }
 
 function formatAge(seconds: number | null | undefined): string {
@@ -194,7 +214,10 @@ export default function AdminOverviewPage() {
             <div className="dash-stat-card">
               <div className="dash-stat-label">Paid today (merchants)</div>
               <div className="dash-stat-value">
-                {formatCents(overview.paid_today_cents)}
+                {formatByCurrency(
+                  overview.paid_today_by_currency,
+                  overview.paid_today_cents,
+                )}
               </div>
               <div className="dash-stat-trend">
                 {nf.format(overview.paid_today_count)} payments

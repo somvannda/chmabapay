@@ -25,6 +25,17 @@ class LinkCreate(BaseModel):
     raw_link: str = Field(min_length=3, max_length=512)
     merchant_account_id: str = Field(min_length=3, max_length=120)
     merchant_name: str | None = Field(default=None, max_length=120)
+    # The currency this destination settles in. ABA PayWay links are single-currency,
+    # so this is a property of the link, not a per-payment choice — a USD PayWay link
+    # cannot be asked for riel. Stored on `PaymentLink.currency`, which is also the
+    # default currency for payments created against the store.
+    currency: Literal["USD", "KHR"] = "USD"
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def _upper_currency(cls, v: Any) -> Any:
+        return v.upper() if isinstance(v, str) else v
+
 
 
 class StoreCreate(BaseModel):
@@ -142,7 +153,17 @@ class LinkIn(LinkCreate):
 # --------------------------------------------------------------------------- #
 class PaymentCreate(BaseModel):
     amount: float
+    currency: Literal["USD", "KHR"] | None = Field(
+        default=None,
+        description=(
+            "Currency for this payment. Omit to use the store's own currency. A "
+            "value that differs from the destination's currency is refused when the "
+            "destination is an ABA PayWay link, because ABA settles that link in one "
+            "currency only."
+        ),
+    )
     reference_id: str | None = Field(default=None, max_length=255)
+
     metadata: dict | None = None
     idempotency_key: str | None = Field(default=None, max_length=255)
     store: str | None = Field(default=None, description="Store public id (account-scoped keys)")
@@ -236,8 +257,34 @@ class CheckoutPaymentStatusOut(BaseModel):
     expires_at: datetime
 
 
-def money_to_str(amount_cents: int) -> str:
+# The currencies a store's destination may settle in. USD and KHR are the only
+# two KHQR/Bakong rails in use in Cambodia; anything else has no bank behind it.
+SUPPORTED_CURRENCIES = ("USD", "KHR")
+
+
+def normalize_currency(currency: str | None, default: str = "USD") -> str:
+    """Upper-case a currency code, falling back to `default` when absent."""
+    if not currency:
+        return default
+    return currency.strip().upper() or default
+
+
+def money_to_str(amount_cents: int, currency: str = "USD") -> str:
+    """Format a minor-unit amount for a human.
+
+    **Money convention.** `amount_cents` is always a 1/100 minor unit for *both*
+    currencies, so the column means one thing everywhere: USD 1.00 is `100` and
+    KHR 5,000 riel is `500000`. The riel has no fractional unit in practice, but
+    keeping the same ×100 scale means no currency-dependent arithmetic can be
+    forgotten on a money path.
+
+    The only place the difference shows is presentation: USD is shown with two
+    decimals, KHR without, because `៛5,000` is correct and `៛5,000.00` is not.
+    """
+    if normalize_currency(currency) == "KHR":
+        return f"{amount_cents / 100:.0f}"
     return f"{amount_cents / 100:.2f}"
+
 
 
 # --------------------------------------------------------------------------- #

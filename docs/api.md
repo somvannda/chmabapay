@@ -71,14 +71,20 @@ Request body:
 `store=<store public id>` (account-scoped keys) or `merchant=<store external_id>`. `hosted_qr`
 defaults to on and is what makes ABA issue a payable code; `hosted_qr=false` builds the code
 offline and is refused with `400 offline_qr_requires_a_confirmation_source` unless the
-deployment can confirm it. `amount` is a decimal in the store link's currency, not necessarily
-USD.
+deployment can confirm it. `amount` is a decimal in the store link's currency (`USD` or `KHR`),
+not necessarily USD. A `KHR` store takes whole-riel amounts only — a fractional value is refused
+with `400 khr_amount_must_be_whole` (the riel has no subunit). An optional `currency` field may
+override the store's currency, but an ABA PayWay link settles in one currency, so a different
+value is refused with `400 currency_mismatch`.
 
 Idempotency is the **body field** `idempotency_key` only — the `Idempotency-Key` header is not
 read. Retry with the same value to get the same payment back.
 
 Validation: `amount ≥ 0.01`, ≤ link max, ≤ 2 decimals — `amount_too_low` / `amount_too_high`
 (`400` from the service, `422` from the request schema) and `invalid_amount` (`422`).
+A currency the destination cannot honour is refused: `currency_mismatch` (differs from the
+link), `currency_not_supported_by_hosted_checkout` (the hosted rail), and
+`khr_amount_must_be_whole` (a fractional riel amount).
 Missing/invalid key → `401 unauthorized`; suspended account → `403 account_suspended`;
 account frozen for an unpaid plan invoice → `403 account_restricted`. Quota exhausted →
 `402 quota_exceeded`. No link / disabled → `400 payment_link_disabled` / `400 store_disabled`;
@@ -299,6 +305,12 @@ Codes returned in `detail` (verified against `src/`):
 | `quota_exceeded` | 402 | Plan quota reached |
 | `whitelabel_not_enabled` | 403 | Branding fields sent without the entitlement |
 | `invalid_amount` / `amount_too_low` / `amount_too_high` | 422 (or 400 from the service) | Amount rejected |
+| `khr_amount_must_be_whole` | 400 | A `KHR` amount was not a whole number of riel (the riel has no subunit) |
+| `currency_mismatch` | 400 | The requested `currency` differs from the store link's own |
+| `currency_not_supported_by_hosted_checkout` | 400 | A hosted (ABA-issued) code settles only in the link's currency |
+| `khr_currency_disabled` | 400 | A store was set to `KHR` but the deployment has KHR switched off (`ENABLE_KHR_CURRENCY`) |
+| `payway_link_currency_mismatch` | 400 | The store's currency differs from what ABA PayWay reports for the link |
+| `payway_link_currency_unverified` | 400 | ABA PayWay did not report the link's currency, so a non-USD store cannot be confirmed |
 | `payment_link_disabled` | 400 | Store has no active link |
 | `store_disabled` | 400 | The store is switched off — by the merchant, or by an operator |
 | `store_billing_suspended` | 400 | The platform is holding the store: the account is on a plan smaller than its store count. Unlike `store_disabled` this is not the merchant's own switch, and it clears when the plan is settled or a slot is swapped back on the billing page |

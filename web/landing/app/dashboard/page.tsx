@@ -20,11 +20,21 @@ type Payment = {
 type ReportSummary = {
   total_matching_paid_count: number;
   total_matching_paid_amount_cents: number;
+  // Per-currency paid totals. USD and KHR are different units, so a workspace
+  // settling in both must not have them summed into one number.
+  total_matching_paid_by_currency?: Record<
+    string,
+    { cents: number; formatted: string }
+  >;
   // Refunds are counted separately because the paid totals above exclude them —
   // a reversed payment is no longer `paid`. Without these the "Settled" card can
   // only show a number that dropped for a reason it cannot name.
   total_matching_reversed_count?: number;
   total_matching_reversed_amount_cents?: number;
+  total_matching_reversed_by_currency?: Record<
+    string,
+    { cents: number; formatted: string }
+  >;
 };
 
 type Store = {
@@ -53,6 +63,34 @@ type Subscription = {
 
 function formatDollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+/**
+ * Render a paid total across the currencies it was settled in. A workspace that
+ * settles in both USD and KHR gets one figure per currency rather than a single
+ * sum, which would be dollars added to riel. Falls back to `fallbackCents` (the
+ * summed field) on older API responses that predate the breakdown.
+ */
+function formatSummaryMoney(
+  summary: ReportSummary | null,
+  fallbackCents: number,
+): string {
+  return formatByCurrency(summary?.total_matching_paid_by_currency, fallbackCents);
+}
+
+/** One figure per currency, never a sum of dollars and riel. */
+function formatByCurrency(
+  byCurrency: Record<string, { cents: number; formatted: string }> | undefined,
+  fallbackCents: number,
+): string {
+  if (byCurrency && Object.keys(byCurrency).length > 0) {
+    return Object.entries(byCurrency)
+      .map(([cur, amount]) =>
+        cur === "KHR" ? `៛${amount.formatted}` : `$${amount.formatted}`,
+      )
+      .join(" · ");
+  }
+  return formatDollars(fallbackCents);
 }
 
 function amountCents(p: Payment): number {
@@ -384,7 +422,7 @@ export default function DashboardOverviewPage() {
         <div className="dash-stat-card dash-stat-accent">
           <div className="dash-stat-label">Paid today</div>
           <div className="dash-stat-value">
-            {figuresReady ? formatDollars(todayCents) : "—"}
+            {figuresReady ? formatSummaryMoney(summaryToday, todayCents) : "—"}
           </div>
           <div className="dash-stat-trend">
             {todayCount} payment{todayCount === 1 ? "" : "s"} today
@@ -393,11 +431,11 @@ export default function DashboardOverviewPage() {
         <div className="dash-stat-card">
           <div className="dash-stat-label">Settled</div>
           <div className="dash-stat-value">
-            {figuresReady ? formatDollars(allTimeCents) : "—"}
+            {figuresReady ? formatSummaryMoney(summaryAll, allTimeCents) : "—"}
           </div>
           <div className="dash-stat-trend">
             {refundedCount > 0
-              ? `all time · ${refundedCount} refunded (${formatDollars(refundedCents)})`
+              ? `all time · ${refundedCount} refunded (${formatByCurrency(summaryAll?.total_matching_reversed_by_currency, refundedCents)})`
               : "all time · no refunds"}
           </div>
         </div>

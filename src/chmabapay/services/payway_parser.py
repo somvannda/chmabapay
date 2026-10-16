@@ -949,6 +949,10 @@ class PayWayLinkCheck:
     slug: str
     merchant_name: str | None = None
     detail: str | None = None
+    # The currency PayWay's own page advertised for this link, when the SSR
+    # payload exposed it. `None` means "could not read it", which is not the same
+    # as "USD" — callers must fail closed on the ambiguity rather than assume.
+    currency: str | None = None
 
     @property
     def verified(self) -> bool:
@@ -996,7 +1000,7 @@ async def verify_link(raw_link: str, *, timeout: float = 6.0) -> PayWayLinkCheck
         return PayWayLinkCheck(
             "inconclusive", slug, None, "link page carried no merchant name"
         )
-    return PayWayLinkCheck("ok", slug, info.merchant_name)
+    return PayWayLinkCheck("ok", slug, info.merchant_name, currency=info.currency)
 
 
 def md5hex(s: str) -> str:

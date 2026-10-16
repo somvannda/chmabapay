@@ -25,6 +25,14 @@ if (
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["WORKERS_ENABLED"] = "false"
 os.environ["ENABLE_DEV_GATEWAY"] = "true"
+# KHR is gated behind this flag in production (default off). Tests enable it so the
+# KHR flows can be exercised; the "flag off refuses KHR" case turns it back off
+# explicitly. See `config.Settings.enable_khr_currency`.
+os.environ["ENABLE_KHR_CURRENCY"] = "true"
+# bcrypt at its default cost (12) dominated the suite's runtime, because the admin
+# tests perform real sign-ins. bcrypt's minimum (4) keeps them honest but fast. See
+# `config.Settings.bcrypt_rounds` and `security.hash_password`.
+os.environ["BCRYPT_ROUNDS"] = "4"
 # Tests build the schema straight from the models (see _fresh_db below), so the
 # app's Alembic head check does not apply to them.
 os.environ["SCHEMA_CHECK"] = "false"
@@ -136,10 +144,17 @@ def _no_live_aba(request, monkeypatch):
     from chmabapay.services import payway_parser
 
     async def fake_verify_link(raw_link: str, *, timeout: float = 6.0):
+        slug = payway_parser._extract_slug(raw_link)
+        # A slug naming "khr" stands in for a link whose PayWay page reports KHR, so
+        # KHR store creation can be exercised without a network call. Everything else
+        # reports no currency — the pre-existing behaviour — which the fail-closed
+        # `_enforce_currency_allowed` check reads as "unknown, USD only".
+        currency = "KHR" if "khr" in (slug or "").lower() else None
         return payway_parser.PayWayLinkCheck(
             outcome="ok",
-            slug=payway_parser._extract_slug(raw_link),
+            slug=slug,
             merchant_name="Probed Merchant",
+            currency=currency,
         )
 
     monkeypatch.setattr(payway_parser, "verify_link", fake_verify_link)

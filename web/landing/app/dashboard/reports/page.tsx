@@ -45,6 +45,33 @@ function formatMoney(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+/** A per-currency amount, as the reports summary now returns it. */
+type CurrencyTotal = { cents: number; formatted: string };
+
+/**
+ * Render a per-currency breakdown, falling back to a single formatted value when
+ * the API response predates the breakdown. USD and KHR are different units, so a
+ * multi-currency account sees one entry per currency rather than one summed number.
+ */
+function formatByCurrency(
+  byCurrency: Record<string, CurrencyTotal> | undefined,
+  fallback: string,
+): string {
+  if (byCurrency && Object.keys(byCurrency).length > 0) {
+    return Object.entries(byCurrency)
+      .map(([cur, amount]) => (cur === "KHR" ? `៛${amount.formatted}` : `$${amount.formatted}`))
+      .join(" · ");
+  }
+  return fallback;
+}
+
+function formatPaidTotal(totals: ReportSummary): string {
+  return formatByCurrency(
+    totals.total_matching_paid_by_currency,
+    `$${totals.total_matching_paid_amount_formatted}`,
+  );
+}
+
 const nf = new Intl.NumberFormat("en-US");
 
 // The same seven states the payments list offers, minus its "All statuses" row:
@@ -66,8 +93,10 @@ type ReportSummary = {
   total_matching_rows: number;
   total_matching_paid_count: number;
   total_matching_paid_amount_formatted: string;
+  total_matching_paid_by_currency?: Record<string, CurrencyTotal>;
   total_matching_reversed_count: number;
   total_matching_reversed_amount_cents: number;
+  total_matching_reversed_by_currency?: Record<string, CurrencyTotal>;
 };
 
 export default function DashboardReportsPage() {
@@ -345,7 +374,7 @@ export default function DashboardReportsPage() {
               <div className="dash-stat-card dash-stat-accent">
                 <div className="dash-stat-label">Paid</div>
                 <div className="dash-stat-value">
-                  {totals ? `$${totals.total_matching_paid_amount_formatted}` : "—"}
+                  {totals ? formatPaidTotal(totals) : "—"}
                 </div>
                 <div className="dash-stat-trend">
                   {totals
@@ -359,7 +388,10 @@ export default function DashboardReportsPage() {
                 <div className="dash-stat-label">Refunded</div>
                 <div className="dash-stat-value">
                   {totals
-                    ? formatMoney(totals.total_matching_reversed_amount_cents)
+                    ? formatByCurrency(
+                        totals.total_matching_reversed_by_currency,
+                        formatMoney(totals.total_matching_reversed_amount_cents),
+                      )
                     : "—"}
                 </div>
                 <div className="dash-stat-trend">

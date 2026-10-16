@@ -45,6 +45,19 @@ class Settings(BaseSettings):
     # Local dev turns it back on explicitly (`.env`, `ENABLE_DEV_GATEWAY=true`).
     enable_dev_gateway: bool = False
 
+    # bcrypt cost factor for account passwords. The default (12) is deliberately
+    # slow — that is the point of a password hash. The test suite sets it to bcrypt's
+    # minimum (4) because it performs dozens of real admin sign-ins, and at cost 12
+    # those hashes dominated the whole run. Never lower this in production.
+    bcrypt_rounds: int = 12
+
+    # Whether a store may settle in KHR. Off by default: KHR is new and an ABA
+    # PayWay link is single-currency, so enabling it is a deliberate decision made
+    # once a real KHR link has been verified end-to-end. The frontend mirrors this
+    # with `NEXT_PUBLIC_ENABLE_KHR` so the option is hidden until then, but this is
+    # the enforcement point — a caller cannot force KHR past a disabled flag.
+    enable_khr_currency: bool = False
+
     # In-process background loops (poll DB). Production swaps to Redis + workers.
     workers_enabled: bool = True
 

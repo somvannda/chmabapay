@@ -100,7 +100,20 @@ const endpointGroups = [
       "CSV and JSON payment exports, available on every plan. CSV streams every matching payment; JSON adds summary totals and pagination.",
     items: [
       { method: "GET", path: "/api/v1/reports/payments.csv", description: "Streaming CSV export. Filters: ?from=YYYY-MM-DD, ?to=YYYY-MM-DD, ?store_id=st_…, ?merchant=<external_id>, ?statuses=comma,separated." },
-      { method: "GET", path: "/api/v1/reports/payments.json", description: "JSON export. Same filters plus ?page= and ?per_page= (default 20, max 100). Returns {data, summary: {total_matching_rows, total_matching_paid_count, total_matching_paid_amount_cents, total_matching_paid_amount_formatted, total_matching_reversed_count, total_matching_reversed_amount_cents, filters_applied}, pagination}. The paid totals count only status=paid, so the reversed totals are what account for the difference." },
+      { method: "GET", path: "/api/v1/reports/payments.json", description: "JSON export. Same filters plus ?page= and ?per_page= (default 20, max 100). Returns {data, summary: {total_matching_rows, total_matching_paid_count, total_matching_paid_amount_cents, total_matching_paid_amount_formatted, total_matching_paid_by_currency, total_matching_reversed_count, total_matching_reversed_amount_cents, filters_applied}, pagination}. The paid totals count only status=paid, so the reversed totals are what account for the difference. Read total_matching_paid_by_currency for accounts settling in both USD and KHR — the single amount_cents fields sum across currencies." },
+    ],
+  },
+  {
+    title: "Platform Stats (Public)",
+    summary:
+      "Aggregate, unauthenticated counters for the marketing site. Merchant activity only — the platform's own internal store is excluded.",
+    items: [
+      {
+        method: "GET",
+        path: "/api/v1/public/stats",
+        description:
+          "No auth. Returns {active_customers, active_stores, transactions_processed, volumes: {USD, KHR}, generated_at, app_name}. Counts and volumes cover paid, non-internal payments only; volumes are per currency in minor units. Cached 60s.",
+      },
     ],
   },
   {

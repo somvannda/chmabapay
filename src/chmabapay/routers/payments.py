@@ -87,7 +87,7 @@ def payment_out(
     return schemas.PaymentOut(
         id=payment.public_id,
         status=payment.status,
-        amount=money_to_str(payment.amount_cents),
+        amount=money_to_str(payment.amount_cents, payment.currency),
         currency=payment.currency,
         reference_id=payment.reference_id,
         metadata=payment.metadata_,
@@ -244,6 +244,7 @@ async def create_payment(
         reference_id=body.reference_id,
         metadata=body.metadata,
         idempotency_key=body.idempotency_key,
+        currency=body.currency,
         hosted_qr=body.hosted_qr,
     )
     if created:
@@ -385,7 +386,7 @@ async def reverse_payment(
         target_id=payment.id,
         details={
             "store": store.public_id,
-            "amount": money_to_str(payment.amount_cents),
+            "amount": money_to_str(payment.amount_cents, payment.currency),
             "reason": (body.reason or "").strip() or None,
         },
     )
@@ -437,7 +438,7 @@ async def list_payments(
         schemas.PaymentListed(
             id=payment.public_id,
             status=payment.status,
-            amount=money_to_str(payment.amount_cents),
+            amount=money_to_str(payment.amount_cents, payment.currency),
             currency=payment.currency,
             reference_id=payment.reference_id,
             store=target_store.public_id,

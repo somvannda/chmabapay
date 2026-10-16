@@ -98,6 +98,24 @@ export const errorGroups: ErrorGroup[] = [
       },
       {
         status: 400,
+        code: "khr_currency_disabled",
+        meaning:
+          "The store was set to KHR, but KHR is not switched on for this deployment. Use USD, or ask us to enable KHR.",
+      },
+      {
+        status: 400,
+        code: "payway_link_currency_mismatch",
+        meaning:
+          "The store's currency does not match what ABA PayWay reports for the link. A PayWay link settles in one currency, so the store must be set to that one.",
+      },
+      {
+        status: 400,
+        code: "payway_link_currency_unverified",
+        meaning:
+          "ABA PayWay did not report the link's currency, so a non-USD store cannot be confirmed against it. Use a link PayWay reports the currency for.",
+      },
+      {
+        status: 400,
         code: "telegram_chat_id_not_set",
         meaning: "The store has no Telegram chat configured to send a test to.",
       },
@@ -178,6 +196,24 @@ export const errorGroups: ErrorGroup[] = [
         status: 400,
         code: "amount_too_high",
         meaning: "Above the maximum set on the store's link.",
+      },
+      {
+        status: 400,
+        code: "currency_mismatch",
+        meaning:
+          "The `currency` on the request differs from the currency the store's ABA PayWay link settles in. Create the payment without `currency` to use the store's own.",
+      },
+      {
+        status: 400,
+        code: "currency_not_supported_by_hosted_checkout",
+        meaning:
+          "An ABA-issued (hosted) code settles in the link's own currency, so a different currency cannot be minted on that rail.",
+      },
+      {
+        status: 400,
+        code: "khr_amount_must_be_whole",
+        meaning:
+          "A KHR amount was not a whole number of riel. The riel has no subunit, so KHR amounts are integers — e.g. `5000`, not `5000.50`.",
       },
       {
         status: 402,
@@ -394,7 +430,7 @@ export const conventions: Convention[] = [
   },
   {
     title: "Amounts",
-    body: "Amounts are sent as a decimal string or number with at most two decimal places — `\"5.50\"` — never in cents. Responses that *sum* money use integer cents instead, so every `*_cents` field is an integer and every `amount` field is a decimal. Currency comes from the store's link, not the request.",
+    body: "Amounts are sent as a decimal string or number with at most two decimal places — `\"5.50\"` — never in cents. Responses that *sum* money use integer cents instead, so every `*_cents` field is an integer and every `amount` field is a decimal. A payment settles in its store's currency (`USD` or `KHR`, set when the store is created). You may pass `currency` on `POST /api/v1/payments` to override it, but a store backed by an ABA PayWay link settles in one currency only, so a different value is refused with `currency_mismatch`. KHR has no fractional unit, so its `amount` is a whole number.",
   },
   {
     title: "Pagination",

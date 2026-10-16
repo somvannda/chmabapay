@@ -73,6 +73,11 @@ export default function StoreSettingsPage({
 
   const [paywayLink, setPaywayLink] = useState("");
   const [paywayMerchantName, setPaywayMerchantName] = useState("");
+  // The destination's currency, chosen on the store's PayWay link.
+  const [currency, setCurrency] = useState<"USD" | "KHR">("USD");
+  // Mirrors the API's `ENABLE_KHR_CURRENCY`; the backend refuses KHR when it is off.
+  // An already-KHR store still shows its value even if the option is hidden.
+  const khrEnabled = process.env.NEXT_PUBLIC_ENABLE_KHR === "true";
   const [paywayUnsupported, setPaywayUnsupported] = useState(false);
   const [plSaving, setPlSaving] = useState(false);
   const [plSuccess, setPlSuccess] = useState<string | null>(null);
@@ -120,6 +125,11 @@ export default function StoreSettingsPage({
           setPaywayLink(legacyUnsupported ? "" : link?.raw_link || "");
           setPaywayMerchantName(
             legacyUnsupported ? "" : link?.merchant_name || "",
+          );
+          setCurrency(
+            (link?.currency as string | undefined)?.toUpperCase() === "KHR"
+              ? "KHR"
+              : "USD",
           );
           setTelegramChatId(data.telegram_chat_id || "");
         }
@@ -215,6 +225,7 @@ export default function StoreSettingsPage({
             raw_link: paywayLink.trim(),
             merchant_account_id: paywaySlug(paywayLink),
             merchant_name: paywayMerchantName.trim() || name.trim(),
+            currency,
           },
         };
         const res = await fetch(`/api/v1/stores/${publicId}`, {
@@ -235,7 +246,7 @@ export default function StoreSettingsPage({
         setPlSaving(false);
       }
     },
-    [paywayLink, paywayMerchantName, name, publicId],
+    [paywayLink, paywayMerchantName, name, currency, publicId],
   );
 
   const handleTelegramSave = useCallback(
@@ -594,6 +605,25 @@ export default function StoreSettingsPage({
                   onChange={(e) => setPaywayMerchantName(e.target.value)}
                   placeholder="Shown to the payer in their bank app"
                 />
+              </div>
+
+              <div className="dash-field">
+                <label htmlFor="ss-payway-currency">Currency</label>
+                <select
+                  id="ss-payway-currency"
+                  className="dash-input dash-select"
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value as "USD" | "KHR")}
+                >
+                  <option value="USD">USD — US Dollar</option>
+                  {khrEnabled || currency === "KHR" ? (
+                    <option value="KHR">KHR — Cambodian Riel</option>
+                  ) : null}
+                </select>
+                <div className="dash-hint">
+                  The currency this ABA PayWay link settles in. Payments for this
+                  store are created in it.
+                </div>
               </div>
 
               <div>
