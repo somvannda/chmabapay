@@ -58,7 +58,7 @@ def _link_shape_error(raw_link: str) -> str | None:
 
 
 def _enforce_currency_allowed(
-    payload: LinkIn | LinkCreate, check: "payway_parser.PayWayLinkCheck"
+    payload: LinkIn | LinkCreate, check: payway_parser.PayWayLinkCheck
 ) -> None:
     """Refuse a store currency the destination cannot honour.
 

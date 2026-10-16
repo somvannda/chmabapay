@@ -12,7 +12,6 @@ from __future__ import annotations
 import httpx
 import pytest_asyncio
 from conftest import make_account, make_key, make_store
-from sqlalchemy import select
 
 from chmabapay import models
 from chmabapay.db import session_factory
