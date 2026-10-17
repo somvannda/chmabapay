@@ -6,6 +6,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ToastProvider } from "./Toast";
 import { ThemeToggle } from "./ThemeToggle";
+import { ChmabaLogo } from "@shared/chrome";
+import { Badge } from "@shared/ui";
 import { apiFetch } from "@/lib/apiFetch";
 
 /* ------------------------------------------------------------------ *
@@ -273,32 +275,34 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   const activeNav = activeNavFromPath(pathname);
 
   return (
-    <div className="cp-app">
-      <aside className="cp-side">
-        <Link className="cp-brand" href="/" aria-label="ChmabaPay admin">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="cp-brand-mark" src="/logo.svg" alt="" width={30} height={30} />
-          <span className="cp-brand-word">
-            <span className="cp-brand-name">chmaba</span>
-            <span className="cp-brand-pay">Admin</span>
-          </span>
-        </Link>
+    <div className="min-h-screen">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[252px] flex-col bg-[#17181c] px-3.5 py-5 text-white lg:flex">
+        <div className="px-3">
+          <Link href="/" aria-label="ChmabaPay admin">
+            <ChmabaLogo light />
+          </Link>
+        </div>
 
-        <nav className="cp-nav" aria-label="Platform">
-          <div className="cp-nav-group">
-            <div className="cp-nav-group-label">{NAV_GROUP.label}</div>
+        <div className="mt-9 px-2">
+          <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-[.15em] text-[#686970]">
+            {NAV_GROUP.label}
+          </p>
+          <nav className="space-y-1" aria-label="Platform">
             {NAV_GROUP.items.map((item) => {
               const isActive = activeNav === item.key;
               return (
                 <Link
                   key={item.key}
                   href={item.href}
-                  className={`cp-nav-item${isActive ? " cp-nav-item-active" : ""}`}
                   aria-current={isActive ? "page" : undefined}
-                  title={item.label}
+                  className={`flex h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-[12px] font-semibold transition ${
+                    isActive
+                      ? "bg-[#6957f5] text-white shadow-[0_7px_18px_rgba(105,87,245,.25)]"
+                      : "text-[#8b8c95] hover:bg-[#292a30] hover:text-white"
+                  }`}
                 >
                   <svg
-                    className="cp-nav-icon"
+                    className="h-4 w-4 shrink-0"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -309,110 +313,117 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                   >
                     {item.icon}
                   </svg>
-                  <span className="cp-nav-label">{item.label}</span>
+                  <span>{item.label}</span>
+                  {isActive && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#c4f27c]" />}
                 </Link>
               );
             })}
-          </div>
-        </nav>
+          </nav>
+        </div>
 
-        <div className="cp-side-foot">
-          <div className="cp-user">
-            <span className="cp-user-avatar" aria-hidden="true">
-              {initials}
-            </span>
-            <span className="cp-user-meta">
-              <span className="cp-user-name" title={displayName}>
-                {displayName}
-              </span>
-              {email && displayName !== email && (
-                <span className="cp-user-email" title={email}>
+        <div className="mt-auto">
+          <div className="mb-3 rounded-xl border border-[#33343a] bg-[#202126] p-3">
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#c4f27c] text-[10px] font-extrabold text-[#1d2817]">
+                {initials}
+              </div>
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold">Platform admin</p>
+                <p className="mt-0.5 truncate text-[9px] text-[#85868e]" title={email}>
                   {email}
-                </span>
-              )}
-            </span>
+                </p>
+              </div>
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            disabled={signoutLoading}
+            className="flex w-full items-center gap-2 px-2 text-[11px] font-semibold text-[#777880] transition hover:text-white disabled:opacity-50"
+          >
+            <svg
+              className="h-[15px] w-[15px]"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <path d="m16 17 5-5-5-5M21 12H9" />
+            </svg>
+            {signoutLoading ? "Signing out…" : "Sign out"}
+          </button>
         </div>
       </aside>
 
-      <div className="cp-app-body">
-        <header className="cp-topbar">
-          <div className="cp-topbar-inner">
-            <nav className="cp-crumbs" aria-label="Breadcrumb">
-              <Link className="cp-crumb cp-crumb-root" href="/">
-                Platform
-              </Link>
-              <span className="cp-crumb-wrap">
-                <span className="cp-crumb-sep" aria-hidden="true">
-                  /
-                </span>
-                <span className="cp-crumb cp-crumb-current">
-                  {SECTION_LABELS[activeNav]}
-                </span>
-              </span>
-            </nav>
+      <div className="lg:pl-[252px]">
+        <header className="flex min-h-[74px] items-center justify-between border-b border-[#e9e9ef] bg-[#fafafd]/90 px-5 backdrop-blur dark:border-[#2a2b30] dark:bg-[#1a1b1f]/90 lg:px-8">
+          <div className="flex items-center gap-3">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#6957f5]">
+                Chmaba control room
+              </p>
+              <h1 className="mt-1 text-[18px] font-extrabold tracking-[-.04em]">
+                {SECTION_LABELS[activeNav]}
+              </h1>
+            </div>
+          </div>
 
-            <div className="cp-topbar-actions">
-              <ThemeToggle />
-              <div className="cp-menu" ref={menuRef}>
-                <button
-                  type="button"
-                  className="cp-menu-btn"
-                  onClick={() => setMenuOpen((v) => !v)}
-                  aria-expanded={menuOpen}
-                  aria-haspopup="menu"
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <Badge tone="violet">SUPER ADMIN</Badge>
+            <div className="hidden h-8 w-8 items-center justify-center rounded-full bg-[#ded9fb] text-[10px] font-bold text-[#5144c7] sm:flex">
+              {initials}
+            </div>
+            <div className="relative" ref={menuRef}>
+              <button
+                type="button"
+                className="cp-menu-btn"
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-expanded={menuOpen}
+                aria-haspopup="menu"
+              >
+                <span className="cp-menu-name" title={email || displayName}>
+                  {displayName}
+                </span>
+                <span className="cp-menu-chevron" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </span>
+              </button>
+              {menuOpen && (
+                <div
+                  className="absolute right-0 top-full z-40 mt-1.5 w-56 rounded-xl border border-[#e9e9ef] bg-white p-1.5 shadow-[0_18px_40px_rgba(28,31,42,.12)] dark:border-[#2a2b30] dark:bg-[#17181c]"
+                  role="menu"
                 >
-                  <span className="cp-menu-avatar" aria-hidden="true">
-                    {initials}
-                  </span>
-                  <span className="cp-menu-name" title={email || displayName}>
-                    {displayName}
-                  </span>
-                  <span className="cp-menu-chevron" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </span>
-                </button>
-                {menuOpen && (
-                  <div className="cp-menu-pop" role="menu">
-                    <div className="cp-menu-head">
-                      <div className="cp-menu-head-name" title={displayName}>
-                        {displayName}
-                      </div>
-                      {email && <div className="cp-menu-head-email">{email}</div>}
+                  <div className="px-2 py-1.5">
+                    <div className="text-[13px] font-bold text-[#202128] dark:text-[#e4e4e8]" title={displayName}>
+                      {displayName}
                     </div>
-                    <button
-                      type="button"
-                      className="cp-menu-item cp-menu-item-danger"
-                      role="menuitem"
-                      onClick={() => void signOut()}
-                      disabled={signoutLoading}
-                    >
-                      {signoutLoading ? "Signing out…" : "Sign out"}
-                    </button>
+                    {email && <div className="text-[11px] text-[#898a95]">{email}</div>}
                   </div>
-                )}
-              </div>
+                  <button
+                    type="button"
+                    className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-[13px] font-semibold text-[#c2564b] transition hover:bg-[#fff0ee] dark:hover:bg-[#39211f]"
+                    role="menuitem"
+                    onClick={() => void signOut()}
+                    disabled={signoutLoading}
+                  >
+                    {signoutLoading ? "Signing out…" : "Sign out"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </header>
 
-        <main className="cp-main">
+        <main className="mx-auto max-w-[1200px] p-5 lg:p-8">
           <ToastProvider>{children}</ToastProvider>
         </main>
-
-        <footer className="cp-foot">
-          <div className="cp-foot-inner">
-            <div className="cp-foot-brand">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img className="cp-foot-mark" src="/logo.svg" alt="" width={20} height={20} />
-              <span className="cp-foot-copy">
-                © 2026 Chmaba — internal console
-              </span>
-            </div>
-          </div>
-        </footer>
       </div>
     </div>
   );
