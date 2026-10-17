@@ -28,12 +28,12 @@ API_DOC = REPO_ROOT / "docs" / "api.md"
 # `dependencies=AUTH_SECURITY` in the source is what makes this true; if a route
 # is ever moved out from under it, this list is the thing that notices.
 CREDENTIALED_PREFIXES = (
-    "/v1/payments",
-    "/v1/stores",
-    "/v1/keys",
-    "/v1/webhooks",
-    "/v1/reports",
-    "/v1/transactions",
+    "/api/v1/payments",
+    "/api/v1/stores",
+    "/api/v1/keys",
+    "/api/v1/webhooks",
+    "/api/v1/reports",
+    "/api/v1/transactions",
 )
 
 # Reached without a credential, by design: the customer loading the page, or the
@@ -43,7 +43,7 @@ PUBLIC_PATHS = (
     "/pay/{public_id}",
     "/pay/{public_id}/qr.svg",
     "/pay/{public_id}/status",
-    "/v1/khqr/render.svg",
+    "/api/v1/khqr/render.svg",
     "/health",
 )
 
@@ -51,10 +51,10 @@ PUBLIC_PATHS = (
 # security because render.svg lives in it, so each of these carries it by hand —
 # which is exactly the kind of hand-application this test exists to pin down.
 OUTBOUND_KHQR_ROUTES = (
-    "/v1/khqr/from-link",
-    "/v1/khqr/probe-aba-status",
-    "/v1/khqr/payway/checkout",
-    "/v1/khqr/payway/status",
+    "/api/v1/khqr/from-link",
+    "/api/v1/khqr/probe-aba-status",
+    "/api/v1/khqr/payway/checkout",
+    "/api/v1/khqr/payway/status",
 )
 
 # In the live schema but deliberately not on the public API page: the browser
@@ -82,26 +82,26 @@ INTERNAL_PATHS = (
 #
 #   * the Bakong ledger lookups answer `503 bakong_not_configured` in a deployment
 #     with no platform Bakong credentials, which is the production configuration;
-#   * `POST /v1/khqr/from-link` returns a code ABA has no record of, so nothing can
-#     settle it, and `POST /v1/khqr/probe-aba-status` is explicitly advisory and can
+#   * `POST /api/v1/khqr/from-link` returns a code ABA has no record of, so nothing can
+#     settle it, and `POST /api/v1/khqr/probe-aba-status` is explicitly advisory and can
 #     be wrong in either direction.
 #
 # They are not disabled — an integrator who has already built against them keeps
 # working — but a reference that lists unusable endpoints as integration surface is
 # worse than one that omits them. Named here so the omission stays a decision.
 UNDOCUMENTED_PATHS = (
-    "/v1/khqr/from-link",
-    "/v1/khqr/probe-aba-status",
-    "/v1/transactions/search",
-    "/v1/transactions/poll",
-    "/v1/transactions/bulk",
-    "/v1/transactions/verify-receipt",
-    "/v1/transactions/md5/{md5_value}",
-    "/v1/transactions/hash/{hash_value}",
-    "/v1/transactions/short-hash/{short_hash}",
-    "/v1/transactions/instruction-ref/{ref}",
-    "/v1/transactions/external-ref/{ref}",
-    "/v1/transactions/token/renew",
+    "/api/v1/khqr/from-link",
+    "/api/v1/khqr/probe-aba-status",
+    "/api/v1/transactions/search",
+    "/api/v1/transactions/poll",
+    "/api/v1/transactions/bulk",
+    "/api/v1/transactions/verify-receipt",
+    "/api/v1/transactions/md5/{md5_value}",
+    "/api/v1/transactions/hash/{hash_value}",
+    "/api/v1/transactions/short-hash/{short_hash}",
+    "/api/v1/transactions/instruction-ref/{ref}",
+    "/api/v1/transactions/external-ref/{ref}",
+    "/api/v1/transactions/token/renew",
 )
 
 # The dashboard's own surface (decision D-7, 2026-09-23). Session-cookie only, and not
@@ -113,33 +113,33 @@ UNDOCUMENTED_PATHS = (
 # They are mounted and working — the dashboard depends on every one of them — and they are
 # documented in `docs/api.md` for our own use. Named here so the omission stays a decision.
 DASHBOARD_PATHS = (
-    "/v1/keys",
-    "/v1/keys/{key_id}/revoke",
-    "/v1/keys/{key_id}/rotate",
-    "/v1/billing/plans",
-    "/v1/billing/subscription",
-    "/v1/billing/change-plan",
-    "/v1/billing/invoices",
-    "/v1/billing/notices",
-    "/v1/billing/invoices/{invoice_id}/khqr",
-    "/v1/me",
-    "/v1/account",
-    "/v1/me/email",
-    "/v1/me/password",
-    "/v1/me/terms",
+    "/api/v1/keys",
+    "/api/v1/keys/{key_id}/revoke",
+    "/api/v1/keys/{key_id}/rotate",
+    "/api/v1/billing/plans",
+    "/api/v1/billing/subscription",
+    "/api/v1/billing/change-plan",
+    "/api/v1/billing/invoices",
+    "/api/v1/billing/notices",
+    "/api/v1/billing/invoices/{invoice_id}/khqr",
+    "/api/v1/me",
+    "/api/v1/account",
+    "/api/v1/me/email",
+    "/api/v1/me/password",
+    "/api/v1/me/terms",
     # Support is the dashboard's own surface too (decision D-7, F-03): a merchant opens
     # and reads their threads from `/dashboard/support`, not with an API key from an
     # integration, so it is withheld from the public reference for the same reason as the
     # keys, billing and account routes above.
-    "/v1/support/requests",
-    "/v1/support/requests/{public_id}",
-    "/v1/support/requests/{public_id}/reply",
-    "/v1/support/requests/{public_id}/close",
+    "/api/v1/support/requests",
+    "/api/v1/support/requests/{public_id}",
+    "/api/v1/support/requests/{public_id}/reply",
+    "/api/v1/support/requests/{public_id}/close",
 )
 
 
 def _normalize_path(path: str) -> str:
-    """`/v1/billing/invoices/{invoice_id}/khqr` and `{id}` are the same route."""
+    """`/api/v1/billing/invoices/{invoice_id}/khqr` and `{id}` are the same route."""
     return re.sub(r"\{[^}]+\}", "{}", path)
 
 
@@ -232,8 +232,8 @@ def test_the_outbound_khqr_routes_are_secured(schema: dict[str, Any]) -> None:
 
 
 def test_a_quota_refusal_is_documented_where_it_can_happen(schema: dict[str, Any]) -> None:
-    """`POST /v1/payments` refuses with 402 once the plan's quota is spent."""
-    responses = schema["paths"]["/v1/payments"]["post"]["responses"]
+    """`POST /api/v1/payments` refuses with 402 once the plan's quota is spent."""
+    responses = schema["paths"]["/api/v1/payments"]["post"]["responses"]
     assert "402" in responses
     assert responses["402"]["content"]["application/json"]["schema"] is not None
 
@@ -241,7 +241,7 @@ def test_a_quota_refusal_is_documented_where_it_can_happen(schema: dict[str, Any
 def test_the_internal_surfaces_are_not_published(schema: dict[str, Any]) -> None:
     """The operator console and the dev tools are reachable, just not advertised."""
     published = set(schema["paths"])
-    leaked = sorted(p for p in published if p.startswith("/v1/admin") or p.startswith("/_dev"))
+    leaked = sorted(p for p in published if p.startswith("/api/v1/admin") or p.startswith("/_dev"))
     assert leaked == []
 
 
@@ -252,7 +252,7 @@ async def test_the_hidden_routers_still_serve(client) -> None:
     routes from the generated document; they keep dispatching, and keep enforcing
     their own auth — a refusal, never a 404 from a missing route.
     """
-    assert (await client.get("/v1/admin/overview")).status_code in {401, 403}
+    assert (await client.get("/api/v1/admin/overview")).status_code in {401, 403}
     assert (await client.get("/_dev/integration-test")).status_code == 200
 
 
@@ -283,14 +283,14 @@ def test_the_previously_omitted_endpoints_are_on_the_docs_page() -> None:
     """The routes that existed in the schema and in neither document.
 
     Three have left `required` since, for the same reason: they are now deliberately
-    withheld rather than previously forgotten. `POST /v1/transactions/token/renew` went
-    with the Bakong ledger group (D-3), and `PATCH /v1/account`, `POST /v1/me/password`
-    and `DELETE /v1/me` went with the dashboard surface (D-7). What remains is the one the
+    withheld rather than previously forgotten. `POST /api/v1/transactions/token/renew` went
+    with the Bakong ledger group (D-3), and `PATCH /api/v1/account`, `POST /api/v1/me/password`
+    and `DELETE /api/v1/me` went with the dashboard surface (D-7). What remains is the one the
     test was really written to protect: a route a caller can use that no document
     describes.
     """
     operations = _documented_operations()
-    required = (("PUT", "/v1/stores/{public_id}"),)
+    required = (("PUT", "/api/v1/stores/{public_id}"),)
     missing = [
         f"{method} {path}"
         for method, path in required
@@ -349,7 +349,7 @@ def test_every_refusal_a_caller_must_tell_apart_is_documented(
     store hold, `tests/test_account_security.py` across the route table for the account hold).
     This is the other half, checked against both surfaces a reader actually sees.
     """
-    create = schema["paths"]["/v1/payments"]["post"]["responses"]
+    create = schema["paths"]["/api/v1/payments"]["post"]["responses"]
     assert "store_billing_suspended" in create["400"]["description"]
     assert "store_disabled" in create["400"]["description"]
     assert "account_restricted" in create["403"]["description"]
@@ -368,10 +368,10 @@ def test_payment_create_and_reissue_declare_their_reachable_statuses(
     These are the status sets the handlers can actually answer (the router-level
     401/403 ride on `AUTH_ERRORS`); the published schema has to include them all.
     """
-    create = set(schema["paths"]["/v1/payments"]["post"]["responses"])
+    create = set(schema["paths"]["/api/v1/payments"]["post"]["responses"])
     assert {"200", "201", "400", "402", "404", "502"} <= create
 
     reissue = set(
-        schema["paths"]["/v1/payments/{public_id}/reissue"]["post"]["responses"]
+        schema["paths"]["/api/v1/payments/{public_id}/reissue"]["post"]["responses"]
     )
     assert {"200", "201", "400", "404", "409", "502"} <= reissue

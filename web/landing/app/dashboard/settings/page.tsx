@@ -122,7 +122,7 @@ export default function DashboardSettingsPage() {
       setSubError(null);
       setInvoicesError(null);
       try {
-        const subRes = await fetch("/v1/billing/subscription", {
+        const subRes = await fetch("/api/v1/billing/subscription", {
           credentials: "include",
         });
         // 501 is the documented "no billing here" answer, not a failure.
@@ -138,7 +138,7 @@ export default function DashboardSettingsPage() {
       }
 
       try {
-        const invRes = await fetch("/v1/billing/invoices?limit=5", {
+        const invRes = await fetch("/api/v1/billing/invoices?limit=5", {
           credentials: "include",
         });
         if (!invRes.ok) throw new Error(await readApiError(invRes));
@@ -169,7 +169,7 @@ export default function DashboardSettingsPage() {
     setEmailErr(null);
     setEmailMsg(null);
     try {
-      const res = await fetch("/v1/me/email", {
+      const res = await fetch("/api/v1/me/email", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -196,7 +196,7 @@ export default function DashboardSettingsPage() {
     setPwErr(null);
     setPwMsg(null);
     try {
-      const res = await fetch("/v1/me/password", {
+      const res = await fetch("/api/v1/me/password", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -221,7 +221,7 @@ export default function DashboardSettingsPage() {
     setErasing(true);
     setEraseErr(null);
     try {
-      const res = await fetch("/v1/me", {
+      const res = await fetch("/api/v1/me", {
         method: "DELETE",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -249,7 +249,7 @@ export default function DashboardSettingsPage() {
       // The profile endpoint's field is `name`. Anything else is dropped by the
       // request schema, which used to make this save a silent no-op.
       const body = { name: profileName };
-      const res = await fetch("/v1/me", {
+      const res = await fetch("/api/v1/me", {
         method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

@@ -987,7 +987,7 @@ function renderDetail(container, row) {
       if (typeof qr === "string" && qr.length > 8) {
         const t30 = new Map(parseTlv(new Map(parseTlv(qr)).get("30") || ""));
         parts.push(
-          '<div class="scanbox"><img alt="scannable KHQR" src="/v1/khqr/render.svg?payload=' +
+          '<div class="scanbox"><img alt="scannable KHQR" src="/api/v1/khqr/render.svg?payload=' +
           encodeURIComponent(qr) + '&scale=6"><div class="sub">Scan me. Destination ' +
           esc(t30.get("01") || "(no tag 30.01)") + " · " + esc(String((s.res.json.amount || "") + " " + (s.res.json.currency || ""))).trim() +
           "</div></div>"

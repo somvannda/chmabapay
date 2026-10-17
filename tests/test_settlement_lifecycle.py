@@ -91,7 +91,7 @@ async def test_a_late_settlement_retires_the_replacement_code(client):
 
     original = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 2.0, "reference_id": "order-late"},
             headers=headers,
         )
@@ -99,7 +99,7 @@ async def test_a_late_settlement_retires_the_replacement_code(client):
     await _expire(original["id"])
 
     successor = (
-        await client.post(f"/v1/payments/{original['id']}/reissue", headers=headers)
+        await client.post(f"/api/v1/payments/{original['id']}/reissue", headers=headers)
     ).json()
     assert successor["id"] != original["id"]
     assert (await _row(successor["id"])).status == models.PAYMENT_PENDING
@@ -144,14 +144,14 @@ async def test_two_settled_payments_for_one_order_are_reported(client, monkeypat
 
     first = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 3.0, "reference_id": "order-dup"},
             headers=headers,
         )
     ).json()
     second = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 3.0, "reference_id": "order-dup"},
             headers=headers,
         )
@@ -190,7 +190,7 @@ async def test_the_double_charge_check_needs_an_order_identifier(client, monkeyp
 
     for _ in range(2):
         created = (
-            await client.post("/v1/payments", json={"amount": 4.0}, headers=headers)
+            await client.post("/api/v1/payments", json={"amount": 4.0}, headers=headers)
         ).json()
         await _settle(client, created["id"])
 
@@ -213,7 +213,7 @@ async def test_a_settled_payment_can_be_reversed(client):
 
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 9.5, "reference_id": "order-refund"},
             headers=headers,
         )
@@ -221,7 +221,7 @@ async def test_a_settled_payment_can_be_reversed(client):
     await _settle(client, created["id"])
 
     reversed_response = await client.post(
-        f"/v1/payments/{created['id']}/reverse",
+        f"/api/v1/payments/{created['id']}/reverse",
         json={"reason": "customer returned the item"},
         headers=headers,
     )
@@ -253,7 +253,7 @@ async def test_a_settled_payment_can_be_reversed(client):
     # status=paid, so the reversed totals are the only thing that explains why the
     # settled figure is below what was actually collected.
     summary = (
-        await client.get("/v1/reports/payments.json", headers=headers)
+        await client.get("/api/v1/reports/payments.json", headers=headers)
     ).json()["summary"]
     assert summary["total_matching_rows"] == 1
     assert summary["total_matching_paid_count"] == 0
@@ -264,7 +264,7 @@ async def test_a_settled_payment_can_be_reversed(client):
     # Same figures through the store scope the store overview asks for.
     scoped = (
         await client.get(
-            f"/v1/reports/payments.json?store_id={store.public_id}", headers=headers
+            f"/api/v1/reports/payments.json?store_id={store.public_id}", headers=headers
         )
     ).json()["summary"]
     assert scoped["total_matching_reversed_count"] == 1
@@ -274,7 +274,7 @@ async def test_a_settled_payment_can_be_reversed(client):
     # asking for paid rows, and refunds are reported beside them, not within them.
     filtered = (
         await client.get(
-            "/v1/reports/payments.json?statuses=paid", headers=headers
+            "/api/v1/reports/payments.json?statuses=paid", headers=headers
         )
     ).json()["summary"]
     assert filtered["total_matching_paid_count"] == 0
@@ -288,11 +288,11 @@ async def test_reversing_is_refused_for_money_that_never_arrived(client):
     headers = {"Authorization": f"Bearer {raw_key}"}
 
     pending = (
-        await client.post("/v1/payments", json={"amount": 1.0}, headers=headers)
+        await client.post("/api/v1/payments", json={"amount": 1.0}, headers=headers)
     ).json()
 
     response = await client.post(
-        f"/v1/payments/{pending['id']}/reverse", json={}, headers=headers
+        f"/api/v1/payments/{pending['id']}/reverse", json={}, headers=headers
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "payment_not_paid"
@@ -305,13 +305,13 @@ async def test_a_reversal_is_idempotent_and_scoped_to_the_owner(client):
     headers = {"Authorization": f"Bearer {raw_key}"}
 
     created = (
-        await client.post("/v1/payments", json={"amount": 2.5}, headers=headers)
+        await client.post("/api/v1/payments", json={"amount": 2.5}, headers=headers)
     ).json()
     await _settle(client, created["id"])
 
-    first = await client.post(f"/v1/payments/{created['id']}/reverse", json={}, headers=headers)
+    first = await client.post(f"/api/v1/payments/{created['id']}/reverse", json={}, headers=headers)
     assert first.status_code == 200
-    again = await client.post(f"/v1/payments/{created['id']}/reverse", json={}, headers=headers)
+    again = await client.post(f"/api/v1/payments/{created['id']}/reverse", json={}, headers=headers)
     assert again.status_code == 409
     assert again.json()["detail"] == "payment_already_reversed"
 
@@ -321,7 +321,7 @@ async def test_a_reversal_is_idempotent_and_scoped_to_the_owner(client):
     other = await make_account(email="other-refund@chmaba.test", name="Other")
     other_key, _ = await make_key(other)
     cross = await client.post(
-        f"/v1/payments/{created['id']}/reverse",
+        f"/api/v1/payments/{created['id']}/reverse",
         json={},
         headers={"Authorization": f"Bearer {other_key}"},
     )
@@ -341,10 +341,10 @@ async def test_a_reversed_payment_is_not_resurrected_by_a_later_poll(client):
     headers = {"Authorization": f"Bearer {raw_key}"}
 
     created = (
-        await client.post("/v1/payments", json={"amount": 5.0}, headers=headers)
+        await client.post("/api/v1/payments", json={"amount": 5.0}, headers=headers)
     ).json()
     await _settle(client, created["id"])
-    await client.post(f"/v1/payments/{created['id']}/reverse", json={}, headers=headers)
+    await client.post(f"/api/v1/payments/{created['id']}/reverse", json={}, headers=headers)
 
     from chmabapay.services.payments import mark_paid
 
@@ -362,13 +362,13 @@ async def test_a_reversed_payment_cannot_be_reissued(client):
     headers = {"Authorization": f"Bearer {raw_key}"}
 
     created = (
-        await client.post("/v1/payments", json={"amount": 1.5}, headers=headers)
+        await client.post("/api/v1/payments", json={"amount": 1.5}, headers=headers)
     ).json()
     await _settle(client, created["id"])
-    await client.post(f"/v1/payments/{created['id']}/reverse", json={}, headers=headers)
+    await client.post(f"/api/v1/payments/{created['id']}/reverse", json={}, headers=headers)
 
     response = await client.post(
-        f"/v1/payments/{created['id']}/reissue", headers=headers
+        f"/api/v1/payments/{created['id']}/reissue", headers=headers
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "payment_reversed"
@@ -391,7 +391,7 @@ async def test_expiry_is_not_a_financial_event_but_completion_is(client):
 
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 1.0, "reference_id": "order-report"},
             headers=headers,
         )
@@ -440,12 +440,12 @@ async def test_settling_appends_this_payments_own_amount_to_the_ledger(client):
 
     first = (
         await client.post(
-            "/v1/payments", json={"amount": 1.0, "reference_id": "led-1"}, headers=headers
+            "/api/v1/payments", json={"amount": 1.0, "reference_id": "led-1"}, headers=headers
         )
     ).json()
     second = (
         await client.post(
-            "/v1/payments", json={"amount": 2.0, "reference_id": "led-2"}, headers=headers
+            "/api/v1/payments", json={"amount": 2.0, "reference_id": "led-2"}, headers=headers
         )
     ).json()
     await _settle(client, first["id"])
@@ -473,10 +473,10 @@ async def test_a_reversal_appends_a_negative_row_rather_than_editing(client):
     headers = {"Authorization": f"Bearer {raw_key}"}
 
     created = (
-        await client.post("/v1/payments", json={"amount": 7.5}, headers=headers)
+        await client.post("/api/v1/payments", json={"amount": 7.5}, headers=headers)
     ).json()
     await _settle(client, created["id"])
-    await client.post(f"/v1/payments/{created['id']}/reverse", json={}, headers=headers)
+    await client.post(f"/api/v1/payments/{created['id']}/reverse", json={}, headers=headers)
 
     entries = sorted(await _rows(models.PlanLedgerEntry), key=lambda e: e.id)
     assert [e.resource_type for e in entries] == ["payment", "payment_reversal"]
@@ -693,7 +693,7 @@ async def test_verify_payment_answers_for_a_hosted_sale_with_no_bakong_tx(client
 
     A hosted checkout has no Bakong transaction object, so this branch synthesizes the
     shape callers expect. It left `found` unset — the one field with no default — and
-    passed a float where `amount` is a string, so `POST /v1/transactions/verify-payment/
+    passed a float where `amount` is a string, so `POST /api/v1/transactions/verify-payment/
     {id}` answered **500** for exactly the payments it exists to confirm: every sale on
     the hosted rail, which is the platform's primary one until Bakong credentials are
     configured. Had the construction succeeded, the synthesized object was handed to
@@ -725,7 +725,7 @@ async def test_verify_payment_answers_for_a_hosted_sale_with_no_bakong_tx(client
     raw_key, _ = await make_key(account)
 
     resp = await client.post(
-        f"/v1/transactions/verify-payment/{public_id}",
+        f"/api/v1/transactions/verify-payment/{public_id}",
         headers={"Authorization": f"Bearer {raw_key}"},
     )
     assert resp.status_code == 200, resp.text

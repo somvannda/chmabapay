@@ -81,8 +81,8 @@ export default function DashboardStoresPage() {
   const loadBilling = useCallback(async () => {
     try {
       const [subRes, invRes] = await Promise.all([
-        fetch("/v1/billing/subscription", { credentials: "include" }),
-        fetch("/v1/billing/invoices", { credentials: "include" }),
+        fetch("/api/v1/billing/subscription", { credentials: "include" }),
+        fetch("/api/v1/billing/invoices", { credentials: "include" }),
       ]);
       if (subRes.ok) {
         const sub = (await subRes.json().catch(() => ({}))) as SubscriptionResponse;
@@ -111,7 +111,7 @@ export default function DashboardStoresPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await fetch("/v1/stores", { credentials: "include" });
+      const res = await fetch("/api/v1/stores", { credentials: "include" });
       // A failed read used to leave `stores` empty, which the page then rendered as
       // "No stores yet." — the same screen as a fresh account, and the one state in
       // which a merchant might create a duplicate store.
@@ -147,7 +147,7 @@ export default function DashboardStoresPage() {
   async function handleBringBack(store: Store) {
     setBringingBackId(store.id);
     try {
-      const res = await fetch(`/v1/stores/${store.id}/activate`, {
+      const res = await fetch(`/api/v1/stores/${store.id}/activate`, {
         method: "POST",
         credentials: "include",
       });
@@ -172,7 +172,7 @@ export default function DashboardStoresPage() {
     if (!confirm(`Disable store "${store.name}"?`)) return;
     setDisablingId(store.id);
     try {
-      const res = await fetch(`/v1/stores/${store.id}/disable`, {
+      const res = await fetch(`/api/v1/stores/${store.id}/disable`, {
         method: "POST",
         credentials: "include",
       });
@@ -222,7 +222,7 @@ export default function DashboardStoresPage() {
     }
     setEnablingId(store.id);
     try {
-      const res = await fetch(`/v1/stores/${store.id}/enable`, {
+      const res = await fetch(`/api/v1/stores/${store.id}/enable`, {
         method: "POST",
         credentials: "include",
       });

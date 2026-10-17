@@ -28,7 +28,7 @@ from ..openapi import AUTH_ERRORS, AUTH_SECURITY
 from ..services import support
 
 router = APIRouter(
-    prefix="/v1/support",
+    prefix="/api/v1/support",
     tags=["support"],
     dependencies=AUTH_SECURITY,
     responses=AUTH_ERRORS,

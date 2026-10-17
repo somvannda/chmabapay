@@ -27,7 +27,7 @@ non-payer is what they stop being entitled to.
 | C-07 | Unpaid statuses are inconsistent: `issue_invoice` writes `open`, the column default is `draft`, `get_invoice_khqr` promotes `draft`→`issued`, and the admin route adds `waived`/`credited`. | `services/billing.py:224`; `models.py:352`; `routers/billing.py:433`; `routers/admin.py:971-975` |
 | C-08 | `issued_at` is read with `getattr(..., None)` in the serializer and is **not a column** — the field was intended and never added. | `src/chmabapay/routers/billing.py:329,435` |
 | C-09 | The only outbound notification path is Telegram to the **operator** activity group. `ACTIVITY_TELEGRAM_CHAT_ID`, no email provider anywhere in the repository or dependencies. | `src/chmabapay/services/notifications.py:42-55`; no SMTP/SES/Resend in `pyproject.toml` or `deploy/.env.example` |
-| C-10 | Manual settlement exists and does activate a parked subscription: `POST /v1/admin/invoices/{id}/resolve` with `mark-paid`/`waive`/`credit`. | `src/chmabapay/routers/admin.py:978-1037` |
+| C-10 | Manual settlement exists and does activate a parked subscription: `POST /api/v1/admin/invoices/{id}/resolve` with `mark-paid`/`waive`/`credit`. | `src/chmabapay/routers/admin.py:978-1037` |
 | C-11 | Plan limits are enforced **at create time only**, by reading the active subscription's plan: stores, keys, webhooks, and the monthly payment quota. Existing resources are never deleted or disabled when a plan changes. | `routers/stores.py:48-73`; `routers/keys.py:113`; `routers/webhooks.py:179`; `services/payments.py:382-413` |
 | C-12 | The heartbeat scheduler is `loop.call_later`-based with per-interval dedup keys; `W3` runs hourly off `billing_sweep_interval_seconds` (default 3600). | `src/chmabapay/workers/runtime.py:124-330` |
 
@@ -397,11 +397,11 @@ billing page mints a fresh code when it loads.
               a unique violation means a sibling replica got there — stay silent.
               For in_app this is the whole operation: nothing is delivered after it
                  │
- 6  DISPLAY   the banner is rendered from `due_at` by /v1/billing/notices,
+ 6  DISPLAY   the banner is rendered from `due_at` by /api/v1/billing/notices,
               independently of step 5 — an outage in 1-5 cannot hide a warning
                  │
  7  ACT       CTA -> /dashboard/billing?pay={id} -> InvoicePaymentModal
-              -> GET /v1/billing/invoices/{id}/khqr   (an existing route)
+              -> GET /api/v1/billing/invoices/{id}/khqr   (an existing route)
                  │
  8  SETTLE    /pay/{public_id}/status polls -> W1 detects -> mark_paid
               -> billing.settle_invoice  (§5.3)
@@ -583,7 +583,7 @@ queries filter on. Consequences, all deliberate:
 
 - No dunning tiers and no downgrade for an upgrade invoice. The merchant is on Free (or on
   their old plan) and loses nothing by not paying.
-- Surfaced in-app only — the billing page and `GET /v1/billing/notices`.
+- Surfaced in-app only — the billing page and `GET /api/v1/billing/notices`.
 - `change-plan` refuses a new purchase while an unpaid invoice exists
   (`409 open_invoice_unpaid`), which is exactly why the 30-day abandonment in §5.4 matters:
   without it, one abandoned upgrade would block every future purchase on the account.
@@ -607,7 +607,7 @@ queries filter on. Consequences, all deliberate:
    Same channel, same audience — no new surface for the team to watch.
 2. Admin → Invoices (`web/admin/app/invoices/page.tsx`) gains a `due_at` column and an
    overdue filter, so an operator can see what is about to lapse without opening each row.
-3. Five manual outcomes on the existing `POST /v1/admin/invoices/{id}/resolve`:
+3. Five manual outcomes on the existing `POST /api/v1/admin/invoices/{id}/resolve`:
    - **mark-paid** — settles, and runs the same `settle_invoice` as the QR path, so a bank
      transfer quoted over the phone leaves the account in exactly the state a QR payment
      would, unfrozen. This is the common case in a market where merchants pay by transfer, and
@@ -637,7 +637,7 @@ provider decision, and the merchant is already inside the portal.
 | Billing page (`web/landing/app/dashboard/billing/page.tsx`) | Per-invoice `Due <date>`, status badge `Open` / `Overdue 3d` / `Paid` / `Void`, and the existing Pay action. |
 | Dashboard home plan card | "Renews `<date>`" or "Payment overdue". |
 
-New endpoint `GET /v1/billing/notices` returns at most one notice with server-computed
+New endpoint `GET /api/v1/billing/notices` returns at most one notice with server-computed
 `days_until_due` and copy, so the wording cannot drift between client and server. The field
 is `state`, not `tier`, because it is `issuance` or a tier:
 
@@ -742,12 +742,12 @@ they can afford.
 | `get_current_session_account` (`routers/auth.py:365-387`) | account settings, billing |
 
 The rule: `active` → everything. `restricted` → GET/HEAD plus an allowlist
-(`GET /v1/billing/*`, `POST /v1/billing/change-plan`, and the invoice-KHQR mint, which is how
+(`GET /api/v1/billing/*`, `POST /api/v1/billing/change-plan`, and the invoice-KHQR mint, which is how
 the debt gets paid). Everything else → `403 account_restricted`. `suspended` keeps its 401
 lockout. `resolve_key_context` (`auth.py:54-55`) refuses `restricted` outright, which freezes
 the entire API in one line.
 
-**One read is refused, because it is not a read.** `GET /v1/transactions/check-status/{id}`
+**One read is refused, because it is not a read.** `GET /api/v1/transactions/check-status/{id}`
 settles the payment it polls — its handler reaches `status_reconciler` → `mark_paid`. It is
 excluded from the read allowance (T-22), and nothing is lost by that: settlement is W1's job on
 its own sweep, so a code a customer is still holding settles exactly as §7.6 requires. What
@@ -755,7 +755,7 @@ stops is the *merchant* driving writes.
 
 The allowlist is a constant, not a judgement call per route, and it is asserted against the
 app's own route table: every mutating route reachable by a merchant must answer
-`403 account_restricted` except `POST /v1/billing/change-plan`. Both constants are checkable
+`403 account_restricted` except `POST /api/v1/billing/change-plan`. Both constants are checkable
 because they are real paths — a typo would otherwise leave a hole no test could see.
 
 **The guarantee is a test, not care.** Enumerate the app's routes and assert that every mutating
@@ -988,12 +988,12 @@ Tier offsets and the 30-day credit period stay module constants in
 | A-09 | A frozen account is read-only | Reads work; every mutating route except the billing allowlist returns 403 `account_restricted`; every API key returns 403. Asserted across the app's whole route table, not a hand-listed few. |
 | A-10 | Unfreezing restores everything | Paying sets `status = active`; all 50 stores mint again with no per-store restore step, because none was ever flagged. |
 | A-11 | Free accounts are untouched | No invoice, no tier rows, no notice, never frozen, no store ever held, across a full window (§7.8). |
-| A-12 | Notices are server-computed | `/v1/billing/notices` reports `state: frozen` while the account is restricted (outranking every tier), `state: issuance` through the lead window before `due_3`, the most urgent tier after that, and an empty list when nothing is due. |
+| A-12 | Notices are server-computed | `/api/v1/billing/notices` reports `state: frozen` while the account is restricted (outranking every tier), `state: issuance` through the lead window before `due_3`, the most urgent tier after that, and an empty list when nothing is due. |
 | A-13 | Constraint holds | Two live invoices for one `(subscription_id, period_start)` raises; the sweep's retry path resolves to the existing row. |
 | A-14 | Legacy rows survive | A pre-migration invoice with `period_start IS NULL` does not violate the new index and is treated as `open` by the shared status constant. |
 | A-15 | Deploy does not ambush anyone | After `upgrade head`, every previously-open invoice is `void/pre_lifecycle`, no account's `next_billing_at` moved, and W3 re-raises the in-window periods with a `due_at` in the future. |
 | A-16 | A void does not reserve a window | Void an invoice for a window whose subscription is still in force; W3 raises a replacement for the same `period_start` without a constraint violation. |
-| A-17 | Warnings survive a worker outage | Delete every `plan_invoice_reminders` row for an overdue invoice; W6 re-records the tiers, and `/v1/billing/notices` reports the correct tier either way — display is derived, recording is bookkeeping. |
+| A-17 | Warnings survive a worker outage | Delete every `plan_invoice_reminders` row for an overdue invoice; W6 re-records the tiers, and `/api/v1/billing/notices` reports the correct tier either way — display is derived, recording is bookkeeping. |
 | A-18 | A chosen downgrade caps the resources | Pro→Starter holding 50 stores: after it settles, exactly 5 mint codes, the other 45 answer `store_billing_suspended`, and all 50 rows survive with their keys, links and history. |
 | A-19 | The chooser moves the allowance | Re-picking which 5 stores stay leaves exactly 5 able to mint — never 6, never 4 — across repeated calls and a re-run of `apply_store_cap`. |
 | A-20 | In-flight payments survive both states | A payment created before a freeze, and one created before a chosen cap, both still settle and still deliver their webhooks. |

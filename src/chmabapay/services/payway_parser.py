@@ -22,7 +22,7 @@ How ABA PayWay link pages work (REVERSE-ENGINEERED):
       b. ALSO ship a script that extracts the real checkoutData.qr_string and
          parses Tag 30.01 (bakong_id) out of it for the same slug/amount.
   - Because a full headless browser isn't always available, we also have a
-    "known fields cache" mode — callers (the /v1/khqr/from-link API) that
+    "known fields cache" mode — callers (the /api/v1/khqr/from-link API) that
     know the bakong_id/payway_client_id from DB can still use them as
     fallbacks; this parser is for bootstrapping that DB.
 """
@@ -949,6 +949,10 @@ class PayWayLinkCheck:
     slug: str
     merchant_name: str | None = None
     detail: str | None = None
+    # The currency PayWay's own page advertised for this link, when the SSR
+    # payload exposed it. `None` means "could not read it", which is not the same
+    # as "USD" — callers must fail closed on the ambiguity rather than assume.
+    currency: str | None = None
 
     @property
     def verified(self) -> bool:
@@ -996,7 +1000,7 @@ async def verify_link(raw_link: str, *, timeout: float = 6.0) -> PayWayLinkCheck
         return PayWayLinkCheck(
             "inconclusive", slug, None, "link page carried no merchant name"
         )
-    return PayWayLinkCheck("ok", slug, info.merchant_name)
+    return PayWayLinkCheck("ok", slug, info.merchant_name, currency=info.currency)
 
 
 def md5hex(s: str) -> str:

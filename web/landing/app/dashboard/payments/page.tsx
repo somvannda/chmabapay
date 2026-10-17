@@ -102,7 +102,7 @@ export default function DashboardPaymentsPage() {
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/v1/stores", { credentials: "include" });
+        const res = await fetch("/api/v1/stores", { credentials: "include" });
         if (res.ok) {
           const data = await res.json().catch(() => ({}));
           const items: StoreOption[] = Array.isArray(data)
@@ -139,7 +139,7 @@ export default function DashboardPaymentsPage() {
         if (offset > 0) params.set("offset", String(offset));
         if (statusFilter) params.set("status", statusFilter);
         if (storeFilter) params.set("store", storeFilter);
-        const res = await fetch(`/v1/payments?${params.toString()}`, {
+        const res = await fetch(`/api/v1/payments?${params.toString()}`, {
           credentials: "include",
         });
         // A failed read used to leave `payments` empty, which the page then rendered as

@@ -177,8 +177,8 @@ HOSTILE_HEADERS: list[tuple[str, str, str]] = [
     ("x-forwarded-for", "0.0.0.0, 10.0.0.1, 192.168.1.1", "proxy chain spoof"),
     ("x-real-ip", "10.0.0.1", "internal IP spoof"),
     ("x-http-method-override", "DELETE", "verb tunnelling"),
-    ("x-original-url", "/v1/keys", "URL rewrite smuggling"),
-    ("x-rewrite-url", "/v1/admin/accounts", "URL rewrite smuggling"),
+    ("x-original-url", "/api/v1/keys", "URL rewrite smuggling"),
+    ("x-rewrite-url", "/api/v1/admin/accounts", "URL rewrite smuggling"),
     ("x-chmabapay-trace", "not-a-uuid", "trace id must be replaced, not echoed"),
     ("x-chmabapay-trace", "../etc/passwd", "trace id path traversal"),
     ("forwarded", "for=evil.example.com;host=evil.example.com", "RFC 7239 host poisoning"),
@@ -336,8 +336,8 @@ WEBHOOK_URL_VARIANTS: list[tuple[str, str, bool]] = [
     # that points back inside the platform is an SSRF / scheme-smuggling hole.
     ("https_ok", "https://sink.example.com/chmabapay", False),
     ("http_ok", "http://sink.example.com/chmabapay", False),
-    ("localhost_ssrf", "http://localhost:8000/v1/admin/accounts", True),
-    ("loopback_ip_ssrf", "http://127.0.0.1:8000/v1/keys", True),
+    ("localhost_ssrf", "http://localhost:8000/api/v1/admin/accounts", True),
+    ("loopback_ip_ssrf", "http://127.0.0.1:8000/api/v1/keys", True),
     ("metadata_ssrf", "http://169.254.169.254/latest/meta-data/", True),
     ("private_net_ssrf", "http://10.0.0.5/internal", True),
     ("file_scheme", "file:///etc/passwd", True),
@@ -427,7 +427,7 @@ def _setup_cases() -> list[dict[str, Any]]:
             "setup",
             "Resolve the workspace store used by every payment case",
             severity=SEV_CRITICAL,
-            path="/v1/stores",
+            path="/api/v1/stores",
             expect={"status": 200, "json_has": ["data"], "check": "list_shape"},
             produces={"store": "$.data[0].id"},
             note="First store of the workspace becomes the payment target.",
@@ -439,7 +439,7 @@ def _setup_cases() -> list[dict[str, Any]]:
             "Create a disposable store when the workspace has none",
             severity=SEV_HIGH,
             method="POST",
-            path="/v1/stores",
+            path="/api/v1/stores",
             body={
                 "name": "Integration Test Store",
                 "external_id": "integration-test-$nonce",
@@ -459,7 +459,7 @@ def _setup_cases() -> list[dict[str, Any]]:
             "Create a disposable payment so lifecycle cases have a subject",
             severity=SEV_HIGH,
             method="POST",
-            path="/v1/payments",
+            path="/api/v1/payments",
             body=_pay_body(amount=1.50, reference_id="integration-setup"),
             expect={"status": 201, "json_has": ["id", "status", "checkout_url"]},
             requires=["store"],
@@ -477,11 +477,11 @@ def _setup_cases() -> list[dict[str, Any]]:
             "setup",
             "Resolve or create the webhook endpoint under test",
             severity=SEV_HIGH,
-            path="/v1/webhooks",
+            path="/api/v1/webhooks",
             expect={"status": 200, "check": "list_shape"},
             produces={"webhook": "$[0].id"},
             skip_if="webhook",
-            note="GET /v1/webhooks returns a bare array, not a {data:[…]} envelope.",
+            note="GET /api/v1/webhooks returns a bare array, not a {data:[…]} envelope.",
             tags=[KIND_FIXTURE],
         ),
         _case(
@@ -490,7 +490,7 @@ def _setup_cases() -> list[dict[str, Any]]:
             "Create the webhook endpoint when the workspace has none",
             severity=SEV_HIGH,
             method="POST",
-            path="/v1/webhooks",
+            path="/api/v1/webhooks",
             body={"url": "https://example.com/chmabapay-integration-test", "events": ["payment.completed"]},
             expect={"status": 201, "json_has": ["id", "signing_secret"]},
             requires=["api_key"],
@@ -518,12 +518,12 @@ def _setup_cases() -> list[dict[str, Any]]:
             "setup",
             "Probe whether a browser session cookie is present",
             severity=SEV_LOW,
-            path="/v1/me",
+            path="/api/v1/me",
             auth="none",
             expect={"status_in": [200, 401]},
             produces={"session": "true"},
             informational=True,
-            note="API-key-only runs have no cookie; /v1/me legitimately returns 401.",
+            note="API-key-only runs have no cookie; /api/v1/me legitimately returns 401.",
             tags=[KIND_FIXTURE],
         ),
     ]
@@ -534,8 +534,8 @@ def _smoke_cases() -> list[dict[str, Any]]:
         _case(
             "SMOKE-001",
             "smoke",
-            "GET /v1/payments returns a list envelope",
-            path="/v1/payments",
+            "GET /api/v1/payments returns a list envelope",
+            path="/api/v1/payments",
             query={"store": "$store", "limit": 20},
             expect={"status": 200, "json_has": ["data"], "check": "list_shape"},
             requires=["store"],
@@ -544,46 +544,46 @@ def _smoke_cases() -> list[dict[str, Any]]:
         _case(
             "SMOKE-002",
             "smoke",
-            "GET /v1/stores returns a list envelope",
-            path="/v1/stores",
+            "GET /api/v1/stores returns a list envelope",
+            path="/api/v1/stores",
             expect={"status": 200, "json_has": ["data"], "check": "list_shape"},
         ),
         _case(
             "SMOKE-003",
             "smoke",
-            "GET /v1/keys lists workspace keys without leaking hashes",
-            path="/v1/keys",
+            "GET /api/v1/keys lists workspace keys without leaking hashes",
+            path="/api/v1/keys",
             expect={"status": 200, "json_absent": ["key_hash", "key_prefix_hash"]},
             note="A key hash in a list response is an offline-cracking oracle.",
         ),
         _case(
             "SMOKE-004",
             "smoke",
-            "GET /v1/webhooks lists endpoints without exposing secrets",
-            path="/v1/webhooks",
+            "GET /api/v1/webhooks lists endpoints without exposing secrets",
+            path="/api/v1/webhooks",
             expect={"status": 200, "json_absent": ["secret_key", "signing_secret"], "check": "list_shape"},
             note="Secrets are returned once at creation only.",
         ),
         _case(
             "SMOKE-005",
             "smoke",
-            "GET /v1/billing/plans is public and well-shaped",
-            path="/v1/billing/plans",
+            "GET /api/v1/billing/plans is public and well-shaped",
+            path="/api/v1/billing/plans",
             auth="none",
             expect={"status": 200, "json_has": ["0.code", "0.monthly_fee_cents"]},
         ),
         _case(
             "SMOKE-006",
             "smoke",
-            "GET /v1/reports/payments.json returns summary + pagination",
-            path="/v1/reports/payments.json",
+            "GET /api/v1/reports/payments.json returns summary + pagination",
+            path="/api/v1/reports/payments.json",
             expect={"status": 200, "json_has": ["data", "summary", "pagination"]},
         ),
         _case(
             "SMOKE-007",
             "smoke",
-            "GET /v1/reports/payments.csv exports for any plan",
-            path="/v1/reports/payments.csv",
+            "GET /api/v1/reports/payments.csv exports for any plan",
+            path="/api/v1/reports/payments.csv",
             expect={"status": 200},
             note="Every plan gets CSV; the plan gate was removed (launch-gap-closure D6).",
         ),
@@ -611,13 +611,13 @@ def _smoke_cases() -> list[dict[str, Any]]:
 def _auth_cases() -> list[dict[str, Any]]:
     """Missing / malformed / wrong-scope credentials across the surface."""
     targets: list[tuple[str, str, Any]] = [
-        ("GET", "/v1/stores", None),
-        ("GET", "/v1/payments", None),
-        ("POST", "/v1/payments", {"amount": 1.00}),
-        ("GET", "/v1/keys", None),
-        ("GET", "/v1/webhooks", None),
-        ("GET", "/v1/reports/payments.json", None),
-        ("GET", "/v1/transactions/instruction-ref/CHMTEST123", None),
+        ("GET", "/api/v1/stores", None),
+        ("GET", "/api/v1/payments", None),
+        ("POST", "/api/v1/payments", {"amount": 1.00}),
+        ("GET", "/api/v1/keys", None),
+        ("GET", "/api/v1/webhooks", None),
+        ("GET", "/api/v1/reports/payments.json", None),
+        ("GET", "/api/v1/transactions/instruction-ref/CHMTEST123", None),
     ]
     bad_credentials: list[tuple[str, dict[str, str], str]] = [
         # (label, headers, expected `detail`)
@@ -676,18 +676,18 @@ def _auth_cases() -> list[dict[str, Any]]:
 
     # Wrong method / verb tunnelling on every mutating surface.
     method_probes: list[tuple[str, str, dict[str, Any] | None, list[int]]] = [
-        ("DELETE", "/v1/payments", None, [405]),
-        ("PUT", "/v1/payments", None, [405]),
-        ("PATCH", "/v1/payments", None, [405]),
-        ("DELETE", "/v1/keys", None, [405]),
-        ("PUT", "/v1/keys", None, [405]),
-        ("PUT", "/v1/webhooks", None, [405]),
-        ("DELETE", "/v1/webhooks", None, [405]),
-        ("POST", "/v1/reports/payments.json", {}, [405]),
-        ("GET", "/v1/reports/payments.json", None, [200]),
+        ("DELETE", "/api/v1/payments", None, [405]),
+        ("PUT", "/api/v1/payments", None, [405]),
+        ("PATCH", "/api/v1/payments", None, [405]),
+        ("DELETE", "/api/v1/keys", None, [405]),
+        ("PUT", "/api/v1/keys", None, [405]),
+        ("PUT", "/api/v1/webhooks", None, [405]),
+        ("DELETE", "/api/v1/webhooks", None, [405]),
+        ("POST", "/api/v1/reports/payments.json", {}, [405]),
+        ("GET", "/api/v1/reports/payments.json", None, [200]),
         ("GET", "/health", None, [200]),
-        ("GET", "/v1/webhooks/1/rotate-secret", None, [404, 405]),
-        ("PATCH", "/v1/payments/abc", None, [404, 405]),
+        ("GET", "/api/v1/webhooks/1/rotate-secret", None, [404, 405]),
+        ("PATCH", "/api/v1/payments/abc", None, [404, 405]),
     ]
     for method, path, probe_body, allowed in method_probes:
         cases.append(
@@ -711,25 +711,25 @@ def _auth_cases() -> list[dict[str, Any]]:
         _case(
             f"AUTH-{len(cases) + 1:03d}",
             "auth",
-            "GET /v1/me is session-only and must reject an API key",
+            "GET /api/v1/me is session-only and must reject an API key",
             severity=SEV_HIGH,
-            path="/v1/me",
+            path="/api/v1/me",
             omit_credentials=True,
             expect={"status": 401, "detail": "invalid_session"},
             note="Billing/account endpoints are cookie-scoped; a key must not stand in.",
         ),
     )
-    # KHQR generation is documented as an authenticated /v1 endpoint. The handler
+    # KHQR generation is documented as an authenticated /api/v1 endpoint. The handler
     # takes no auth dependency at all, so it answers anonymous callers — and every
     # anonymous call triggers an outbound fetch to the ABA PayWay SSR page.
     cases.append(
         _case(
             f"AUTH-{len(cases) + 1:03d}",
             "auth",
-            "POST /v1/khqr/from-link must require a key (no credentials sent)",
+            "POST /api/v1/khqr/from-link must require a key (no credentials sent)",
             severity=SEV_CRITICAL,
             method="POST",
-            path="/v1/khqr/from-link",
+            path="/api/v1/khqr/from-link",
             auth="none",
             omit_credentials=True,
             body={"link": PAYWAY_SLUG, "amount": 1.00, "bakong_id": "audit@abaa"},
@@ -742,10 +742,10 @@ def _auth_cases() -> list[dict[str, Any]]:
         _case(
             f"AUTH-{len(cases) + 1:03d}",
             "auth",
-            "POST /v1/khqr/from-link must reject an unknown key",
+            "POST /api/v1/khqr/from-link must reject an unknown key",
             severity=SEV_CRITICAL,
             method="POST",
-            path="/v1/khqr/from-link",
+            path="/api/v1/khqr/from-link",
             omit_credentials=True,
             headers={"Authorization": "Bearer ck_test_0000000000000000000"},
             body={"link": PAYWAY_SLUG, "amount": 1.00, "bakong_id": "audit@abaa"},
@@ -765,7 +765,7 @@ def _auth_cases() -> list[dict[str, Any]]:
             "auth",
             "Admin surface rejects an ordinary workspace key (expect 403 gate)",
             severity=SEV_CRITICAL,
-            path="/v1/admin/accounts",
+            path="/api/v1/admin/accounts",
             omit_credentials=True,
             expect={"status_in": [401, 403], "detail_in": ["forbidden", "unauthorized", "invalid_session"]},
             informational=True,
@@ -773,10 +773,10 @@ def _auth_cases() -> list[dict[str, Any]]:
         ),
     )
     for path in (
-        "/v1/admin/plans",
-        "/v1/admin/invoices",
-        "/v1/admin/overview",
-        "/v1/admin/accounts/1",
+        "/api/v1/admin/plans",
+        "/api/v1/admin/invoices",
+        "/api/v1/admin/overview",
+        "/api/v1/admin/accounts/1",
     ):
         cases.append(
             _case(
@@ -798,14 +798,14 @@ def _auth_cases() -> list[dict[str, Any]]:
             "Unsupported admin method never reaches the handler",
             severity=SEV_MEDIUM,
             method="DELETE",
-            path="/v1/admin/accounts/1",
+            path="/api/v1/admin/accounts/1",
             expect={"status_in": [401, 403, 404, 405]},
             informational=True,
         ),
     )
 
     # Mass assignment: `extra="forbid"` models must reject unknown privileged fields.
-    for path, group in (("/v1/keys", "keys"), ("/v1/webhooks", "webhooks")):
+    for path, group in (("/api/v1/keys", "keys"), ("/api/v1/webhooks", "webhooks")):
         for field, value in (
             ("account_id", 1),
             ("status", "active"),
@@ -839,10 +839,10 @@ def _auth_cases() -> list[dict[str, Any]]:
             _case(
                 f"AUTH-{len(cases) + 1:03d}",
                 "auth",
-                f"POST /v1/stores ignores privileged field '{field}'",
+                f"POST /api/v1/stores ignores privileged field '{field}'",
                 severity=SEV_HIGH,
                 method="POST",
-                path="/v1/stores",
+                path="/api/v1/stores",
                 body={"name": "mass-assignment-store", field: value},
                 expect={"status_in": [201, 400], "json_absent": ["account_id", "is_platform_admin"]},
                 mutates=True,
@@ -863,8 +863,8 @@ def _header_cases() -> list[dict[str, Any]]:
         if h[0] in ("host", "x-forwarded-host", "forwarded", "x-forwarded-proto", "x-real-ip", "x-original-url")
     ]
     poisoning_targets = [
-        ("POST", "/v1/payments", {"store": "$store", "amount": 1.00}, True),
-        ("GET", "/v1/payments", None, False),
+        ("POST", "/api/v1/payments", {"store": "$store", "amount": 1.00}, True),
+        ("GET", "/api/v1/payments", None, False),
         ("GET", "/health", None, False),
     ]
     for _label, value, _desc in poisoning_headers:
@@ -891,7 +891,7 @@ def _header_cases() -> list[dict[str, Any]]:
             cases.append(case)
 
     for label, value, desc in HOSTILE_HEADERS:
-        for method, path in (("GET", "/v1/stores"), ("POST", "/v1/webhooks")):
+        for method, path in (("GET", "/api/v1/stores"), ("POST", "/api/v1/webhooks")):
             counter += 1
             case = _case(
                 f"HDR-{counter:03d}",
@@ -917,7 +917,7 @@ def _param_cases() -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
     counter = 0
 
-    param_targets = ["/v1/payments", "/v1/stores", "/v1/reports/payments.json", "/v1/webhooks"]
+    param_targets = ["/api/v1/payments", "/api/v1/stores", "/api/v1/reports/payments.json", "/api/v1/webhooks"]
     for payload in INJECTION_PAYLOADS:
         for target in param_targets:
             counter += 1
@@ -936,10 +936,10 @@ def _param_cases() -> list[dict[str, Any]]:
             )
     for payload in INJECTION_PAYLOADS:
         for target, bakong_dependent in (
-            ("/v1/payments/", False),
-            ("/v1/stores/", False),
-            ("/v1/webhooks/999999/deliveries", False),
-            ("/v1/transactions/instruction-ref/", True),
+            ("/api/v1/payments/", False),
+            ("/api/v1/stores/", False),
+            ("/api/v1/webhooks/999999/deliveries", False),
+            ("/api/v1/transactions/instruction-ref/", True),
         ):
             counter += 1
             allowed = [400, 404, 405, 422, 503] if bakong_dependent else [400, 404, 405, 422]
@@ -984,9 +984,9 @@ def _param_cases() -> list[dict[str, Any]]:
             _case(
                 f"QRY-{counter:03d}",
                 "query",
-                f"GET /v1/payments tolerates malformed query ({label})",
+                f"GET /api/v1/payments tolerates malformed query ({label})",
                 severity=SEV_MEDIUM,
-                path="/v1/payments",
+                path="/api/v1/payments",
                 query_raw=raw + "&store=$store",
                 expect={"status_in": allowed, "header_has": {"X-ChmabaPay-Trace": ""}},
                 requires=["store"],
@@ -1000,9 +1000,9 @@ def _param_cases() -> list[dict[str, Any]]:
             _case(
                 f"QRY-{counter:03d}",
                 "query",
-                f"GET /v1/webhooks/{label} delivers a bounded list",
+                f"GET /api/v1/webhooks/{label} delivers a bounded list",
                 severity=SEV_LOW,
-                path="/v1/webhooks/1/deliveries",
+                path="/api/v1/webhooks/1/deliveries",
                 query_raw=raw,
                 expect={"status_in": [200, 404] + [s for s in allowed if s >= 400]},
                 informational=True,
@@ -1030,10 +1030,10 @@ def _amount_cases() -> list[dict[str, Any]]:
             _case(
                 f"AMT-{counter:03d}",
                 "amount",
-                f"POST /v1/payments amount={label}",
+                f"POST /api/v1/payments amount={label}",
                 severity=SEV_CRITICAL if kind in ("too_low", "invalid", "ok") else SEV_MEDIUM,
                 method="POST",
-                path="/v1/payments",
+                path="/api/v1/payments",
                 body=_pay_body(amount=value),
                 expect=dict(expectations[kind]),
                 requires=["store"],
@@ -1053,10 +1053,10 @@ def _amount_cases() -> list[dict[str, Any]]:
             _case(
                 f"AMT-{counter:03d}",
                 "amount",
-                f"POST /v1/payments raw body case: {label}",
+                f"POST /api/v1/payments raw body case: {label}",
                 severity=SEV_HIGH,
                 method="POST",
-                path="/v1/payments",
+                path="/api/v1/payments",
                 raw_body=_raw_pay(raw),
                 headers={"Content-Type": "application/json"},
                 expect=(
@@ -1077,10 +1077,10 @@ def _amount_cases() -> list[dict[str, Any]]:
             _case(
                 f"AMT-{counter:03d}",
                 "amount",
-                f"POST /v1/payments very large amount={amount:g}",
+                f"POST /api/v1/payments very large amount={amount:g}",
                 severity=SEV_HIGH,
                 method="POST",
-                path="/v1/payments",
+                path="/api/v1/payments",
                 body=_pay_body(amount=amount),
                 expect={"status_in": [201, 400, 402], "detail_in": ["amount_too_high", None]},
                 requires=["store"],
@@ -1101,10 +1101,10 @@ def _amount_cases() -> list[dict[str, Any]]:
             _case(
                 f"AMT-{counter:03d}",
                 "amount",
-                f"POST /v1/khqr/from-link amount={label}",
+                f"POST /api/v1/khqr/from-link amount={label}",
                 severity=SEV_HIGH,
                 method="POST",
-                path="/v1/khqr/from-link",
+                path="/api/v1/khqr/from-link",
                 body={"link": PAYWAY_SLUG, "amount": value, "bakong_id": "test_bakong_id@abaa"},
                 expect=(
                     {"status_in": [200, 400, 422]}
@@ -1129,10 +1129,10 @@ def _khqr_cases() -> list[dict[str, Any]]:
             _case(
                 f"KHQ-{counter:03d}",
                 "khqr",
-                f"POST /v1/khqr/from-link link={label}",
+                f"POST /api/v1/khqr/from-link link={label}",
                 severity=SEV_HIGH,
                 method="POST",
-                path="/v1/khqr/from-link",
+                path="/api/v1/khqr/from-link",
                 body={"link": value, "amount": 1.00},
                 expect=(
                     {
@@ -1156,10 +1156,10 @@ def _khqr_cases() -> list[dict[str, Any]]:
             _case(
                 f"KHQ-{counter:03d}",
                 "khqr",
-                f"POST /v1/khqr/from-link currency={currency!r}",
+                f"POST /api/v1/khqr/from-link currency={currency!r}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/khqr/from-link",
+                path="/api/v1/khqr/from-link",
                 body={"link": PAYWAY_SLUG, "amount": 1.00, "currency": currency, "bakong_id": "test_bakong_id@abaa"},
                 expect={"status_in": [200, 400, 422], "check": "crc16_tlv"},
                 network=True,
@@ -1173,10 +1173,10 @@ def _khqr_cases() -> list[dict[str, Any]]:
             _case(
                 f"KHQ-{counter:03d}",
                 "khqr",
-                f"POST /v1/khqr/from-link ttl_seconds={ttl!r}",
+                f"POST /api/v1/khqr/from-link ttl_seconds={ttl!r}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/khqr/from-link",
+                path="/api/v1/khqr/from-link",
                 body={"link": PAYWAY_SLUG, "amount": 1.00, "ttl_seconds": ttl, "bakong_id": "test_bakong_id@abaa"},
                 expect={"status_in": [200, 422]},
                 network=True,
@@ -1211,10 +1211,10 @@ def _khqr_cases() -> list[dict[str, Any]]:
             _case(
                 f"KHQ-{counter:03d}",
                 "khqr",
-                f"POST /v1/khqr/from-link option {label}",
+                f"POST /api/v1/khqr/from-link option {label}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/khqr/from-link",
+                path="/api/v1/khqr/from-link",
                 body=payload,
                 expect={"status_in": allowed, "check": "crc16_tlv" if 200 in allowed else None},
                 network=True,
@@ -1240,10 +1240,10 @@ def _khqr_cases() -> list[dict[str, Any]]:
             _case(
                 f"KHQ-{counter:03d}",
                 "khqr",
-                f"POST /v1/khqr/probe-aba-status {label}",
+                f"POST /api/v1/khqr/probe-aba-status {label}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/khqr/probe-aba-status",
+                path="/api/v1/khqr/probe-aba-status",
                 auth="none",
                 query=query,
                 expect={
@@ -1283,7 +1283,7 @@ def _payment_cases() -> list[dict[str, Any]]:
                 {
                     "name": "create",
                     "method": "POST",
-                    "path": "/v1/payments",
+                    "path": "/api/v1/payments",
                     "body": {"store": "$store", "amount": 2.50, "reference_id": "integration-lifecycle"},
                     "expect": {
                         "status": 201,
@@ -1295,13 +1295,13 @@ def _payment_cases() -> list[dict[str, Any]]:
                 {
                     "name": "read",
                     "method": "GET",
-                    "path": "/v1/payments/$flow_payment",
+                    "path": "/api/v1/payments/$flow_payment",
                     "expect": {"status": 200, "json_equals": {"status": "pending"}},
                 },
                 {
                     "name": "list_contains",
                     "method": "GET",
-                    "path": "/v1/payments",
+                    "path": "/api/v1/payments",
                     "query": {"store": "$store", "limit": 20},
                     "expect": {"status": 200, "check": "list_contains_payment"},
                 },
@@ -1343,7 +1343,7 @@ def _payment_cases() -> list[dict[str, Any]]:
                 {
                     "name": "read_paid",
                     "method": "GET",
-                    "path": "/v1/payments/$flow_payment",
+                    "path": "/api/v1/payments/$flow_payment",
                     "expect": {"status": 200, "json_equals": {"status": "paid"}, "json_has": ["approved_at", "paid_at"]},
                 },
                 {
@@ -1380,7 +1380,7 @@ def _payment_cases() -> list[dict[str, Any]]:
                 {
                     "name": "first",
                     "method": "POST",
-                    "path": "/v1/payments",
+                    "path": "/api/v1/payments",
                     "body": {"store": "$store", "amount": 3.00, "idempotency_key": "integration-idem-body"},
                     "expect": {"status": 201},
                     "capture": {"first_id": "$.id"},
@@ -1388,7 +1388,7 @@ def _payment_cases() -> list[dict[str, Any]]:
                 {
                     "name": "replay",
                     "method": "POST",
-                    "path": "/v1/payments",
+                    "path": "/api/v1/payments",
                     "body": {"store": "$store", "amount": 3.00, "idempotency_key": "integration-idem-body"},
                     "expect": {"status": 200, "json_equals": {"id": "$first_id"}},
                 },
@@ -1409,7 +1409,7 @@ def _payment_cases() -> list[dict[str, Any]]:
                 {
                     "name": "first",
                     "method": "POST",
-                    "path": "/v1/payments",
+                    "path": "/api/v1/payments",
                     "headers": {"Idempotency-Key": "integration-idem-header"},
                     "body": {"store": "$store", "amount": 3.00},
                     "expect": {"status": 201},
@@ -1418,7 +1418,7 @@ def _payment_cases() -> list[dict[str, Any]]:
                 {
                     "name": "replay",
                     "method": "POST",
-                    "path": "/v1/payments",
+                    "path": "/api/v1/payments",
                     "headers": {"Idempotency-Key": "integration-idem-header"},
                     "body": {"store": "$store", "amount": 3.00},
                     "expect": {"status": 200, "json_equals": {"id": "$first_id"}},
@@ -1449,7 +1449,7 @@ def _payment_cases() -> list[dict[str, Any]]:
                 f"Idempotency key variant: {label}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/payments",
+                path="/api/v1/payments",
                 headers=headers,
                 body=body,
                 expect={"status_in": [200, 201, 422]},
@@ -1474,7 +1474,7 @@ def _payment_cases() -> list[dict[str, Any]]:
                 {
                     "name": "first",
                     "method": "POST",
-                    "path": "/v1/payments",
+                    "path": "/api/v1/payments",
                     "body": {"store": "$store", "amount": 1.00, "idempotency_key": "integration-distinct-a"},
                     "expect": {"status": 201},
                     "capture": {"first_id": "$.id"},
@@ -1482,7 +1482,7 @@ def _payment_cases() -> list[dict[str, Any]]:
                 {
                     "name": "second",
                     "method": "POST",
-                    "path": "/v1/payments",
+                    "path": "/api/v1/payments",
                     "body": {"store": "$store", "amount": 1.00, "idempotency_key": "integration-distinct-b"},
                     "expect": {"status": 201},
                     "capture": {"second_id": "$.id"},
@@ -1500,9 +1500,9 @@ def _payment_cases() -> list[dict[str, Any]]:
                 _case(
                     nxt(),
                     "payments",
-                    f"GET /v1/payments?status={status_value!r}&limit={limit!r}",
+                    f"GET /api/v1/payments?status={status_value!r}&limit={limit!r}",
                     severity=SEV_MEDIUM,
-                    path="/v1/payments",
+                    path="/api/v1/payments",
                     query={"store": "$store", "status": status_value, "limit": limit},
                     expect={
                         "status_in": [200, 422],
@@ -1527,9 +1527,9 @@ def _payment_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "payments",
-                f"GET /v1/payments store targeting: {label}",
+                f"GET /api/v1/payments store targeting: {label}",
                 severity=SEV_MEDIUM,
-                path="/v1/payments",
+                path="/api/v1/payments",
                 query=query,
                 expect={"status_in": allowed},
                 requires=["store"],
@@ -1552,9 +1552,9 @@ def _payment_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "payments",
-                f"GET /v1/payments/{{id}} with {label}",
+                f"GET /api/v1/payments/{{id}} with {label}",
                 severity=SEV_HIGH,
-                path=f"/v1/payments/{value}",
+                path=f"/api/v1/payments/{value}",
                 expect={"status_in": allowed, "detail_in": ["payment_not_found", None]},
                 informational=label != "unknown_id",
                 note="Unknown ids must be indistinguishable from other accounts' ids.",
@@ -1607,10 +1607,10 @@ def _payment_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "payments",
-                f"POST /v1/payments reference_id={label}",
+                f"POST /api/v1/payments reference_id={label}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/payments",
+                path="/api/v1/payments",
                 body=_pay_body(amount=1.00, reference_id=reference),
                 expect={"status_in": [201, 422], "check": "no_injected_header"},
                 requires=["store"],
@@ -1639,10 +1639,10 @@ def _payment_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "payments",
-                f"POST /v1/payments metadata={label}",
+                f"POST /api/v1/payments metadata={label}",
                 severity=SEV_HIGH,
                 method="POST",
-                path="/v1/payments",
+                path="/api/v1/payments",
                 body=_pay_body(amount=1.00, metadata=metadata),
                 expect={"status_in": [201, 400, 413, 422]},
                 requires=["store"],
@@ -1659,7 +1659,7 @@ def _payment_cases() -> list[dict[str, Any]]:
             "Payment response shape is stable and leaks nothing",
             severity=SEV_CRITICAL,
             method="POST",
-            path="/v1/payments",
+            path="/api/v1/payments",
             body=_pay_body(amount=1.50, reference_id="integration-shape"),
             expect={
                 "status": 201,
@@ -1688,7 +1688,7 @@ def _payment_cases() -> list[dict[str, Any]]:
             "Payment QR carries the wallet-validity fields (Tag 30.02 + Tag 99 in ms)",
             severity=SEV_CRITICAL,
             method="POST",
-            path="/v1/payments",
+            path="/api/v1/payments",
             body=_pay_body(amount=1.00),
             expect={"status": 201, "check": "crc16_tlv"},
             requires=["store"],
@@ -1706,7 +1706,7 @@ def _payment_cases() -> list[dict[str, Any]]:
             "Payment id is long, random and URL-safe",
             severity=SEV_MEDIUM,
             method="POST",
-            path="/v1/payments",
+            path="/api/v1/payments",
             body=_pay_body(amount=1.00),
             expect={"status": 201, "check": "payment_id_shape"},
             requires=["store"],
@@ -1721,7 +1721,7 @@ def _payment_cases() -> list[dict[str, Any]]:
             "checkout_url points at /pay/<id> on the same origin",
             severity=SEV_HIGH,
             method="POST",
-            path="/v1/payments",
+            path="/api/v1/payments",
             body=_pay_body(amount=1.00),
             expect={"status": 201, "check": "checkout_url_shape"},
             requires=["store"],
@@ -1766,7 +1766,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
             "live-pay",
             "render.svg returns a real SVG QR for an arbitrary payload",
             severity=SEV_HIGH,
-            path="/v1/khqr/render.svg",
+            path="/api/v1/khqr/render.svg",
             auth="none",
             query={"payload": "CHMABAPAY-RENDER-TEST-0001", "scale": 8},
             expect={"status": 200, "check": "qr_svg_shape"},
@@ -1779,7 +1779,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
             "live-pay",
             "render.svg rejects a payload too large for a QR instead of 500",
             severity=SEV_HIGH,
-            path="/v1/khqr/render.svg",
+            path="/api/v1/khqr/render.svg",
             auth="none",
             # Lower-case forces byte mode (upper-case would be packed as
             # alphanumeric, which has roughly double the capacity and still fits).
@@ -1794,7 +1794,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
             "live-pay",
             "render.svg rejects an oversized payload at the schema boundary",
             severity=SEV_MEDIUM,
-            path="/v1/khqr/render.svg",
+            path="/api/v1/khqr/render.svg",
             auth="none",
             query={"payload": "A" * 1600},
             expect={"status": 422},
@@ -1807,7 +1807,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
                 "live-pay",
                 f"render.svg scale={scale}",
                 severity=SEV_LOW,
-                path="/v1/khqr/render.svg",
+                path="/api/v1/khqr/render.svg",
                 auth="none",
                 query={"payload": "CHMABAPAY-RENDER-TEST-SCALE", "scale": scale},
                 expect={"status": expected},
@@ -1821,7 +1821,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
             "live-pay",
             "render.svg rejects an unknown ECC level",
             severity=SEV_LOW,
-            path="/v1/khqr/render.svg",
+            path="/api/v1/khqr/render.svg",
             auth="none",
             query={"payload": "CHMABAPAY-RENDER-TEST-ECC", "ecc": "z"},
             expect={"status": 422},
@@ -1839,7 +1839,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
                 {
                     "name": "hosted_checkout",
                     "method": "POST",
-                    "path": "/v1/khqr/payway/checkout",
+                    "path": "/api/v1/khqr/payway/checkout",
                     "body": {"link": PAYWAY_SLUG, "amount": 1.00},
                     "expect": {
                         "status": 200,
@@ -1856,7 +1856,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
                 {
                     "name": "render_it",
                     "method": "GET",
-                    "path": "/v1/khqr/render.svg",
+                    "path": "/api/v1/khqr/render.svg",
                     "auth": "none",
                     "query": {"payload": "$live_qr", "scale": 8},
                     "expect": {"status": 200, "check": "qr_svg_shape"},
@@ -1882,7 +1882,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
                 {
                     "name": "generate",
                     "method": "POST",
-                    "path": "/v1/khqr/from-link",
+                    "path": "/api/v1/khqr/from-link",
                     "body": {"link": PAYWAY_SLUG, "amount": 0.01, "bill_number": "CHMLIVE-$nonce"},
                     "expect": {"status": 200},
                     "capture": {"live_bill": "$.instruction_ref"},
@@ -1890,7 +1890,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
                 {
                     "name": "probe",
                     "method": "POST",
-                    "path": "/v1/khqr/probe-aba-status",
+                    "path": "/api/v1/khqr/probe-aba-status",
                     "auth": "none",
                     "query": {
                         "slug_or_url": PAYWAY_SLUG,
@@ -1925,7 +1925,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
                 {
                     "name": "hosted_checkout",
                     "method": "POST",
-                    "path": "/v1/khqr/payway/checkout",
+                    "path": "/api/v1/khqr/payway/checkout",
                     "body": {"link": PAYWAY_SLUG, "amount": 1.00},
                     "expect": {"status": 200, "check": "payway_hosted_checkout"},
                     "capture": {
@@ -1938,7 +1938,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
                 {
                     "name": "render_for_scan",
                     "method": "GET",
-                    "path": "/v1/khqr/render.svg",
+                    "path": "/api/v1/khqr/render.svg",
                     "auth": "none",
                     "query": {"payload": "$live_qr", "scale": 8},
                     "expect": {"status": 200, "check": "qr_svg_shape"},
@@ -1946,7 +1946,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
                 {
                     "name": "await_payment",
                     "method": "POST",
-                    "path": "/v1/khqr/payway/status",
+                    "path": "/api/v1/khqr/payway/status",
                     "body": {
                         "client_id": "$live_client_id",
                         "request_time": "$live_request_time",
@@ -1978,7 +1978,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
             serial=True,
             check="qr_destination_is_account",
             method="POST",
-            path="/v1/khqr/payway/checkout",
+            path="/api/v1/khqr/payway/checkout",
             body={"link": PAYWAY_SLUG, "amount": 1.00},
             expect={"status": 200, "json_has": ["qr_string"]},
             note=(
@@ -2001,7 +2001,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
                 {
                     "name": "checkout",
                     "method": "POST",
-                    "path": "/v1/khqr/payway/checkout",
+                    "path": "/api/v1/khqr/payway/checkout",
                     "body": {"link": PAYWAY_SLUG, "amount": 1.00},
                     "expect": {"status": 200},
                     "capture": {
@@ -2013,7 +2013,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
                 {
                     "name": "status",
                     "method": "POST",
-                    "path": "/v1/khqr/payway/status",
+                    "path": "/api/v1/khqr/payway/status",
                     "body": {
                         "client_id": "$live_client_id",
                         "request_time": "$live_request_time",
@@ -2039,7 +2039,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
             serial=True,
             check="payway_hosted_status",
             method="POST",
-            path="/v1/khqr/payway/status",
+            path="/api/v1/khqr/payway/status",
             body={
                 "client_id": "0000000-000000-00000000",
                 "request_time": "20260101000000",
@@ -2067,7 +2067,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
                 f"Hosted checkout rejects amount={label} before calling ABA",
                 severity=SEV_HIGH,
                 method="POST",
-                path="/v1/khqr/payway/checkout",
+                path="/api/v1/khqr/payway/checkout",
                 body={"link": PAYWAY_SLUG, "amount": amount},
                 expect={"status": 422, "detail_contains": code},
             ),
@@ -2079,7 +2079,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
             "Hosted checkout rejects a too-short link at the schema boundary",
             severity=SEV_MEDIUM,
             method="POST",
-            path="/v1/khqr/payway/checkout",
+            path="/api/v1/khqr/payway/checkout",
             body={"link": "ab", "amount": 1.00},
             expect={"status": 422},
         ),
@@ -2091,7 +2091,7 @@ def _live_pay_cases() -> list[dict[str, Any]]:
             "Hosted status requires every session field",
             severity=SEV_MEDIUM,
             method="POST",
-            path="/v1/khqr/payway/status",
+            path="/api/v1/khqr/payway/status",
             body={"client_id": "2364634-518710-26993684"},
             expect={"status": 422},
         ),
@@ -2112,7 +2112,7 @@ def _concurrency_cases() -> list[dict[str, Any]]:
             "Parallel creates with one idempotency key yield exactly one payment",
             severity=SEV_CRITICAL,
             method="POST",
-            path="/v1/payments",
+            path="/api/v1/payments",
             body=_pay_body(amount=1.00, idempotency_key="integration-race-key"),
             expect={"status_in": [200, 201]},
             check="unique_ids",
@@ -2143,7 +2143,7 @@ def _concurrency_cases() -> list[dict[str, Any]]:
             "concurrency",
             "Parallel reads during a write stay consistent",
             severity=SEV_MEDIUM,
-            path="/v1/payments",
+            path="/api/v1/payments",
             query={"store": "$store", "limit": 5},
             expect={"status_in": [200]},
             check="unique_response_ok",
@@ -2157,7 +2157,7 @@ def _concurrency_cases() -> list[dict[str, Any]]:
             "Burst of payment creates does not 5xx",
             severity=SEV_HIGH,
             method="POST",
-            path="/v1/payments",
+            path="/api/v1/payments",
             body=_pay_body(amount=0.01),
             expect={"status_in": [200, 201, 402, 429]},
             check="no_5xx",
@@ -2200,9 +2200,9 @@ def _transaction_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "transactions",
-                f"GET /v1/transactions/hash/{{value}} {label}",
+                f"GET /api/v1/transactions/hash/{{value}} {label}",
                 severity=SEV_MEDIUM,
-                path=f"/v1/transactions/hash/{value}",
+                path=f"/api/v1/transactions/hash/{value}",
                 expect={"status_in": txn_ok},
                 informational=True,
                 note="503 bakong_not_configured is expected until a Bakong token is set.",
@@ -2223,9 +2223,9 @@ def _transaction_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "transactions",
-                f"GET /v1/transactions/md5/{{value}} {label}",
+                f"GET /api/v1/transactions/md5/{{value}} {label}",
                 severity=SEV_MEDIUM,
-                path=f"/v1/transactions/md5/{value}",
+                path=f"/api/v1/transactions/md5/{value}",
                 expect={"status_in": txn_ok},
                 informational=True,
             ),
@@ -2242,9 +2242,9 @@ def _transaction_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "transactions",
-                f"GET /v1/transactions/short-hash/{{value}} {label}",
+                f"GET /api/v1/transactions/short-hash/{{value}} {label}",
                 severity=SEV_MEDIUM,
-                path=f"/v1/transactions/short-hash/{value}",
+                path=f"/api/v1/transactions/short-hash/{value}",
                 query={"amount": 1.00, "currency": "USD"},
                 expect={"status_in": txn_ok},
                 informational=True,
@@ -2256,9 +2256,9 @@ def _transaction_cases() -> list[dict[str, Any]]:
                 _case(
                     nxt(),
                     "transactions",
-                    f"GET /v1/transactions/{suffix}/{{ref}} {label}",
+                    f"GET /api/v1/transactions/{suffix}/{{ref}} {label}",
                     severity=SEV_MEDIUM,
-                    path=f"/v1/transactions/{suffix}/{value}",
+                    path=f"/api/v1/transactions/{suffix}/{value}",
                     expect={"status_in": txn_ok},
                     informational=True,
                     note="Lookup keys come from receipts — hostile input is realistic here.",
@@ -2288,10 +2288,10 @@ def _transaction_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "transactions",
-                f"POST /v1/transactions/search {label}",
+                f"POST /api/v1/transactions/search {label}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/transactions/search",
+                path="/api/v1/transactions/search",
                 body=body,
                 expect={"status_in": sorted(set(txn_ok) | set(allowed))},
                 informational=True,
@@ -2309,10 +2309,10 @@ def _transaction_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "transactions",
-                f"POST /v1/transactions/poll {label}",
+                f"POST /api/v1/transactions/poll {label}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/transactions/poll",
+                path="/api/v1/transactions/poll",
                 body=body,
                 expect={"status_in": sorted(set(txn_ok) | set(allowed))},
                 informational=True,
@@ -2336,10 +2336,10 @@ def _transaction_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "transactions",
-                f"POST /v1/transactions/bulk {label}",
+                f"POST /api/v1/transactions/bulk {label}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/transactions/bulk",
+                path="/api/v1/transactions/bulk",
                 body=body,
                 expect={"status_in": sorted(set(txn_ok) | set(allowed))},
                 informational=True,
@@ -2365,10 +2365,10 @@ def _transaction_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "transactions",
-                f"POST /v1/transactions/verify-receipt {label}",
+                f"POST /api/v1/transactions/verify-receipt {label}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/transactions/verify-receipt",
+                path="/api/v1/transactions/verify-receipt",
                 body=body,
                 expect={"status_in": sorted(set(txn_ok) | set(allowed))},
                 informational=True,
@@ -2385,19 +2385,19 @@ def _transaction_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "transactions",
-                f"POST /v1/transactions/token/renew {label}",
+                f"POST /api/v1/transactions/token/renew {label}",
                 severity=SEV_LOW,
                 method="POST",
-                path="/v1/transactions/token/renew",
+                path="/api/v1/transactions/token/renew",
                 body=body if body is not None else _UNSET,
                 expect={"status_in": sorted(set(txn_ok) | set(allowed))},
                 informational=True,
             ),
         )
     for label, path, allowed in (
-        ("unknown_payment", "/v1/transactions/check-status/PUETcMUOKStjZsCb6zAl8kg9fMRGM85x", [404]),
-        ("sqli_payment", "/v1/transactions/check-status/' OR 1=1--", [400, 404]),
-        ("verify_unknown", "/v1/transactions/verify-payment/PUETcMUOKStjZsCb6zAl8kg9fMRGM85x", [404]),
+        ("unknown_payment", "/api/v1/transactions/check-status/PUETcMUOKStjZsCb6zAl8kg9fMRGM85x", [404]),
+        ("sqli_payment", "/api/v1/transactions/check-status/' OR 1=1--", [400, 404]),
+        ("verify_unknown", "/api/v1/transactions/verify-payment/PUETcMUOKStjZsCb6zAl8kg9fMRGM85x", [404]),
     ):
         cases.append(
             _case(
@@ -2443,9 +2443,9 @@ def _report_cases() -> list[dict[str, Any]]:
                 _case(
                     nxt(),
                     "reports",
-                    f"GET /v1/reports/payments.json from={flabel} to={tlabel}",
+                    f"GET /api/v1/reports/payments.json from={flabel} to={tlabel}",
                     severity=SEV_MEDIUM,
-                    path="/v1/reports/payments.json",
+                    path="/api/v1/reports/payments.json",
                     query={"from": fvalue, "to": tvalue},
                     expect=expect,
                     informational=informational,
@@ -2467,9 +2467,9 @@ def _report_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "reports",
-                f"GET /v1/reports/payments.json statuses={statuses!r}",
+                f"GET /api/v1/reports/payments.json statuses={statuses!r}",
                 severity=SEV_MEDIUM,
-                path="/v1/reports/payments.json",
+                path="/api/v1/reports/payments.json",
                 query={"statuses": statuses},
                 expect={"status": 200, "json_has": ["summary", "pagination"]},
                 note="An unknown status must filter to nothing, not error or leak.",
@@ -2480,9 +2480,9 @@ def _report_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "reports",
-                f"GET /v1/reports/payments.json store_id={store_id[:20]!r}",
+                f"GET /api/v1/reports/payments.json store_id={store_id[:20]!r}",
                 severity=SEV_MEDIUM,
-                path="/v1/reports/payments.json",
+                path="/api/v1/reports/payments.json",
                 query={"store_id": store_id},
                 expect={"status_in": [200, 404]},
                 informational=True,
@@ -2493,9 +2493,9 @@ def _report_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "reports",
-                f"GET /v1/reports/payments.json merchant={merchant[:20]!r}",
+                f"GET /api/v1/reports/payments.json merchant={merchant[:20]!r}",
                 severity=SEV_LOW,
-                path="/v1/reports/payments.json",
+                path="/api/v1/reports/payments.json",
                 query={"merchant": merchant},
                 expect={"status_in": [200, 422]},
                 informational=True,
@@ -2507,9 +2507,9 @@ def _report_cases() -> list[dict[str, Any]]:
                 _case(
                     nxt(),
                     "reports",
-                    f"GET /v1/reports/payments.json page={page!r} per_page={per_page!r}",
+                    f"GET /api/v1/reports/payments.json page={page!r} per_page={per_page!r}",
                     severity=SEV_MEDIUM,
-                    path="/v1/reports/payments.json",
+                    path="/api/v1/reports/payments.json",
                     query={"page": page, "per_page": per_page},
                     expect={"status_in": [200, 422], "check": "limit_bounds"},
                     informational=True,
@@ -2521,9 +2521,9 @@ def _report_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "reports",
-                f"GET /v1/reports/payments.csv statuses={statuses!r}",
+                f"GET /api/v1/reports/payments.csv statuses={statuses!r}",
                 severity=SEV_LOW,
-                path="/v1/reports/payments.csv",
+                path="/api/v1/reports/payments.csv",
                 query={"statuses": statuses},
                 expect={"status_in": [200, 403], "check": "csv_header" if statuses == "paid" else None},
                 informational=True,
@@ -2536,7 +2536,7 @@ def _report_cases() -> list[dict[str, Any]]:
             "reports",
             "CSV export has the documented header row",
             severity=SEV_HIGH,
-            path="/v1/reports/payments.csv",
+            path="/api/v1/reports/payments.csv",
             expect={"status_in": [200, 403], "check": "csv_header"},
             informational=True,
             note="Column renames silently break every integrator's importer.",
@@ -2548,7 +2548,7 @@ def _report_cases() -> list[dict[str, Any]]:
             "reports",
             "CSV export is not served as HTML",
             severity=SEV_HIGH,
-            path="/v1/reports/payments.csv",
+            path="/api/v1/reports/payments.csv",
             expect={"status_in": [200, 403], "header_not": {"content-type": "text/html"}},
             informational=True,
             note="A CSV served as HTML is a stored-XSS vector.",
@@ -2571,10 +2571,10 @@ def _webhook_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "webhooks",
-                f"POST /v1/webhooks url={label}",
+                f"POST /api/v1/webhooks url={label}",
                 severity=SEV_CRITICAL if must_reject else SEV_MEDIUM,
                 method="POST",
-                path="/v1/webhooks",
+                path="/api/v1/webhooks",
                 body={"url": url},
                 expect={"status_in": [400, 422]} if must_reject else {"status_in": [201, 400, 422]},
                 mutates=True,
@@ -2592,10 +2592,10 @@ def _webhook_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "webhooks",
-                f"PATCH /v1/webhooks/{{id}} url={label}",
+                f"PATCH /api/v1/webhooks/{{id}} url={label}",
                 severity=SEV_CRITICAL if must_reject else SEV_MEDIUM,
                 method="PATCH",
-                path="/v1/webhooks/$webhook",
+                path="/api/v1/webhooks/$webhook",
                 body={"url": url},
                 expect={"status_in": [400, 404, 422]} if must_reject else {"status_in": [200, 400, 404, 422]},
                 requires=["webhook"],
@@ -2623,10 +2623,10 @@ def _webhook_cases() -> list[dict[str, Any]]:
             _case(
                 nxt(),
                 "webhooks",
-                f"POST /v1/webhooks body variant {list(body.keys())}",
+                f"POST /api/v1/webhooks body variant {list(body.keys())}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/webhooks",
+                path="/api/v1/webhooks",
                 body=body,
                 expect={"status_in": [201, 400, 422]},
                 mutates=True,
@@ -2636,7 +2636,7 @@ def _webhook_cases() -> list[dict[str, Any]]:
     for path_suffix in ("/0", "/-1", "/999999999", "/abc", "/'%20OR%201=1--", "/1.5", "/" + "9" * 40):
         for verb in ("patch", "delete", "test", "deliveries", "rotate"):
             method = {"patch": "PATCH", "delete": "DELETE", "test": "POST", "deliveries": "GET", "rotate": "POST"}[verb]
-            path = f"/v1/webhooks{path_suffix}" + ("/test" if verb == "test" else "/rotate-secret" if verb == "rotate" else "/deliveries" if verb == "deliveries" else "")
+            path = f"/api/v1/webhooks{path_suffix}" + ("/test" if verb == "test" else "/rotate-secret" if verb == "rotate" else "/deliveries" if verb == "deliveries" else "")
             cases.append(
                 _case(
                     nxt(),
@@ -2658,7 +2658,7 @@ def _webhook_cases() -> list[dict[str, Any]]:
             "Signed test event uses the documented signature format",
             severity=SEV_CRITICAL,
             method="POST",
-            path="/v1/webhooks/$webhook/test",
+            path="/api/v1/webhooks/$webhook/test",
             expect={"status_in": [200], "check": "signature_shape"},
             requires=["webhook"],
             network=True,
@@ -2673,7 +2673,7 @@ def _webhook_cases() -> list[dict[str, Any]]:
             "Deliveries log is paginated and bounded",
             severity=SEV_HIGH,
             method="GET",
-            path="/v1/webhooks/$webhook/deliveries",
+            path="/api/v1/webhooks/$webhook/deliveries",
             query={"limit": 200, "page": 1},
             expect={"status": 200, "check": "delivery_shape"},
             requires=["webhook"],
@@ -2686,7 +2686,7 @@ def _webhook_cases() -> list[dict[str, Any]]:
             "Deliveries log rejects an out-of-range limit",
             severity=SEV_MEDIUM,
             method="GET",
-            path="/v1/webhooks/$webhook/deliveries",
+            path="/api/v1/webhooks/$webhook/deliveries",
             query={"limit": 5000},
             expect={"status": 422},
             requires=["webhook"],
@@ -2699,7 +2699,7 @@ def _webhook_cases() -> list[dict[str, Any]]:
             "Rotating the signing secret invalidates the previous one",
             severity=SEV_HIGH,
             method="POST",
-            path="/v1/webhooks/$webhook/rotate-secret",
+            path="/api/v1/webhooks/$webhook/rotate-secret",
             expect={"status": 200, "json_has": ["signing_secret"], "check": "secret_rotated"},
             requires=["webhook", "webhook_secret"],
             mutates=True,
@@ -2720,20 +2720,20 @@ def _webhook_cases() -> list[dict[str, Any]]:
                 {
                     "name": "disable",
                     "method": "PATCH",
-                    "path": "/v1/webhooks/$webhook",
+                    "path": "/api/v1/webhooks/$webhook",
                     "body": {"enabled": False},
                     "expect": {"status": 200, "json_equals": {"status": "disabled"}},
                 },
                 {
                     "name": "disabled_visible_in_list",
                     "method": "GET",
-                    "path": "/v1/webhooks",
+                    "path": "/api/v1/webhooks",
                     "expect": {"status": 200, "check": "list_shape"},
                 },
                 {
                     "name": "re_enable",
                     "method": "PATCH",
-                    "path": "/v1/webhooks/$webhook",
+                    "path": "/api/v1/webhooks/$webhook",
                     "body": {"enabled": True},
                     "expect": {"status": 200, "json_equals": {"status": "active"}},
                 },
@@ -2748,7 +2748,7 @@ def _webhook_cases() -> list[dict[str, Any]]:
             "Deleting the test endpoint removes it",
             severity=SEV_MEDIUM,
             method="DELETE",
-            path="/v1/webhooks/$webhook",
+            path="/api/v1/webhooks/$webhook",
             expect={"status_in": [200, 404]},
             requires=["webhook"],
             mutates=True,
@@ -2799,10 +2799,10 @@ def _surface_cases() -> list[dict[str, Any]]:
             _case(
                 nxt("STO"),
                 "stores",
-                f"POST /v1/stores {label}",
+                f"POST /api/v1/stores {label}",
                 severity=SEV_HIGH if "xss" in label or "sqli" in label or "javascript" in label else SEV_MEDIUM,
                 method="POST",
-                path="/v1/stores",
+                path="/api/v1/stores",
                 body=body,
                 expect={"status_in": allowed},
                 mutates=True,
@@ -2817,7 +2817,7 @@ def _surface_cases() -> list[dict[str, Any]]:
             "Re-using an external_id is refused, not a 500",
             severity=SEV_CRITICAL,
             method="POST",
-            path="/v1/stores",
+            path="/api/v1/stores",
             body={"name": "Dup Store", "external_id": "dup-$nonce"},
             expect={"status_in": [200, 201, 400, 409]},
             mutates=True,
@@ -2826,16 +2826,16 @@ def _surface_cases() -> list[dict[str, Any]]:
         ),
     )
     for label, path, allowed in (
-        ("unknown", "/v1/stores/st_does_not_exist", [404]),
-        ("sqli", "/v1/stores/' OR 1=1--", [404, 400]),
-        ("traversal", "/v1/stores/..%2f..%2fetc%2fpasswd", [404, 400]),
-        ("very_long", "/v1/stores/st_" + "a" * 2048, [404, 414]),
+        ("unknown", "/api/v1/stores/st_does_not_exist", [404]),
+        ("sqli", "/api/v1/stores/' OR 1=1--", [404, 400]),
+        ("traversal", "/api/v1/stores/..%2f..%2fetc%2fpasswd", [404, 400]),
+        ("very_long", "/api/v1/stores/st_" + "a" * 2048, [404, 414]),
     ):
         cases.append(
             _case(
                 nxt("STO"),
                 "stores",
-                f"GET /v1/stores/{{id}} {label}",
+                f"GET /api/v1/stores/{{id}} {label}",
                 severity=SEV_MEDIUM,
                 path=path,
                 expect={"status_in": allowed, "detail_in": ["store_not_found", None]},
@@ -2852,10 +2852,10 @@ def _surface_cases() -> list[dict[str, Any]]:
             _case(
                 nxt("STO"),
                 "stores",
-                f"PUT /v1/stores/{{id}}/link {label}",
+                f"PUT /api/v1/stores/{{id}}/link {label}",
                 severity=SEV_HIGH,
                 method="PUT",
-                path="/v1/stores/$store/link",
+                path="/api/v1/stores/$store/link",
                 body=body,
                 expect={"status_in": allowed},
                 requires=["store"],
@@ -2878,10 +2878,10 @@ def _surface_cases() -> list[dict[str, Any]]:
             _case(
                 nxt("STO"),
                 "stores",
-                f"PATCH /v1/stores/{{id}} {label}",
+                f"PATCH /api/v1/stores/{{id}} {label}",
                 severity=SEV_MEDIUM,
                 method="PATCH",
-                path="/v1/stores/$store",
+                path="/api/v1/stores/$store",
                 body=body,
                 expect={"status_in": allowed},
                 requires=["store"],
@@ -2894,10 +2894,10 @@ def _surface_cases() -> list[dict[str, Any]]:
         _case(
             nxt("STO"),
             "stores",
-            "POST /v1/stores/{id}/telegram/test sends, or fails loudly",
+            "POST /api/v1/stores/{id}/telegram/test sends, or fails loudly",
             severity=SEV_LOW,
             method="POST",
-            path="/v1/stores/$store/telegram/test",
+            path="/api/v1/stores/$store/telegram/test",
             # 200 only after Telegram accepted the message; 400 when the store has
             # no chat id; 503 when the deployment holds no bot token (the same
             # governed 5xx the Bakong cases list). The outcome this guards against
@@ -2912,10 +2912,10 @@ def _surface_cases() -> list[dict[str, Any]]:
         _case(
             nxt("STO"),
             "stores",
-            "POST /v1/stores/{id}/disable is destructive and reversible",
+            "POST /api/v1/stores/{id}/disable is destructive and reversible",
             severity=SEV_MEDIUM,
             method="POST",
-            path="/v1/stores/$store/disable",
+            path="/api/v1/stores/$store/disable",
             expect={"status_in": [200], "json_equals": {"status": "disabled"}},
             requires=["store"],
             mutates=True,
@@ -2936,10 +2936,10 @@ def _surface_cases() -> list[dict[str, Any]]:
             _case(
                 nxt("KEY"),
                 "keys",
-                f"POST /v1/keys {label}",
+                f"POST /api/v1/keys {label}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/keys",
+                path="/api/v1/keys",
                 body=body,
                 expect={"status_in": allowed},
                 mutates=True,
@@ -2947,7 +2947,7 @@ def _surface_cases() -> list[dict[str, Any]]:
                 note="Plan caps legitimately return 400 max keys reached.",
             ),
         )
-    for path in ("/v1/keys/0/revoke", "/v1/keys/999999/revoke", "/v1/keys/abc/revoke", "/v1/keys/-1/rotate", "/v1/keys/999999/rotate"):
+    for path in ("/api/v1/keys/0/revoke", "/api/v1/keys/999999/revoke", "/api/v1/keys/abc/revoke", "/api/v1/keys/-1/rotate", "/api/v1/keys/999999/rotate"):
         cases.append(
             _case(
                 nxt("KEY"),
@@ -2973,7 +2973,7 @@ def _surface_cases() -> list[dict[str, Any]]:
                 {
                     "name": "create",
                     "method": "POST",
-                    "path": "/v1/keys",
+                    "path": "/api/v1/keys",
                     "body": {"name": "integration-ephemeral"},
                     "expect": {"status": 201, "json_has": ["raw_key", "key_prefix", "id"]},
                     "capture": {"new_key_id": "$.id", "new_key_raw": "$.raw_key"},
@@ -2981,19 +2981,19 @@ def _surface_cases() -> list[dict[str, Any]]:
                 {
                     "name": "list_hides_raw",
                     "method": "GET",
-                    "path": "/v1/keys",
+                    "path": "/api/v1/keys",
                     "expect": {"status": 200, "json_absent": ["key_hash"]},
                 },
                 {
                     "name": "revoke",
                     "method": "POST",
-                    "path": "/v1/keys/$new_key_id/revoke",
+                    "path": "/api/v1/keys/$new_key_id/revoke",
                     "expect": {"status": 200, "json_equals": {"status": "revoked"}},
                 },
                 {
                     "name": "revoked_key_denied",
                     "method": "GET",
-                    "path": "/v1/stores",
+                    "path": "/api/v1/stores",
                     "auth": "raw_key",
                     "headers": {"Authorization": "Bearer $new_key_raw"},
                     "expect": {"status": 401, "detail": "unauthorized"},
@@ -3002,7 +3002,7 @@ def _surface_cases() -> list[dict[str, Any]]:
             note="Destructive: creates and revokes a throwaway key.",
         ),
     )
-    for path in ("/v1/billing/subscription", "/v1/billing/invoices"):
+    for path in ("/api/v1/billing/subscription", "/api/v1/billing/invoices"):
         cases.append(
             _case(
                 nxt("BIL"),
@@ -3030,10 +3030,10 @@ def _surface_cases() -> list[dict[str, Any]]:
             _case(
                 nxt("BIL"),
                 "billing",
-                f"POST /v1/billing/change-plan {body.get('plan_code')!r}",
+                f"POST /api/v1/billing/change-plan {body.get('plan_code')!r}",
                 severity=SEV_MEDIUM,
                 method="POST",
-                path="/v1/billing/change-plan",
+                path="/api/v1/billing/change-plan",
                 body=body,
                 expect={"status_in": [200, 201, 400, 401, 402, 403, 404, 422]},
                 informational=True,
@@ -3045,14 +3045,14 @@ def _surface_cases() -> list[dict[str, Any]]:
             _case(
                 nxt("BIL"),
                 "billing",
-                f"GET /v1/billing/invoices/{invoice_id}/khqr id validation",
+                f"GET /api/v1/billing/invoices/{invoice_id}/khqr id validation",
                 severity=SEV_MEDIUM,
-                path=f"/v1/billing/invoices/{invoice_id}/khqr",
+                path=f"/api/v1/billing/invoices/{invoice_id}/khqr",
                 expect={"status_in": [401, 404, 422]},
                 informational=True,
             ),
         )
-    for path in ("/v1/admin/accounts?per_page=1000", "/v1/admin/accounts?per_page=0", "/v1/admin/accounts?page=-1", "/v1/admin/accounts?q=' OR 1=1--"):
+    for path in ("/api/v1/admin/accounts?per_page=1000", "/api/v1/admin/accounts?per_page=0", "/api/v1/admin/accounts?page=-1", "/api/v1/admin/accounts?q=' OR 1=1--"):
         cases.append(
             _case(
                 nxt("ADM"),
@@ -3099,7 +3099,7 @@ def _surface_cases() -> list[dict[str, Any]]:
                 {
                     "name": "create_hostile_store",
                     "method": "POST",
-                    "path": "/v1/stores",
+                    "path": "/api/v1/stores",
                     "body": {
                         "name": "<script>alert('xss')</script>",
                         "link": {"raw_link": PAYWAY_LINK, "merchant_account_id": "xss-test"},
@@ -3111,7 +3111,7 @@ def _surface_cases() -> list[dict[str, Any]]:
                 {
                     "name": "create_payment",
                     "method": "POST",
-                    "path": "/v1/payments",
+                    "path": "/api/v1/payments",
                     "body": {"amount": 1.00, "store": "$hostile_store"},
                     "expect": {"status_in": [201, 400]},
                     "capture": {"hostile_payment": "$.id"},
@@ -3155,7 +3155,7 @@ def _encoding_cases() -> list[dict[str, Any]]:
         ("mixed_case_hex", "%2F%2f"),
     ]
     for label, encoded in payloads:
-        for base in ("/v1/stores/", "/v1/payments/"):
+        for base in ("/api/v1/stores/", "/api/v1/payments/"):
             counter += 1
             cases.append(
                 _case(
@@ -3176,7 +3176,7 @@ def _encoding_cases() -> list[dict[str, Any]]:
                 "encoding",
                 f"query value {encoded} ({label}) is contained",
                 severity=SEV_MEDIUM,
-                path="/v1/payments",
+                path="/api/v1/payments",
                 query_raw=f"status={encoded}&store=$store",
                 expect={"status_in": [200, 422], "check": "limit_bounds"},
                 requires=["store"],

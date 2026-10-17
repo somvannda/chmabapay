@@ -74,7 +74,7 @@ async def open_ticket(
     client: httpx.AsyncClient, key: str, *, subject: str = "QR will not scan"
 ) -> dict:
     res = await client.post(
-        "/v1/support/requests",
+        "/api/v1/support/requests",
         json={"subject": subject, "category": "payment", "body": "It will not scan."},
         headers=bearer(key),
     )
@@ -112,12 +112,12 @@ async def test_a_request_opens_with_its_first_message_and_reads_back(client):
     assert created["messages"][0]["author_kind"] == "merchant"
     assert created["messages"][0]["body"] == "It will not scan."
 
-    listed = await client.get("/v1/support/requests", headers=bearer(raw_key))
+    listed = await client.get("/api/v1/support/requests", headers=bearer(raw_key))
     assert listed.status_code == 200
     assert [row["id"] for row in listed.json()["data"]] == [created["id"]]
 
     detail = await client.get(
-        f"/v1/support/requests/{created['id']}", headers=bearer(raw_key)
+        f"/api/v1/support/requests/{created['id']}", headers=bearer(raw_key)
     )
     assert detail.status_code == 200
     body = detail.json()
@@ -130,7 +130,7 @@ async def test_an_unknown_category_is_refused(client):
     raw_key, _ = await make_key(account)
 
     res = await client.post(
-        "/v1/support/requests",
+        "/api/v1/support/requests",
         json={"subject": "Hi", "category": "not_a_category", "body": "hello"},
         headers=bearer(raw_key),
     )
@@ -147,12 +147,12 @@ async def test_a_cross_account_read_and_reply_are_404(client):
     created = await open_ticket(client, owner_key)
 
     read = await client.get(
-        f"/v1/support/requests/{created['id']}", headers=bearer(other_key)
+        f"/api/v1/support/requests/{created['id']}", headers=bearer(other_key)
     )
     assert read.status_code == 404
 
     reply = await client.post(
-        f"/v1/support/requests/{created['id']}/reply",
+        f"/api/v1/support/requests/{created['id']}/reply",
         json={"body": "let me in"},
         headers=bearer(other_key),
     )
@@ -167,11 +167,11 @@ async def test_a_restricted_account_can_read_but_not_open(client):
         await session.commit()
 
     async with session_client(account) as api:
-        listed = await api.get("/v1/support/requests")
+        listed = await api.get("/api/v1/support/requests")
         assert listed.status_code == 200
 
         opened = await api.post(
-            "/v1/support/requests",
+            "/api/v1/support/requests",
             json={"subject": "Please help", "category": "billing", "body": "Hi"},
         )
         assert opened.status_code == 403
@@ -199,7 +199,7 @@ async def test_a_pro_request_is_priority_and_sorts_above_an_older_free_request(c
 
     admin = await make_admin()
     await sign_in(client, admin)
-    queue = await client.get("/v1/admin/support/requests")
+    queue = await client.get("/api/v1/admin/support/requests")
     assert queue.status_code == 200
     assert [row["id"] for row in queue.json()["data"]] == [newer["id"], older["id"]]
 
@@ -216,12 +216,12 @@ async def test_the_queue_puts_unanswered_before_answered(client):
     await sign_in(client, admin)
     assert (
         await client.post(
-            f"/v1/admin/support/requests/{answered_first['id']}/reply",
+            f"/api/v1/admin/support/requests/{answered_first['id']}/reply",
             json={"body": "Done."},
         )
     ).status_code == 200
 
-    queue = await client.get("/v1/admin/support/requests")
+    queue = await client.get("/api/v1/admin/support/requests")
     assert [row["id"] for row in queue.json()["data"]] == [
         still_open["id"],
         answered_first["id"],
@@ -239,7 +239,7 @@ async def test_first_response_is_set_once_by_the_first_operator_reply(client):
     # A merchant reply is not a response from the platform, so it must not start the clock.
     await sign_in(client, admin)
     merchant_reply_early = await client.post(
-        f"/v1/support/requests/{public_id}/reply",
+        f"/api/v1/support/requests/{public_id}/reply",
         json={"body": "extra detail"},
         headers=bearer(merchant_key),
     )
@@ -247,7 +247,7 @@ async def test_first_response_is_set_once_by_the_first_operator_reply(client):
     assert merchant_reply_early.json()["first_response_at"] is None
 
     first_reply = await client.post(
-        f"/v1/admin/support/requests/{public_id}/reply",
+        f"/api/v1/admin/support/requests/{public_id}/reply",
         json={"body": "We are looking into it."},
     )
     assert first_reply.status_code == 200
@@ -258,7 +258,7 @@ async def test_first_response_is_set_once_by_the_first_operator_reply(client):
 
     # A merchant reply reopens the thread and still does not touch the clock.
     merchant_reply = await client.post(
-        f"/v1/support/requests/{public_id}/reply",
+        f"/api/v1/support/requests/{public_id}/reply",
         json={"body": "still broken"},
         headers=bearer(merchant_key),
     )
@@ -268,7 +268,7 @@ async def test_first_response_is_set_once_by_the_first_operator_reply(client):
 
     # A second operator reply is not a second first response.
     second_reply = await client.post(
-        f"/v1/admin/support/requests/{public_id}/reply",
+        f"/api/v1/admin/support/requests/{public_id}/reply",
         json={"body": "Fixed now."},
     )
     assert second_reply.status_code == 200
@@ -292,27 +292,27 @@ async def test_the_queue_filters_by_status_priority_and_account_and_clamps_pagin
     admin = await make_admin()
     await sign_in(client, admin)
     resolved = await client.patch(
-        f"/v1/admin/support/requests/{free_ticket['id']}",
+        f"/api/v1/admin/support/requests/{free_ticket['id']}",
         json={"status": "resolved"},
     )
     assert resolved.status_code == 200
 
     by_priority = await client.get(
-        "/v1/admin/support/requests", params={"priority": "priority"}
+        "/api/v1/admin/support/requests", params={"priority": "priority"}
     )
     assert [row["id"] for row in by_priority.json()["data"]] == [pro_ticket["id"]]
 
     by_status = await client.get(
-        "/v1/admin/support/requests", params={"status": "resolved"}
+        "/api/v1/admin/support/requests", params={"status": "resolved"}
     )
     assert [row["id"] for row in by_status.json()["data"]] == [free_ticket["id"]]
 
     by_account = await client.get(
-        "/v1/admin/support/requests", params={"account_id": free.id}
+        "/api/v1/admin/support/requests", params={"account_id": free.id}
     )
     assert [row["id"] for row in by_account.json()["data"]] == [free_ticket["id"]]
 
-    clamped = await client.get("/v1/admin/support/requests", params={"per_page": 500})
+    clamped = await client.get("/api/v1/admin/support/requests", params={"per_page": 500})
     assert clamped.json()["pagination"]["per_page"] == 100
 
 
@@ -321,7 +321,7 @@ async def test_an_unauthenticated_admin_call_is_401():
         transport=httpx.ASGITransport(app=app), base_url=BASE_URL
     ) as anonymous:
         assert (
-            await anonymous.get("/v1/admin/support/requests")
+            await anonymous.get("/api/v1/admin/support/requests")
         ).status_code == 401
 
 
@@ -336,19 +336,19 @@ async def test_every_operator_write_writes_an_audit_row_naming_the_admin(client)
     await sign_in(client, admin)
     assert (
         await client.post(
-            f"/v1/admin/support/requests/{public_id}/reply",
+            f"/api/v1/admin/support/requests/{public_id}/reply",
             json={"body": "On it."},
         )
     ).status_code == 200
     assert (
         await client.patch(
-            f"/v1/admin/support/requests/{public_id}",
+            f"/api/v1/admin/support/requests/{public_id}",
             json={"assigned_admin_account_id": admin.id},
         )
     ).status_code == 200
     assert (
         await client.patch(
-            f"/v1/admin/support/requests/{public_id}", json={"status": "resolved"}
+            f"/api/v1/admin/support/requests/{public_id}", json={"status": "resolved"}
         )
     ).status_code == 200
 
@@ -375,7 +375,7 @@ async def test_assigning_a_non_admin_is_refused(client):
     created = await open_ticket(client, merchant_key)
     await sign_in(client, admin)
     res = await client.patch(
-        f"/v1/admin/support/requests/{created['id']}",
+        f"/api/v1/admin/support/requests/{created['id']}",
         json={"assigned_admin_account_id": other.id},
     )
     assert res.status_code == 400
@@ -402,7 +402,7 @@ async def test_an_operator_reply_emails_the_merchant(client, monkeypatch):
 
     await sign_in(client, admin)
     res = await client.post(
-        f"/v1/admin/support/requests/{created['id']}/reply",
+        f"/api/v1/admin/support/requests/{created['id']}/reply",
         json={"body": "Here is your answer."},
     )
     assert res.status_code == 200
@@ -452,12 +452,12 @@ async def test_a_mailer_failure_leaves_the_reply_committed(client, monkeypatch):
 
     await sign_in(client, admin)
     res = await client.post(
-        f"/v1/admin/support/requests/{created['id']}/reply",
+        f"/api/v1/admin/support/requests/{created['id']}/reply",
         json={"body": "Answer despite the outage."},
     )
     assert res.status_code == 200
 
-    detail = await client.get(f"/v1/admin/support/requests/{created['id']}")
+    detail = await client.get(f"/api/v1/admin/support/requests/{created['id']}")
     body = detail.json()
     assert body["first_response_at"] is not None
     assert [m["body"] for m in body["messages"]] == [
@@ -488,5 +488,5 @@ async def test_the_target_breach_is_visible_before_a_reply(client):
 
     admin = await make_admin()
     await sign_in(client, admin)
-    detail = await client.get(f"/v1/admin/support/requests/{created['id']}")
+    detail = await client.get(f"/api/v1/admin/support/requests/{created['id']}")
     assert detail.json()["target_breached"] is True

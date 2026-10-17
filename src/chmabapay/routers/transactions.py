@@ -42,7 +42,7 @@ from ..services.status_reconciler import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/v1/transactions",
+    prefix="/api/v1/transactions",
     tags=["transactions"],
     dependencies=AUTH_SECURITY,
     responses=AUTH_ERRORS,

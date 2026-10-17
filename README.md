@@ -159,15 +159,19 @@ the configuration belongs to the other runtime. The two failures worth knowing:
   and neither one errors.
 
 `deploy/.env.local` and the root `.env` are therefore not interchangeable, and the failure
-is a boot refusal naming the variable and the file to use. `docs/deploy.md` §2 has the
-full picture.
+is a boot refusal naming the variable and the file to use.
+
+The second failure mode can be a decision instead of an accident: set
+`CHMABAPAY_ALLOW_STACK_DB=true` and a host run may use the stack's own Postgres and
+Redis, on those published ports only. That is what a host `uv run uvicorn` against the
+same database the containers use requires. `docs/deploy.md` §2 has the full picture.
 
 ### The dev rail
 
 Dev routes under `/_dev` are the fake Bakong rail — **never enable them outside
 development**. `ENABLE_DEV_GATEWAY` defaults to off; the Docker stack turns it on from
 `deploy/.env.local`, the host from `.env`, and `deploy/docker-compose.prod.yml` hardcodes
-it off. Store provisioning API: `POST /v1/stores`, `PUT /v1/stores/{id}/link`.
+it off. Store provisioning API: `POST /api/v1/stores`, `PUT /api/v1/stores/{id}/link`.
 
 ### Running the tests
 
@@ -176,14 +180,34 @@ uv run pytest        # ~35 min on Windows: SQLite default, rebuilds the schema p
 ```
 
 Point it at a Postgres `chmabapay_test` database — the same thing CI does — and the
-same suite takes about **2.5 minutes**:
+same suite takes about **11 minutes** instead of 35:
 
 ```powershell
-$env:CHMABAPAY_TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/chmabapay_test"
+# The development stack's own Postgres. docker-compose.yml publishes it on 55432 and
+# leaves 5432 to whatever native Postgres the machine already runs, so this is the
+# same engine the containers use — one database over, never the same one.
+$env:CHMABAPAY_TEST_DATABASE_URL = "postgresql+asyncpg://chmaba:chmaba@localhost:55432/chmabapay_test"
 uv run pytest
 ```
 
-Two things that are easy to get wrong:
+Create that database once, if it is not there yet:
+
+```powershell
+docker exec chmabapay-db-1 psql -U chmaba -d postgres -c "CREATE DATABASE chmabapay_test"
+```
+
+CI also sets `CHMABAPAY_TEST_REDIS_URL`, because the stream commands the transport is
+built on (`XREADGROUP`, `XAUTOCLAIM`) deserve better than `fakeredis`. The stack's Redis
+is published on 56379, and DB 15 keeps the test keys clear of the API's own DB 0:
+
+```powershell
+$env:CHMABAPAY_TEST_REDIS_URL = "redis://localhost:56379/15"
+```
+
+The 11 minutes above is measured without it. A real server adds roughly three, which is
+a fair price for exercising the commands the queue is actually built on, and CI pays it.
+
+Three things that are easy to get wrong:
 
 - **`uv run pytest`, never `python -m pytest`.** `test_migrations.py` shells out to
   `python -m alembic`, and `pythonpath = ["src"]` applies only to the pytest process, so
@@ -191,6 +215,13 @@ Two things that are easy to get wrong:
   migration tests fail for reasons unrelated to the code.
 - **The test database name must contain `test`.** `tests/conftest.py` refuses anything
   else, so an ambient `DATABASE_URL` cannot aim its destructive fixtures at real data.
+- **Clear an exported `WORKER_TRANSPORT`.** An exported variable outranks `.env`, so a
+  shell still carrying `WORKER_TRANSPORT=redis` from an earlier session hands it to the
+  test process as well — and nothing fails loudly. `test_admin_overview.py`'s
+  `test_the_worker_signals_are_absent_rather_than_zero_in_process` just reports
+  `watched: true`, because the app now believes it is reading a shared Redis. Clear it
+  with `$env:WORKER_TRANSPORT = $null`: a `Remove-Item Env:` can be caught by a shell
+  profile that routes removals through the recycle bin, and quietly do nothing.
 
 The speed difference is not the tests: SQLite on Windows spends ~13 s per test dropping
 and recreating every table, which dwarfs the assertions. That is why CI runs Postgres.
@@ -210,11 +241,11 @@ payment. A test that never runs is not coverage.
 ### Implemented in the POC
 - Tenant model: account (POS) → auto-provisioned sub-merchants → per-store payment links.
 - Account-scoped keys (provision + charge any store) and store-scoped keys (one store only).
-- `POST/GET /v1/payments` + list, hosted checkout `/pay/:id`, idempotency. The QR window
+- `POST/GET /api/v1/payments` + list, hosted checkout `/pay/:id`, idempotency. The QR window
   is **the rail's, not ours**: ABA returns `expire_in_sec: 180` for a hosted checkout and
   we mirror it, so the 5-minute `checkout_ttl_seconds` applies only to codes we build
   ourselves. A code that lapses is withdrawn (`410`) and replaced via
-  `POST /v1/payments/{id}/reissue`, with lineage kept.
+  `POST /api/v1/payments/{id}/reissue`, with lineage kept.
 - One **shared** account-level webhook + signing secret; events tagged with the sub-merchant.
 - Outbox (events written atomically with state change) + retry delivery worker, HMAC-SHA256
   signatures (`t=...,v1=...`), store-scoped endpoint override.

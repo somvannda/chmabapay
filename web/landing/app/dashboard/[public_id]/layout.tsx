@@ -59,7 +59,7 @@ export default function StoreScopedLayout({
     let alive = true;
     (async () => {
       try {
-        const res = await fetch(`/v1/stores/${publicId}`, {
+        const res = await fetch(`/api/v1/stores/${publicId}`, {
           credentials: "include",
         });
         if (res.ok) {
@@ -80,7 +80,7 @@ export default function StoreScopedLayout({
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/v1/stores", { credentials: "include" });
+        const res = await fetch("/api/v1/stores", { credentials: "include" });
         // A failed read used to leave `stores` empty, which the switcher then read as
         // "No other stores" — a claim it cannot make from a request that did not answer.
         if (!res.ok) throw new Error(`HTTP ${res.status}`);

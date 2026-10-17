@@ -130,7 +130,7 @@ def _checkout_html(
     initial = {
         "id": payment.public_id,
         "status": payment.status,
-        "amount": money_to_str(payment.amount_cents),
+        "amount": money_to_str(payment.amount_cents, payment.currency),
         "currency": payment.currency,
         "reference_id": payment.reference_id,
         "expires_ms": int(payment.expires_at.timestamp() * 1000),
@@ -225,7 +225,7 @@ async def checkout_qr(public_id: str, session: AsyncSession = Depends(get_sessio
     """The payment's own QR, as a short stable URL.
 
     The payload itself is ~260 characters of EMVCo TLV. Handing that around as a
-    query string on /v1/khqr/render.svg works in an <img src> but not for a human:
+    query string on /api/v1/khqr/render.svg works in an <img src> but not for a human:
     it contains percent-escaped spaces, and anything that decodes or wraps it
     truncates the payload — which renders a perfectly valid QR for the *wrong*
     string, and the wallet answers "invalid QR". One stable URL per payment
@@ -281,7 +281,7 @@ async def checkout_status(public_id: str, session: AsyncSession = Depends(get_se
     return schemas.CheckoutPaymentStatusOut(
         id=payment.public_id,
         status=payment.status,
-        amount=money_to_str(payment.amount_cents),
+        amount=money_to_str(payment.amount_cents, payment.currency),
         currency=payment.currency,
         store_name=store.name,
         store=store.public_id,

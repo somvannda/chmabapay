@@ -30,12 +30,47 @@ type ReportSummary = {
   total_matching_rows: number;
   total_matching_paid_count: number;
   total_matching_paid_amount_cents: number;
+  total_matching_paid_by_currency?: Record<
+    string,
+    { cents: number; formatted: string }
+  >;
   total_matching_reversed_count?: number;
   total_matching_reversed_amount_cents?: number;
+  total_matching_reversed_by_currency?: Record<
+    string,
+    { cents: number; formatted: string }
+  >;
 };
 
 function formatDollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+/** One figure per currency, never a sum of dollars and riel. */
+function formatByCurrency(
+  byCurrency: Record<string, { cents: number; formatted: string }> | undefined,
+  fallbackCents: number,
+): string {
+  if (byCurrency && Object.keys(byCurrency).length > 0) {
+    return Object.entries(byCurrency)
+      .map(([cur, amount]) =>
+        cur === "KHR" ? `៛${amount.formatted}` : `$${amount.formatted}`,
+      )
+      .join(" · ");
+  }
+  return formatDollars(fallbackCents);
+}
+
+/**
+ * Render a paid total across the currencies it was settled in — one figure per
+ * currency, never a single sum of dollars and riel. Falls back to `fallbackCents`
+ * on older API responses.
+ */
+function formatSummaryMoney(
+  summary: ReportSummary | null,
+  fallbackCents: number,
+): string {
+  return formatByCurrency(summary?.total_matching_paid_by_currency, fallbackCents);
 }
 
 function isoDateParam(d: Date): string {
@@ -122,7 +157,7 @@ export default function StoreOverviewPage({
     setStoreError(null);
     (async () => {
       try {
-        const res = await fetch(`/v1/stores/${publicId}`, {
+        const res = await fetch(`/api/v1/stores/${publicId}`, {
           credentials: "include",
         });
         if (res.status === 404) {
@@ -150,7 +185,7 @@ export default function StoreOverviewPage({
     (async () => {
       try {
         const res = await fetch(
-          `/v1/payments?store=${encodeURIComponent(publicId)}&limit=20`,
+          `/api/v1/payments?store=${encodeURIComponent(publicId)}&limit=20`,
           { credentials: "include" },
         );
         if (!res.ok) throw new Error(await readApiError(res));
@@ -188,11 +223,11 @@ export default function StoreOverviewPage({
         const today = isoDateParam(new Date());
         const scope = `store_id=${encodeURIComponent(publicId)}`;
         const [allRes, todayRes] = await Promise.all([
-          fetch(`/v1/reports/payments.json?${scope}&per_page=1`, {
+          fetch(`/api/v1/reports/payments.json?${scope}&per_page=1`, {
             credentials: "include",
           }),
           fetch(
-            `/v1/reports/payments.json?${scope}&from=${today}&to=${today}&per_page=1`,
+            `/api/v1/reports/payments.json?${scope}&from=${today}&to=${today}&per_page=1`,
             { credentials: "include" },
           ),
         ]);
@@ -336,7 +371,7 @@ export default function StoreOverviewPage({
         <div className="dash-stat-card dash-stat-accent">
           <div className="dash-stat-label">Paid today</div>
           <div className="dash-stat-value">
-            {figuresReady ? formatDollars(paidTodayCents) : "—"}
+            {figuresReady ? formatSummaryMoney(summaryToday, paidTodayCents) : "—"}
           </div>
           <div className="dash-stat-trend">
             {figuresReady
@@ -349,13 +384,13 @@ export default function StoreOverviewPage({
         <div className="dash-stat-card">
           <div className="dash-stat-label">Settled</div>
           <div className="dash-stat-value">
-            {figuresReady ? formatDollars(settledCents) : "—"}
+            {figuresReady ? formatSummaryMoney(summaryAll, settledCents) : "—"}
           </div>
           <div className="dash-stat-trend">
             {!figuresReady
               ? "—"
               : refundedCount > 0
-                ? `all time · ${refundedCount} refunded (${formatDollars(refundedCents)})`
+                ? `all time · ${refundedCount} refunded (${formatByCurrency(summaryAll?.total_matching_reversed_by_currency, refundedCents)})`
                 : "all time · no refunds"}
           </div>
         </div>

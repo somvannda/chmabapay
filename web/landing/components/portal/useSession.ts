@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 export type Profile = {
   id?: number | string;
   email?: string;
-  // The API returns the profile name as `name` (see /v1/me).
+  // The API returns the profile name as `name` (see /api/v1/me).
   name?: string | null;
   is_platform_admin?: boolean;
   whitelabel_enabled?: boolean;
@@ -42,7 +42,7 @@ export function useSession() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/v1/me", { credentials: "include" });
+      const res = await fetch("/api/v1/me", { credentials: "include" });
       if (!res.ok) {
         if (res.status === 401) {
           const next = encodeURIComponent(
@@ -68,7 +68,7 @@ export function useSession() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch("/v1/me", { credentials: "include" });
+        const res = await fetch("/api/v1/me", { credentials: "include" });
         if (!res.ok) {
           if (res.status === 401) {
             const next = encodeURIComponent(

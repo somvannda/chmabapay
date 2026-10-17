@@ -51,7 +51,7 @@ from .keys import KeyOut, mint_key, rotate_key_instance
 from .reports import _parse_iso_date_end, _parse_iso_date_start
 
 router = APIRouter(
-    prefix="/v1/admin",
+    prefix="/api/v1/admin",
     tags=["admin"],
     # Not published. The console's surface is internal — it is reached from
     # admin.chmaba.com behind a platform-admin session, and every route in it is
@@ -80,9 +80,9 @@ async def get_hybrid_admin_context(
     Two gates, and the second one used to live only in the browser. The console
     tells operators it is password-only (`web/admin/README.md`), and the React
     shell does refuse an SSO session — but nothing on the server did, so an
-    admin's Google session could call every `/v1/admin/*` route directly with
+    admin's Google session could call every `/api/v1/admin/*` route directly with
     curl. `session_auth_method` existed for exactly this and was only ever read
-    by `GET /v1/me`. It is enforced here now, and it fails *closed*: a token
+    by `GET /api/v1/me`. It is enforced here now, and it fails *closed*: a token
     minted before the `amr` claim existed reports "unknown" and is refused
     rather than assumed to be a password session.
 
@@ -1348,7 +1348,7 @@ async def enable_account_store(
 
     Disabling had no counterpart on this side: the console could stop a store
     mid-incident, but the only route back was the merchant-authenticated
-    `POST /v1/stores/{public_id}/enable`, so an operator who disabled the wrong
+    `POST /api/v1/stores/{public_id}/enable`, so an operator who disabled the wrong
     store — or whose fix the merchant had already made — had to ask the merchant
     to undo it. The status it restores to is derived the same way the merchant
     route derives it: `active` only while the store still has a payment link,
@@ -2122,7 +2122,7 @@ async def list_all_deliveries(
 ):
     """Every webhook delivery attempt on the platform, newest first.
 
-    The merchant-facing route (`GET /v1/webhooks/{id}/deliveries`) answers "did
+    The merchant-facing route (`GET /api/v1/webhooks/{id}/deliveries`) answers "did
     *my* endpoint receive it", and only for an endpoint the caller owns. Nobody
     could answer "is the webhook rail delivering at all", which is the question
     that matters when three merchants report silence at once and each of them
@@ -2374,28 +2374,36 @@ async def admin_overview(
     # Merchant volume excludes the platform's own internal stores. Without the join an
     # operator reading "Paid today" would see the plan fees merchants paid *us* reported
     # as though they were merchant GMV; that money is broken out below instead.
-    paid_today_count = (
+    #
+    # Grouped by currency: USD and KHR are different units, so the console shows one
+    # figure per currency rather than a single summed total that would be dollars
+    # added to riel.
+    paid_today_rows = (
         await session.execute(
-            select(func.count(models.Payment.id))
+            select(
+                models.Payment.currency,
+                func.count(models.Payment.id),
+                func.coalesce(func.sum(models.Payment.amount_cents), 0),
+            )
             .join(models.Store, models.Store.id == models.Payment.store_id)
             .where(
                 models.Store.is_internal.is_(False),
                 models.Payment.status == models.PAYMENT_PAID,
                 models.Payment.paid_at >= today_start,
             )
+            .group_by(models.Payment.currency)
         )
-    ).scalar_one() or 0
-    paid_today_cents = (
-        await session.execute(
-            select(func.coalesce(func.sum(models.Payment.amount_cents), 0))
-            .join(models.Store, models.Store.id == models.Payment.store_id)
-            .where(
-                models.Store.is_internal.is_(False),
-                models.Payment.status == models.PAYMENT_PAID,
-                models.Payment.paid_at >= today_start,
-            )
-        )
-    ).scalar_one()
+    ).all()
+    paid_today_by_currency: dict[str, dict[str, int]] = {}
+    paid_today_count = 0
+    paid_today_cents = 0
+    for currency, count, amount in paid_today_rows:
+        key = (currency or "USD").upper()
+        row = paid_today_by_currency.setdefault(key, {"count": 0, "cents": 0})
+        row["count"] += int(count or 0)
+        row["cents"] += int(amount or 0)
+        paid_today_count += int(count or 0)
+        paid_today_cents += int(amount or 0)
     # The platform's own revenue, from internal stores only — plan fees collected into
     # "ChmabaPay HQ". Reported separately rather than summed into merchant volume, which
     # is the whole reason internal stores exist as a category.
@@ -2458,6 +2466,7 @@ async def admin_overview(
         "mrr_cents": int(mrr_cents or 0),
         "paid_today_count": paid_today_count,
         "paid_today_cents": int(paid_today_cents or 0),
+        "paid_today_by_currency": paid_today_by_currency,
         "platform_revenue_today_cents": int(platform_revenue_today_cents or 0),
         "platform_revenue_this_month_cents": int(
             platform_revenue_this_month_cents or 0

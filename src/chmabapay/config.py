@@ -27,12 +27,36 @@ class Settings(BaseSettings):
     # `assert_runtime_matches_configuration` is the guard.
     chmabapay_runtime: str | None = None
 
+    # A host process is refused the stack's *published* Postgres (55432) and Redis
+    # (56379), because reaching into a container's volumes from the host is how two
+    # environments end up disagreeing about the same row without either one erroring.
+    # That stays the default. Set this true when the sharing is the point — running
+    # `uv run uvicorn` on the host against the same database and schema the containers
+    # use — and the refusal lifts for those two ports and nothing else.
+    #
+    # A switch rather than a looser rule, deliberately: it keeps the accident the guard
+    # was written for distinguishable from a decision somebody made on purpose.
+    chmabapay_allow_stack_db: bool = False
+
     # A fake Bakong rail mounted at /_dev where POST /_dev/payments/{id}/pay marks a
     # payment paid without money moving, and GET /auth/_dev/login mints a real session
     # cookie for any email you name. Neither is behind a credential, so this defaults
     # to OFF: an omitted variable must not produce the state that hands out sessions.
     # Local dev turns it back on explicitly (`.env`, `ENABLE_DEV_GATEWAY=true`).
     enable_dev_gateway: bool = False
+
+    # bcrypt cost factor for account passwords. The default (12) is deliberately
+    # slow — that is the point of a password hash. The test suite sets it to bcrypt's
+    # minimum (4) because it performs dozens of real admin sign-ins, and at cost 12
+    # those hashes dominated the whole run. Never lower this in production.
+    bcrypt_rounds: int = 12
+
+    # Whether a store may settle in KHR. Off by default: KHR is new and an ABA
+    # PayWay link is single-currency, so enabling it is a deliberate decision made
+    # once a real KHR link has been verified end-to-end. The frontend mirrors this
+    # with `NEXT_PUBLIC_ENABLE_KHR` so the option is hidden until then, but this is
+    # the enforcement point — a caller cannot force KHR past a disabled flag.
+    enable_khr_currency: bool = False
 
     # In-process background loops (poll DB). Production swaps to Redis + workers.
     workers_enabled: bool = True
@@ -243,7 +267,7 @@ class Settings(BaseSettings):
 
     # Merchant alerts via Telegram. A store holds the `telegram_chat_id`; this
     # token is what turns that id into a delivered message. Without it no alert
-    # can be sent, so POST /v1/stores/{id}/telegram/test refuses (503) instead of
+    # can be sent, so POST /api/v1/stores/{id}/telegram/test refuses (503) instead of
     # reporting a success that never happened.
     telegram_bot_token: str | None = None
     telegram_timeout_seconds: float = 5.0
@@ -302,7 +326,7 @@ class Settings(BaseSettings):
     worker_w1_fast_poll_seconds: float = 5.0
     worker_w1_fast_window_seconds: float = 180.0
 
-    # Billing self-pay HQ store: used by /v1/billing/invoices/{id}/khqr to target
+    # Billing self-pay HQ store: used by /api/v1/billing/invoices/{id}/khqr to target
     # ChmabaPay's own internal store when it dog-foods create_payment() to collect plan fees.
     # Accepts either Store.id (int-as-string) or Store.public_id (string). Fallback: first
     # is_platform_admin account's first active Store. If none -> 500 platform_hq_store_not_configured.
@@ -509,6 +533,11 @@ def assert_runtime_matches_configuration(settings: Settings) -> None:
     the only time it is read: its default is deliberately a host address, and
     checking it on the in-process transport would refuse every container for a
     variable nothing consults.
+
+    One case is decidable rather than wrong: a host run sharing the stack's own
+    database. `CHMABAPAY_ALLOW_STACK_DB=true` lifts the published-port refusal, and
+    only that rule — a host process still cannot resolve a compose service name, and
+    a container still cannot use `localhost`.
     """
     declared = (settings.chmabapay_runtime or "").strip().lower() or None
     if declared is not None and declared not in _DECLARED_RUNTIMES:
@@ -557,10 +586,16 @@ def assert_runtime_matches_configuration(settings: Settings) -> None:
                 f"{name} points at '{host}', a compose service name that only exists "
                 "on the compose network"
             )
-        elif not container and host in _LOCAL_HOSTS and port in _COMPOSE_HOST_PORTS:
+        elif (
+            not container
+            and host in _LOCAL_HOSTS
+            and port in _COMPOSE_HOST_PORTS
+            and not settings.chmabapay_allow_stack_db
+        ):
             problems.append(
                 f"{name} points at a container's published port ({host}:{port}); "
-                "that database belongs to the Docker stack"
+                "that database belongs to the Docker stack. Set "
+                "CHMABAPAY_ALLOW_STACK_DB=true to share it on purpose"
             )
 
     if not problems:
@@ -580,7 +615,8 @@ def assert_runtime_matches_configuration(settings: Settings) -> None:
             "or give the host run a database of its own (DATABASE_URL with no host, "
             "e.g. sqlite+aiosqlite:///./chmabapay.db) and set CHMABAPAY_RUNTIME=local. "
             "Reaching *into* the container's database from the host is the mix this "
-            "refuses."
+            "refuses — unless CHMABAPAY_ALLOW_STACK_DB=true, which says the sharing "
+            "is deliberate."
         )
     )
 

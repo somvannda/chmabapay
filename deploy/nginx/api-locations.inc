@@ -2,9 +2,9 @@
 # /etc/nginx/conf.d/*.conf` does not pick it up a second time.
 
 # The API, matched by path. Anything not listed here belongs to the app on that
-# vhost, which is why the website can own `/` while the API owns `/v1`.
+# vhost, which is why the website can own `/` while the API owns `/api/v1`.
 
-location /v1/ {
+location /api/v1/ {
     proxy_pass http://chmabapay_api;
 }
 

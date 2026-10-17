@@ -37,6 +37,7 @@ from .routers import (
     keys,
     khqr,
     payments,
+    public,
     reports,
     stores,
     support,
@@ -262,6 +263,7 @@ def create_app() -> FastAPI:
     app.include_router(billing.router)
     app.include_router(admin.router)
     app.include_router(reports.router)
+    app.include_router(public.router)
     if settings.enable_dev_gateway:
         from .routers import dev
 

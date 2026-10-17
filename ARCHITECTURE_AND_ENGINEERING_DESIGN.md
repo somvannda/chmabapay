@@ -63,7 +63,7 @@ Four non-negotiable rules every engineer on the project follows:
               │  DNS:  api.chmabapay.com         App 1: BACKEND API MONOLITH (FastAPI)       │
               │  ┌────────────────────────────────────────────────────────────────────────┐  │
               │  │  FastAPI create_app()                                                  │  │
-              │  │    1. HTTP Endpoints (/v1/* + /auth + /pay/{id} public)               │  │
+              │  │    1. HTTP Endpoints (/api/v1/* + /auth + /pay/{id} public)               │  │
               │  │    2. (Phase 1 ONLY) bg tasks: W1-W4 workers run IN-PROCESS           │  │
               │  │    3. (Phase 2/3 ONLY) NO BG workers in API proc → offloaded          │  │
               │  └────────────────────────────────────────────────────────────────────────┘  │
@@ -149,7 +149,7 @@ Four non-negotiable rules every engineer on the project follows:
 │   uvicorn API                      │    │   N × Worker Processes (same package)  │
 │   (HTTP only, lifespan BG: OFF)    │    │   CLI:  uv run python -m chmabapay.    │
 │                                    │    │         workers run W1 W2 W3 W4        │
-│   - All /v1/* + /auth + /pay/*     │    │                                        │
+│   - All /api/v1/* + /auth + /pay/*     │    │                                        │
 │   - On write: enqueue() → Redis    │    │   - Each worker dequeues via           │
 │                                    │    │     RedisTransport + process()         │
 │   - 0 BG workers in this proc      │    │   - Can run 4 workers × N replicas     │
@@ -236,7 +236,7 @@ Four non-negotiable rules every engineer on the project follows:
 | **Concurrency** | 20 per replica. Per-account parallel. Single global job → emits N per-account child jobs (fan-out). |
 | **Max attempts** | 1. Human fixes on failure. |
 | **Input job** | `{period_month: "2026-09", account_id: int\|None, only_overdue: bool}`. None = all accounts. |
-| **Flow** | <ol><li>For each active subscription: compute usage via `PlanLedgerEntry WHERE period_month=?` aggregate</li><li>Invoice.base = plan.monthly_fee_cents; overage = 0 (plans have no per-payment overage price)</li><li>Invoice.status = ISSUED; POST /v1/payments → KHQR via our own store (st_chmabapay_hq)</li><li>Email: "Your ChmabaPay Sep invoice is ready → [Pay Now KHQR]"</li></ol> |
+| **Flow** | <ol><li>For each active subscription: compute usage via `PlanLedgerEntry WHERE period_month=?` aggregate</li><li>Invoice.base = plan.monthly_fee_cents; overage = 0 (plans have no per-payment overage price)</li><li>Invoice.status = ISSUED; POST /api/v1/payments → KHQR via our own store (st_chmabapay_hq)</li><li>Email: "Your ChmabaPay Sep invoice is ready → [Pay Now KHQR]"</li></ol> |
 | **Run pattern (Phase 2+)** | Kubernetes CronJob or scheduled admin CLI. Not a long-running process. |
 
 ### W4. Payment Expiry Sweeper (LEAST CRITICAL, BATCH SQL)
@@ -562,8 +562,8 @@ No separate "integration API" vs "portal API" deployables. One FastAPI, two auth
 
 | Mode | Header / Transport | Used For | Router Prefix | Permissions Model |
 |---|---|---|---|---|
-| **Bearer API Key** (Integration) | `Authorization: Bearer <ck_… or st_…>` | Merchant HTTP integration. cURL, PHP/JS SDKs. | `/v1/payments/*`, `/v1/khqr/*`, `/v1/platform/*`, `/v1/stores/*` (mutations that also work via API key), `/v1/transactions/*` | `resolve_key_context()` → scope rule. Sub-merchant gate. Plan max limits. |
-| **Session Cookie JWT** (Portal) | httpOnly cookie `chmabapay_session` + optional CSRF header | User/admin browser UI (Next.js frontends). Session JWT signed with rotating secret. | `/auth/*`, `/v1/me/*`, `/v1/keys/*` (session CRUD), `/v1/webhooks/*` (session CRUD), `/v1/billing/*`, `/v1/reports/*`, all `/v1/admin/*` | `require_dashboard_session()` → Account + plan. `require_platform_admin()` for admin routes. |
+| **Bearer API Key** (Integration) | `Authorization: Bearer <ck_… or st_…>` | Merchant HTTP integration. cURL, PHP/JS SDKs. | `/api/v1/payments/*`, `/api/v1/khqr/*`, `/api/v1/platform/*`, `/api/v1/stores/*` (mutations that also work via API key), `/api/v1/transactions/*` | `resolve_key_context()` → scope rule. Sub-merchant gate. Plan max limits. |
+| **Session Cookie JWT** (Portal) | httpOnly cookie `chmabapay_session` + optional CSRF header | User/admin browser UI (Next.js frontends). Session JWT signed with rotating secret. | `/auth/*`, `/api/v1/me/*`, `/api/v1/keys/*` (session CRUD), `/api/v1/webhooks/*` (session CRUD), `/api/v1/billing/*`, `/api/v1/reports/*`, all `/api/v1/admin/*` | `require_dashboard_session()` → Account + plan. `require_platform_admin()` for admin routes. |
 | **Public** | No auth | Hosted checkout page, health | `/pay/*`, `/health`, `/.well-known/*` | Read-only; no mutations. |
 
 No conflicts. Two auth Depends are orthogonal. One FastAPI serves all three modes.
@@ -577,17 +577,17 @@ Mounted in [main.py create_app()](file:///e:/Development/chmabapay/src/chmabapay
 | Router File | URL Prefix | Auth Mode | Milestone Added |
 |---|---|---|---|
 | routers/**auth.py** | `/auth` | Public (Google OAuth) | M1 |
-| routers/**account.py** | `/v1/me` | Session | M1 |
-| routers/**payments.py** | `/v1/payments` | Bearer key (primary) + Session (view only) | Existing + M1 extend |
-| routers/**stores.py** | `/v1/stores` | Bearer + Session | Existing + M1 extend |
-| routers/**khqr.py** | `/v1/khqr` | Bearer + Session | Existing + M1 tweaks |
-| routers/**transactions.py** | `/v1/transactions` | Bearer + Session | Existing |
-| routers/**keys.py** (NEW, split from services) | `/v1/keys` | Bearer (rotate/revoke) + Session (CRUD list) | M1 |
-| routers/**webhooks.py** (NEW, split) | `/v1/webhooks` | Bearer + Session + `send-test` helper | M1 |
-| routers/**billing.py** | `/v1/billing` | Session | M1 backend, M2 invoicing full |
-| routers/**reports.py** | `/v1/reports` | Session | M2 (Starter-gated export) |
-| routers/**platform.py** | `/v1/platform` | Bearer account-scope + plan SaaS gate | M3 (Scale feature) |
-| routers/**admin.py** | `/v1/admin` | Session + `is_platform_admin` | M2 (plans) |
+| routers/**account.py** | `/api/v1/me` | Session | M1 |
+| routers/**payments.py** | `/api/v1/payments` | Bearer key (primary) + Session (view only) | Existing + M1 extend |
+| routers/**stores.py** | `/api/v1/stores` | Bearer + Session | Existing + M1 extend |
+| routers/**khqr.py** | `/api/v1/khqr` | Bearer + Session | Existing + M1 tweaks |
+| routers/**transactions.py** | `/api/v1/transactions` | Bearer + Session | Existing |
+| routers/**keys.py** (NEW, split from services) | `/api/v1/keys` | Bearer (rotate/revoke) + Session (CRUD list) | M1 |
+| routers/**webhooks.py** (NEW, split) | `/api/v1/webhooks` | Bearer + Session + `send-test` helper | M1 |
+| routers/**billing.py** | `/api/v1/billing` | Session | M1 backend, M2 invoicing full |
+| routers/**reports.py** | `/api/v1/reports` | Session | M2 (Starter-gated export) |
+| routers/**platform.py** | `/api/v1/platform` | Bearer account-scope + plan SaaS gate | M3 (Scale feature) |
+| routers/**admin.py** | `/api/v1/admin` | Session + `is_platform_admin` | M2 (plans) |
 | routers/**checkout.py** | `/pay` | Public | Existing |
 | routers/**dev.py** | `/_dev` | Public if `enable_dev_gateway` (Phase 1) | Existing (dev only) |
 
@@ -768,9 +768,9 @@ Instrumented in Milestone 1 — not bolted on after:
 | M1.5 | **W2 WebhookSenderWorker** → Wrap today's webhook_loop process_due + sign_payload in `process(job)` | ✅ Fan-out enqueue on Event insert (Section 6.2). ✅ uq_event_endpoint dedup OK |
 | M1.6 | **W4 ExpirySweeperWorker** → Wrap today's expiry_loop in `process(job)` | ✅ 60s heartbeat enqueues |
 | M1.7 | W3 BillingInvoiceWorker stub (skeleton only) | ✅ Placeholder; M2 implements |
-| M1.8 | Auth router (Google OAuth + session + /auth/signout) + /v1/me profile endpoints | |
+| M1.8 | Auth router (Google OAuth + session + /auth/signout) + /api/v1/me profile endpoints | |
 | M1.9 | Keys + Webhooks session CRUD endpoints (routers/keys.py + webhooks.py NEW) | |
-| M1.10 | Billing backend: `/v1/billing/plans` matrix + change-plan (Individual → Growth auto-type switch) | |
+| M1.10 | Billing backend: `/api/v1/billing/plans` matrix + change-plan (Individual → Growth auto-type switch) | |
 | M1.11 | Test-mode ApiKey.mode=test → fake delay mark_paid after 5s + enqueue W1 | ✅ Enqueue pattern works |
 | M1.12 | Dashboard pages (Next.js): dashboard overview + stores CRUD + payments list/detail + keys + webhooks + settings (profile/billing) | ✅ Shared component library `web/shared/` (Section 11) |
 

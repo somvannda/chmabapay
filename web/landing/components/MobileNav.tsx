@@ -30,7 +30,7 @@ const LINKS = [
 const SIGN_IN_HREF = "/auth/google/login";
 
 export type MobileNavProps = {
-  /** Omitted while anonymous — and while the `GET /v1/me` check is still in flight. */
+  /** Omitted while anonymous — and while the `GET /api/v1/me` check is still in flight. */
   profile?: Profile | null;
   onSignOut?: () => void;
   signingOut?: boolean;

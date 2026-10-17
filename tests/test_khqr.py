@@ -181,10 +181,10 @@ async def test_the_khqr_generator_routes_require_a_credential(client) -> None:
     was being parsed by an unauthenticated handler.
     """
     unauthenticated = [
-        ("POST", "/v1/khqr/from-link", {}),
-        ("POST", "/v1/khqr/probe-aba-status?slug_or_url=ABAPAYpe518710Y", None),
-        ("POST", "/v1/khqr/payway/checkout", {}),
-        ("POST", "/v1/khqr/payway/status", {}),
+        ("POST", "/api/v1/khqr/from-link", {}),
+        ("POST", "/api/v1/khqr/probe-aba-status?slug_or_url=ABAPAYpe518710Y", None),
+        ("POST", "/api/v1/khqr/payway/checkout", {}),
+        ("POST", "/api/v1/khqr/payway/status", {}),
     ]
     for method, path, body in unauthenticated:
         resp = await client.request(method, path, json=body)
@@ -192,7 +192,7 @@ async def test_the_khqr_generator_routes_require_a_credential(client) -> None:
 
     # An unknown key is refused too, rather than being treated as anonymous.
     resp = await client.post(
-        "/v1/khqr/from-link",
+        "/api/v1/khqr/from-link",
         json={"link": "https://link.payway.com.kh/ABAPAYpe518710Y", "amount": 1.0},
         headers={"Authorization": "Bearer ck_test_0000000000000000000"},
     )
@@ -206,5 +206,5 @@ async def test_the_qr_renderer_stays_public(client) -> None:
     Authorization header can be attached. Locking it down would blank every
     customer-facing QR, so this asserts the exemption survives future edits.
     """
-    resp = await client.get("/v1/khqr/render.svg", params={"payload": "not-a-payload"})
+    resp = await client.get("/api/v1/khqr/render.svg", params={"payload": "not-a-payload"})
     assert resp.status_code != 401

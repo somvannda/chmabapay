@@ -16,19 +16,19 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 ### T-01 — Authenticate the four KHQR routes
 - **Status**: `complete` · **Priority**: S1 · **Gaps**: G-10 · **Depends on**: none
-- **Description**: `POST /v1/khqr/from-link`, `/probe-aba-status`, `/payway/checkout`,
+- **Description**: `POST /api/v1/khqr/from-link`, `/probe-aba-status`, `/payway/checkout`,
   `/payway/status` in `src/chmabapay/routers/khqr.py` (lines 112, 281, 327, 371) carry
   no auth dependency. Add the account API-key dependency used elsewhere (the same
   `get_current_auth_context` / `require_key` pattern the payments router uses), so a
-  `ck_live_` Bearer key is required. Leave `GET /v1/khqr/render.svg` public only if it
+  `ck_live_` Bearer key is required. Leave `GET /api/v1/khqr/render.svg` public only if it
   is genuinely intended to be public — confirm against `docs/api.md:22`, which marks it
   "(no auth)". Do not add auth to `render.svg` if the docs are right.
 - **Test**: pytest — each of the four returns 401 without a key and 200/4xx-with-key
-  with a valid one. Live re-probe: `POST /v1/khqr/from-link` with an empty body must
+  with a valid one. Live re-probe: `POST /api/v1/khqr/from-link` with an empty body must
   change from **422** to **401**.
-- **Evidence**: `curl -s -o /dev/null -w "%{http_code}" -X POST https://pay.chmaba.com/v1/khqr/from-link -H "Content-Type: application/json" -d "{}"`
+- **Evidence**: `curl -s -o /dev/null -w "%{http_code}" -X POST https://pay.chmaba.com/api/v1/khqr/from-link -H "Content-Type: application/json" -d "{}"`
 - **Shipped**: each of the four carries `dependencies=AUTH_SECURITY` individually rather
-  than the router doing it, because `GET /v1/khqr/render.svg` **is** genuinely public — a
+  than the router doing it, because `GET /api/v1/khqr/render.svg` **is** genuinely public — a
   QR image is what a merchant pastes into a page their customers load, and `docs/api.md`
   is right about it. So the router stays open and the four routes that drive an outbound
   ABA fetch (one of which spends a real checkout session) declare the credential
@@ -38,11 +38,11 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   declaration so a route that drifts out from under it fails the suite rather than the
   probe.
 
-### T-02 — Enforce password sessions on `/v1/admin/*`
+### T-02 — Enforce password sessions on `/api/v1/admin/*`
 - **Status**: `complete` · **Priority**: S2 · **Gaps**: G-42 · **Depends on**: none
 - **Description**: `get_hybrid_admin_context` in `src/chmabapay/routers/admin.py:33-51`
   only checks `is_platform_admin`. `session_auth_method(request)` exists
-  (`routers/auth.py:141-153`) but is only called by `GET /v1/me`. Add a `Request`
+  (`routers/auth.py:141-153`) but is only called by `GET /api/v1/me`. Add a `Request`
   parameter and fail closed unless the session's `amr == "password"`. Also decide the
   Bearer path: an admin's own `ck_` key currently reaches every admin route. Recommended
   default is to drop the key path for admin (session + password only), which matches
@@ -162,7 +162,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 ### T-06 — Stop the free self-upgrade
 - **Status**: `complete` · **Priority**: S1 · **Gaps**: G-24 · **Depends on**: D2
-- **Description**: `POST /v1/billing/change-plan` (`routers/billing.py:140-196`) collects
+- **Description**: `POST /api/v1/billing/change-plan` (`routers/billing.py:140-196`) collects
   no payment and applies no proration; the dashboard exposes it one click from
   `billing/page.tsx:396-457`, granting Pro ($59.99/mo, 50 stores, 1M payments) for $0.
   Per D2 (full fix): a move to a **paid** tier must create/reuse an open invoice and only
@@ -248,7 +248,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   `CHMABAPAY_HQ_PAYWAY_LINK` in `deploy/.env` plus a sign-in, which means switching
   self-serve billing on still required a shell session — the operator had to edit a file
   on the server to fill in a link they already had in their hand. Added
-  `GET /v1/admin/hq-store` and `PUT /v1/admin/hq-store/link`, plus a **Plan fee
+  `GET /api/v1/admin/hq-store` and `PUT /api/v1/admin/hq-store/link`, plus a **Plan fee
   collection** panel on the admin overview, so the setting is a field. The merchant
   account id is derived from the pasted link; the host is validated (this field decides
   where the platform's own revenue lands, so a pasted account number or a foreign URL is
@@ -288,15 +288,15 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 ### T-09 — Terms acceptance gate
 - **Status**: `complete` · **Priority**: S1 · **Gaps**: G-21 · **Depends on**: D1
-- **Description**: `POST /v1/me/terms` works and validates the version, but no portal
+- **Description**: `POST /api/v1/me/terms` works and validates the version, but no portal
   code calls it and nothing gates on `terms_accepted_at`. Add a blocking acceptance
   screen in the post-OAuth flow (before the dashboard renders) that calls the endpoint
-  with the displayed version, and enforce server-side in `GET /v1/me`'s consumers so an
+  with the displayed version, and enforce server-side in `GET /api/v1/me`'s consumers so an
   API key cannot bypass it. Reuse `settings.terms_version`
   (`config.py:126-131`) — do not hardcode the version in the UI.
 - **Test**: pytest — a new account is blocked until acceptance; a stale version returns
   409; an accepted account passes. Browser check on the deployed flow.
-- **Shipped**: the version is never hardcoded. `GET /v1/me` returns
+- **Shipped**: the version is never hardcoded. `GET /api/v1/me` returns
   `terms_required_version` straight from `settings.terms_version`
   (`routers/account.py:49`), and the portal compares it to the account's accepted
   version in `termsAccepted(profile)` (`components/portal/useSession.ts:29`) — which
@@ -304,7 +304,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   cannot lock a merchant out of their own dashboard.
   The gate is `app/dashboard/layout.tsx:230`: it renders **instead of** the workspace
   shell, not beside it, and its button echoes the version the page actually displayed
-  back to `POST /v1/me/terms` (line 165). A `409` is therefore surfaced as "the terms
+  back to `POST /api/v1/me/terms` (line 165). A `409` is therefore surfaced as "the terms
   were updated while this page was open — reload", which is what `409
   terms_version_superseded` means, rather than as a generic save failure.
   A UI gate is a convention, so the same rule is enforced server-side at the point a
@@ -375,7 +375,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   `verification=LINK_VERIFIED` (`services/stores.py:130-138`), so a typo produces an
   "active, verified" store that fails later with `502 payway_hosted_error`. Reuse the
   existing SSR probe (`services/payway_parser.py`, `_extract_slug`) to validate the slug
-  and merchant on create and on `PUT /v1/stores/{id}/link`; set verification from the
+  and merchant on create and on `PUT /api/v1/stores/{id}/link`; set verification from the
   result and only promote `draft → active` when validation passes. Return a field-level
   error the wizard can render.
 - **Test**: pytest — a bogus slug is rejected with a clear detail; a good slug activates
@@ -453,7 +453,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   outright with 409 `email_change_requires_password` for a Google-only account — there is no
   mail provider, so there is no way to verify a new address and a session alone must not be
   able to redirect an account's mail. `email` was removed from `AccountPatch` and
-  `extra="forbid"` added, so `PATCH /v1/me {"email": …}` is now 422 rather than silently
+  `extra="forbid"` added, so `PATCH /api/v1/me {"email": …}` is now 422 rather than silently
   applied. `POST /me/password` rotates the password (checks the old one, refuses
   `password_unchanged`, 409 `no_password_set` for a password-less account — a session must
   not be able to mint a credential). `DELETE /me` anonymises the account
@@ -461,13 +461,13 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   suspended so the session dies), disables its stores, revokes its keys and stops its
   webhooks, and **keeps the payments** as the accounting record the privacy policy already
   promises to retain; it needs a typed confirmation and the password, and a platform admin
-  cannot erase itself. `GET /v1/me` gained `has_password` (a bool, never the hash) so the UI
+  cannot erase itself. `GET /api/v1/me` gained `has_password` (a bool, never the hash) so the UI
   can explain instead of offering a form that would be refused. 8 tests in
   `tests/test_account_security.py`. Audit rows store email *domains*, not addresses, so a
   log cannot outlive an erasure.
-- **Description**: no erasure path and no password rotation exist, and `PATCH /v1/me`
+- **Description**: no erasure path and no password rotation exist, and `PATCH /api/v1/me`
   (`routers/account.py:75-96`) changes email with no verification. Per D4, add
-  `DELETE /v1/me` (or a documented erasure request flow), a password-change endpoint +
+  `DELETE /api/v1/me` (or a documented erasure request flow), a password-change endpoint +
   settings UI for accounts that have a password, and re-verification before an email
   change is applied.
 - **Test**: pytest — erasure removes/anonymises per the retention policy; password
@@ -514,10 +514,10 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 ### T-19 — Admin payment detail + dispute resolution
 - **Status**: `complete` · **Priority**: S1 · **Gaps**: G-41 · **Depends on**: none
-- **Description**: add `GET /v1/admin/payments/{public_id}` exposing `bakong_ref`,
+- **Description**: add `GET /api/v1/admin/payments/{public_id}` exposing `bakong_ref`,
   `gateway_status_raw`, `attempt_history`, `reissued_from`, `detection_closed_at`;
-  `POST /v1/admin/payments/{id}/reconcile` calling the existing `reconcile_payment`;
-  `POST /v1/admin/payments/{id}/mark-paid` with a mandatory reason and an audit row; and
+  `POST /api/v1/admin/payments/{id}/reconcile` calling the existing `reconcile_payment`;
+  `POST /api/v1/admin/payments/{id}/mark-paid` with a mandatory reason and an audit row; and
   a webhook re-deliver action. Surface all of it on the payments page. This is the
   difference between "I can see the problem" and "I can fix the customer's problem".
 - **Test**: pytest — each route is admin-gated, each mutation writes an audit row, and
@@ -538,9 +538,9 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 ### T-20 — Admin billing and access actions
 - **Status**: `complete` · **Priority**: S2 · **Gaps**: G-46 · **Depends on**: T-06
-- **Description**: add `PATCH /v1/admin/accounts/{id}/plan` (audited),
-  `POST /v1/admin/invoices/{id}/mark-paid|waive|credit`, `POST /v1/admin/keys/{id}/revoke`
-  and `POST /v1/admin/stores/{id}/disable`, with UI. Today a leaked key can only be
+- **Description**: add `PATCH /api/v1/admin/accounts/{id}/plan` (audited),
+  `POST /api/v1/admin/invoices/{id}/mark-paid|waive|credit`, `POST /api/v1/admin/keys/{id}/revoke`
+  and `POST /api/v1/admin/stores/{id}/disable`, with UI. Today a leaked key can only be
   killed by suspending the entire merchant, and billing corrections need DB access.
 - **Test**: pytest — each route is gated, audited, and idempotent where it should be.
 - **Shipped**: four routes in `routers/admin.py`.
@@ -560,7 +560,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   changes nothing and writes no second audit row, so the trail reads "this key was revoked",
   not "revoked five times because an operator clicked twice".
   Console: the account detail page gained a plan picker (plans fetched from
-  `/v1/admin/plans` so it cannot offer a code the API would reject), a per-invoice Resolve
+  `/api/v1/admin/plans` so it cannot offer a code the API would reject), a per-invoice Resolve
   modal (action, reason, optional credited amount), a Keys panel with Revoke, and Disable
   on each store row; `lib/apiError.ts` translates the refusals an operator can realistically
   hit (`last_platform_admin`, `plan_unchanged`, `invoice_already_*`) because printing a
@@ -571,13 +571,13 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 ### T-21 — Overview operational signals
 - **Status**: `complete` · **Priority**: S2 · **Gaps**: G-45 · **Depends on**: none
-- **Description**: extend `GET /v1/admin/overview` (`routers/admin.py:942-997`) with a
+- **Description**: extend `GET /api/v1/admin/overview` (`routers/admin.py:942-997`) with a
   "needs attention" block — payments pending past expiry, detection-closed-unpaid,
   webhook deliveries failed in the last 24 h, worker heartbeat age, queue depth, today's
   paid volume — sourced from existing models/counters, and render it above the stat
   cards with deep links to the filtered lists.
 - **Test**: pytest — each counter returns a number and matches a seeded fixture.
-- **Shipped**: `GET /v1/admin/overview` now returns `needs_attention` (a list of
+- **Shipped**: `GET /api/v1/admin/overview` now returns `needs_attention` (a list of
   `{key, label, detail, count, severity, href}`), `ops`, `paid_today_count` and
   `paid_today_cents`. The payment counters are database queries in `_needs_attention`;
   `detection_closed_unpaid` excludes reversals because a refunded payment's detection is
@@ -615,12 +615,12 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 ### T-23 — Webhook delivery retry + failure-rate alert
 - **Status**: `complete` · **Priority**: S3 · **Gaps**: G-48 · **Depends on**: T-19
-- **Description**: add `POST /v1/admin/deliveries/{id}/retry` (reset `next_attempt_at`,
+- **Description**: add `POST /api/v1/admin/deliveries/{id}/retry` (reset `next_attempt_at`,
   audit row) plus a Retry button on the deliveries page, and a `webhook_failure_rate`
   condition in `alerts.py` (>10 % failing over 15 min) — today only queue backlog is
   alerted, so a rail failing slowly never pages.
 - **Test**: pytest — retry reschedules and audits; the alert fires on a seeded failure ratio.
-- **Shipped**: `POST /v1/admin/deliveries/{id}/retry` resets the delivery to due-now with a
+- **Shipped**: `POST /api/v1/admin/deliveries/{id}/retry` resets the delivery to due-now with a
   **fresh attempt budget** (a delivery that exhausted `webhook_max_attempts` is terminal,
   and the merchant who just fixed their endpoint should get a real attempt rather than one
   refused as spent); it is quiet on a repeat, like the other operator actions. Retry button
@@ -644,7 +644,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   suspension's blast radius in the confirm copy, and add a last-admin guard so the final
   platform admin cannot suspend themselves.
 - **Test**: browser + pytest.
-- **Shipped**: `GET /v1/admin/accounts/{id}` now returns `keys` (name, prefix, mode,
+- **Shipped**: `GET /api/v1/admin/accounts/{id}` now returns `keys` (name, prefix, mode,
   status, last used, revoked), `limits` (the plan's `max_stores`,
   `max_keys_per_account`, `payments_included`) and `usage` (`keys_active`,
   `payments_this_month`), so a decision to suspend, revoke or comp is made with the
@@ -680,7 +680,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 ### T-25 — Fix the docs-page misstatements
 - **Status**: `complete` · **Priority**: S2 · **Gaps**: G-13, G-14, G-15, G-18, G-20, D5 · **Depends on**: D5
 - **Description**: in `web/landing/app/api/docs/page.tsx` correct: `checkout_url` on
-  `GET /v1/payments/{id}` (not returned), reissue-on-`superseded` (rejected), the
+  `GET /api/v1/payments/{id}` (not returned), reissue-on-`superseded` (rejected), the
   `probe-aba-status` "first-priority health check" framing, `attempts` → `attempt_count`,
   the `hosted_qr` default, `KeyCreate.name` requiredness, `link` requiredness,
   `StoreCreate.city` default, and add a one-line note on decimal `amount` vs `*_cents`.
@@ -700,8 +700,8 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   decimal-`amount`-vs-integer-`*amount_cents` split is stated on the payment read route.
   Also fixed while in there, because the same diff exposed them: `change-plan` was still
   documented as applying immediately with no payment collected, which Wave 2 replaced with
-  a pending subscription + invoice + `payment_required`; `PATCH /v1/me` was documented as
-  accepting `email`, which `extra="forbid"` turns into a 422 — `POST /v1/me/email` is now
+  a pending subscription + invoice + `payment_required`; `PATCH /api/v1/me` was documented as
+  accepting `email`, which `extra="forbid"` turns into a 422 — `POST /api/v1/me/email` is now
   listed instead; and the Signature section no longer names `payment.scanned`, leaving the
   four real events as the only list on the page. Verification: `tsc --noEmit` on
   `web/landing` exit 0.
@@ -750,14 +750,14 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 ### T-28 — Mark the Bakong ledger group unavailable and document the two live endpoints
 - **Status**: `complete` · **Priority**: S2 · **Gaps**: G-16, G-50 · **Depends on**: D8
 - **Description**: move the 9 Bakong Ledger Lookup endpoints into a visibly unavailable
-  group (or hide them) and document `GET /v1/transactions/check-status/{payment_public_id}`
-  and `POST /v1/transactions/verify-payment/{payment_public_id}`, which work today
+  group (or hide them) and document `GET /api/v1/transactions/check-status/{payment_public_id}`
+  and `POST /api/v1/transactions/verify-payment/{payment_public_id}`, which work today
   without Bakong credentials for hosted-session payments.
 - **Test**: content review; live probe of the two documented endpoints.
 - **Shipped** (2026-09-21): the docs page now separates the two things it used to conflate.
   A new **Payment Reconciliation** group documents the pair that actually answers
-  `GET /v1/transactions/check-status/{payment_public_id}` and
-  `POST /v1/transactions/verify-payment/{payment_public_id}`, with their query parameters
+  `GET /api/v1/transactions/check-status/{payment_public_id}` and
+  `POST /api/v1/transactions/verify-payment/{payment_public_id}`, with their query parameters
   (`prefer_aba_page`, `aba_slug_hint`, `mark_paid` / `use_hash`), the `PAID/PENDING/FAILED/
   UNKNOWN` + `source` response, and the fact that neither needs Bakong credentials for a
   payment that has a hosted ABA session. The nine ledger lookups stay listed — an
@@ -779,7 +779,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   router so the internal surface is not published in the public `openapi.json`. Confirm
   the docs page and FastAPI's own `/docs` still render.
 - **Test**: pytest — fetch `/openapi.json`, assert the schemes exist, that the four
-  KHQR routes declare security, and that no `/v1/admin/` path appears.
+  KHQR routes declare security, and that no `/api/v1/admin/` path appears.
 - **Shipped** (2026-09-21): new `src/chmabapay/openapi.py` is the one place the shared
   metadata lives. Two schemes — `ApiKey` (HTTP bearer, `ck_live_…`) and `SessionCookie`
   (`apiKey` in cookie, `chmabapay_session`) — both declared with `auto_error=False` so
@@ -789,15 +789,15 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   (402), `CONFLICT_ERROR` (409) and `UPSTREAM_ERROR` (502) ride at router level on
   payments, keys, stores, webhooks, reports and transactions, and on the individual
   billing and account routes that are session-only; khqr's router deliberately carries
-  none because `GET /v1/khqr/render.svg` is public, so each of its four outbound routes
+  none because `GET /api/v1/khqr/render.svg` is public, so each of its four outbound routes
   declares `AUTH_SECURITY` by hand. `/pay/{id}/qr.svg` and `/pay/{id}/status` got the
   404/410 `ErrorOut` bodies they actually raise. `include_in_schema=False` on the admin
   and dev routers keeps the operator surface out of the published document while the
   routes keep dispatching. New `tests/test_openapi_schema.py` (7 tests) pins all of it:
   the schemes exist, every route under the credentialed prefixes declares security, the
   listed public paths declare none, the four KHQR routes allow exactly
-  `{ApiKey, SessionCookie}` and document 401, `POST /v1/payments` documents 402, no
-  `/v1/admin` or `/_dev` path is published, and both hidden routers still serve (401/403,
+  `{ApiKey, SessionCookie}` and document 401, `POST /api/v1/payments` documents 402, no
+  `/api/v1/admin` or `/_dev` path is published, and both hidden routers still serve (401/403,
   never a 404). Verified: full suite **263 passed, 2 deselected**; `ruff check` clean.
 
 ### T-30 — Landing copy corrections
@@ -878,7 +878,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   Free and keep the 403) or delete the gate; either way align `routers/reports.py:40-48`,
   the live plan matrix, the docs page and the client-side store-catalog export in
   `reports/page.tsx:104-138`, which bypasses the gate entirely.
-- **Test**: pytest + live `GET /v1/billing/plans` agreement.
+- **Test**: pytest + live `GET /api/v1/billing/plans` agreement.
 - **Shipped** (2026-09-21): took D6's second branch — the gate was not a gate, so it is
   gone. `routers/reports.py` lost `_get_active_plan` / `_ensure_csv_allowed` (with a
   docstring recording that the 403 was unreachable: the client rendered its own catalog
@@ -887,7 +887,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   PlanOut`, `admin.py` (`AdminPlanOut`, `AdminPlanPatch`, `AdminPlanCreate`), the admin
   plans editor, the portal billing page, `web/landing/app/api/docs/page.tsx` (two
   places), `docs/api.md`'s error table and `tools/testplan.py` SMOKE-007. The portal
-  reports page also lost its `/v1/billing/subscription` probe and `csvLocked` banner,
+  reports page also lost its `/api/v1/billing/subscription` probe and `csvLocked` banner,
   which existed only to render the gate. Migration
   `alembic/versions/0010_drop_csv_export_gate.py` (`0010` ← `0009`) does
   `batch.drop_column("csv_export_enabled")`; the downgrade re-adds it with
@@ -962,9 +962,9 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   QR with a real wallet, and creating the payment itself needs a `ck_live_` key, which
   needs a session — i.e. the platform admin's credentials. What was verified instead:
   every money-path endpoint exists, is routed, and refuses an unauthenticated caller with
-  401 (`/v1/payments`, `/v1/stores`, `/v1/reports/payments.csv`,
-  `/v1/transactions/check-status/…`), and `/pay/{id}` answers 404 for an unknown id while
-  `/v1/billing/plans` answers 200. The end-to-end checkout is covered by the suite. Left
+  401 (`/api/v1/payments`, `/api/v1/stores`, `/api/v1/reports/payments.csv`,
+  `/api/v1/transactions/check-status/…`), and `/pay/{id}` answers 404 for an unknown id while
+  `/api/v1/billing/plans` answers 200. The end-to-end checkout is covered by the suite. Left
   for the operator, with the exact commands, rather than performed with credentials that
   are not this task's to spend.
 
@@ -1014,7 +1014,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 > `PGDMP`, 14 `TABLE DATA` entries — and proving the row counts unchanged at 2 accounts,
 > 0 stores, 0 payments across the migration). After both: every public page 200, the
 > security headers and `no-store` still live through Cloudflare on both hostnames, the
-> money routes still 401 to an anonymous caller, `/v1/admin/overview` 401 and `/_dev` 404,
+> money routes still 401 to an anonymous caller, `/api/v1/admin/overview` 401 and `/_dev` 404,
 > `is_internal` published in the live OpenAPI, and the neighbouring POS stack untouched
 > at 11–12 days up.
 
@@ -1027,21 +1027,21 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
   enum is in `schemas.py`. `verify-payment` is documented to return `404
   tx_not_found_yet` but returns `200 {"found": false}`, so the documented branch is dead.
   `docs/api.md` still lists `superseded` as reissuable when the service refuses it with
-  409, and still calls all of `/v1/billing/*` session-only when `GET /v1/billing/plans`
-  is public (confirmed live: 200 anonymous). The docs page claims `GET /v1/me` returns
+  409, and still calls all of `/api/v1/billing/*` session-only when `GET /api/v1/billing/plans`
+  is public (confirmed live: 200 anonymous). The docs page claims `GET /api/v1/me` returns
   `plan`; it does not. The `superseded` definition is inverted — it marks the
   *replacement* code when the original settles. `503 billing_not_open` is attributed to
   `change-plan`, which never raises it. The API-key security scheme still describes
   `ck_test_` keys, which the system never issues. Five real endpoints published in the
-  OpenAPI appear in neither doc: `PUT /v1/stores/{public_id}`, `PATCH /v1/account`,
-  `POST /v1/me/password`, `DELETE /v1/me`, `POST /v1/transactions/token/renew`.
+  OpenAPI appear in neither doc: `PUT /api/v1/stores/{public_id}`, `PATCH /api/v1/account`,
+  `POST /api/v1/me/password`, `DELETE /api/v1/me`, `POST /api/v1/transactions/token/renew`.
 - **Test**: pytest — the existing `tests/test_openapi_schema.py` stays green; a new
   assertion that every path in the live schema is either documented or explicitly listed
   as internal. Manual: re-read each corrected claim against the router.
 
 ### T-38 — Make the published OpenAPI match the runtime
 - **Status**: `complete` · **Priority**: S3 · **Gaps**: D10 · **Depends on**: none
-- **Description**: `POST /v1/payments` returns 201 and `POST .../reissue` returns 201 or
+- **Description**: `POST /api/v1/payments` returns 201 and `POST .../reissue` returns 201 or
   200 depending on whether a code was minted, but neither decorator declares
   `status_code`, so the published schema advertises only 200 and omits reachable 400/404/502.
   A generated client is therefore wrong at runtime. Runtime behaviour is correct and must
@@ -1051,7 +1051,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 
 ### T-39 — Reach a merchant's older payments (pagination)
 - **Status**: `complete` · **Priority**: S2 · **Gaps**: P3 · **Depends on**: none
-- **Description**: `GET /v1/payments` accepts `limit` (default 20, clamped to 100) and no
+- **Description**: `GET /api/v1/payments` accepts `limit` (default 20, clamped to 100) and no
   offset, and the portal asks for 50. In the first weeks a merchant crosses 50 payments
   and can no longer reach an older one anywhere in the portal — the only workaround is
   the Reports CSV. Add `offset` to the list endpoint (with the total already available
@@ -1139,8 +1139,8 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 - **Status**: `complete` · **Priority**: S2 · **Gaps**: A1, A2 · **Depends on**: none
 - **Description**: two admin gaps with teeth. (1) There is no admin enable route: an
   operator can disable a store from the console but only the *merchant* can re-enable it
-  (`POST /v1/stores/{id}/enable` is merchant-authed), so disabling during an incident is a
-  one-way door. Add `POST /v1/admin/stores/{public_id}/enable` mirroring disable, audited
+  (`POST /api/v1/stores/{id}/enable` is merchant-authed), so disabling during an incident is a
+  one-way door. Add `POST /api/v1/admin/stores/{public_id}/enable` mirroring disable, audited
   as `store.enabled`, 404 `store_not_found`. (2) The HQ-store panel changes where **all**
   plan-fee revenue is collected with no confirmation, and the resolved
   `merchant_account_id` is only shown *after* the write — a shape-valid typo reroutes
@@ -1225,7 +1225,7 @@ Legend: **S1** blocker · **S2** major · **S3** minor · **S4** polish
 >    shell history), which created account id=2 with `is_platform_admin`, white-label and a
 >    free subscription, then verified end to end: `POST /auth/login` returns 200 with
 >    `is_platform_admin: true`, the session JWT carries `amr: "password"`, and
->    `GET /v1/admin/overview` answers **200** with that cookie and **401** without it.
+>    `GET /api/v1/admin/overview` answers **200** with that cookie and **401** without it.
 >    `CHMABAPAY_ADMIN_EMAILS` is `duke@chmaba.com`, so the env and the account now agree;
 >    `CHMABAPAY_ADMIN_PASSWORD` is deliberately left empty, and the account's password
 >    lives only as a hash.

@@ -161,7 +161,7 @@ export default function AdminPaymentsPage() {
         if (attention) params.set("attention", attention);
         params.set("page", String(page));
         params.set("per_page", "25");
-        const res = await apiFetch(`/v1/admin/payments?${params.toString()}`, {
+        const res = await apiFetch(`/api/v1/admin/payments?${params.toString()}`, {
           credentials: "include",
         });
         if (!res.ok) throw new Error(await readApiError(res));

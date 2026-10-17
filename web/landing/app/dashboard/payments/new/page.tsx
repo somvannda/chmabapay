@@ -39,7 +39,7 @@ export default function DashboardPaymentsNewPage() {
     let alive = true;
     (async () => {
       try {
-        const res = await fetch("/v1/stores", { credentials: "include" });
+        const res = await fetch("/api/v1/stores", { credentials: "include" });
         if (res.ok) {
           const data = await res.json().catch(() => ({}));
           const items: StoreOption[] = Array.isArray(data)
@@ -128,7 +128,7 @@ export default function DashboardPaymentsNewPage() {
       if (merchant.trim()) body.merchant = merchant.trim();
       if (idempotencyKey.trim()) body.idempotency_key = idempotencyKey.trim();
       if (hostedQr !== "auto") body.hosted_qr = hostedQr === "hosted";
-      const res = await fetch("/v1/payments", {
+      const res = await fetch("/api/v1/payments", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

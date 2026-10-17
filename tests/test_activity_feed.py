@@ -221,7 +221,7 @@ async def test_an_unhandled_error_reaches_the_operator_and_the_group(
     )
 
     await errors.report_exception(
-        ValueError("feed-duplicate-check-one"), where="api", context="GET /v1/things"
+        ValueError("feed-duplicate-check-one"), where="api", context="GET /api/v1/things"
     )
 
     assert [sent["payload"]["chat_id"] for sent in outbound] == [OPERATOR_ID, GROUP_ID]

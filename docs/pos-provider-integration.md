@@ -24,9 +24,9 @@ does not hold or route funds.
 ## Flow
 
 1. **Once** — create the account, create a live API key, create one webhook endpoint.
-2. **Per merchant** — when a merchant onboards in your POS, `POST /v1/stores` with their
+2. **Per merchant** — when a merchant onboards in your POS, `POST /api/v1/stores` with their
    `external_id`, branding and their ABA PayWay link.
-3. **Per sale** — `POST /v1/payments` with `merchant: "<their external_id>"`.
+3. **Per sale** — `POST /api/v1/payments` with `merchant: "<their external_id>"`.
 4. **Present** — render `qr_string` yourself, or send the payer to `checkout_url`.
 5. **Settle** — receive `payment.completed`, then route on `data.merchant.external_id`.
 
@@ -44,7 +44,7 @@ Authorization: Bearer ck_live_xxxxxxxxxxxxxxxxxxxxxxxx
 ### Webhook endpoint
 
 ```http
-POST /v1/webhooks
+POST /api/v1/webhooks
 Content-Type: application/json
 
 { "url": "https://pos.example.com/chmabapay/webhook" }
@@ -54,14 +54,14 @@ The response includes `signing_secret` (`whsec_…`), shown once. Up to 10 endpo
 (enforced). The optional `events` array subscribes the endpoint to specific event types
 (`["payment.completed", "payment.expired"]`); omit it or pass `["*"]` to receive all four.
 
-Useful companions: `PATCH /v1/webhooks/{id}` to change the URL or disable it,
-`POST /v1/webhooks/{id}/rotate-secret`, `POST /v1/webhooks/{id}/test` to fire a synthetic event,
-`GET /v1/webhooks/{id}/deliveries` to inspect recent attempts.
+Useful companions: `PATCH /api/v1/webhooks/{id}` to change the URL or disable it,
+`POST /api/v1/webhooks/{id}/rotate-secret`, `POST /api/v1/webhooks/{id}/test` to fire a synthetic event,
+`GET /api/v1/webhooks/{id}/deliveries` to inspect recent attempts.
 
 ## 2. Provision a merchant
 
 ```http
-POST /v1/stores
+POST /api/v1/stores
 Authorization: Bearer ck_live_…
 Content-Type: application/json
 
@@ -98,7 +98,7 @@ Fields:
 **Status.** A store created *with* a `link` becomes `active`. A store created *without* one stays
 `draft` and cannot take payments (`400 payment_link_disabled`) until you attach a link.
 
-**Attaching or replacing the link later** — `PUT /v1/stores/{public_id}/link` with the same
+**Attaching or replacing the link later** — `PUT /api/v1/stores/{public_id}/link` with the same
 `link` object. This also promotes a `draft` store to `active`.
 
 **Branding.** White-label branding is an entitlement, not a plan field: an operator grants it per
@@ -113,14 +113,14 @@ logo beside the store name in the header, `brand_color` as the header background
 Every `<` is stripped from the CSS before injection, so nothing can close the `<style>` element or
 introduce markup.
 
-Other store routes: `GET /v1/stores`, `GET /v1/stores/{public_id}`,
-`PATCH /v1/stores/{public_id}`, `POST /v1/stores/{public_id}/disable`.
+Other store routes: `GET /api/v1/stores`, `GET /api/v1/stores/{public_id}`,
+`PATCH /api/v1/stores/{public_id}`, `POST /api/v1/stores/{public_id}/disable`.
 `max_stores` is per plan: Free 1, Starter 5, Pro 50. Exceeding it returns `400`.
 
 ## 3. Charge
 
 ```http
-POST /v1/payments
+POST /api/v1/payments
 Authorization: Bearer ck_live_…
 Content-Type: application/json
 
@@ -196,7 +196,7 @@ Two options:
   `redirect_success_url` / `redirect_failure_url` with `?status=success|failed&payment_id=…&reference_id=…`.
 
 Statuses: `pending` → `scanned` → one of `paid` | `expired` | `failed`. The first three are
-non-terminal. `GET /v1/payments/{id}` returns the current state; `GET /v1/payments?merchant=…`
+non-terminal. `GET /api/v1/payments/{id}` returns the current state; `GET /api/v1/payments?merchant=…`
 lists payments for one merchant.
 
 ## 5. Webhooks
@@ -297,8 +297,8 @@ def verify_chmabapay_signature(raw_body: bytes, header: str, secret: str) -> boo
 ## 6. Reporting
 
 ```http
-GET /v1/reports/payments.json?merchant=merchant-alpha-77&from=2026-09-01&to=2026-09-30
-GET /v1/reports/payments.csv?merchant=merchant-alpha-77&statuses=paid
+GET /api/v1/reports/payments.json?merchant=merchant-alpha-77&from=2026-09-01&to=2026-09-30
+GET /api/v1/reports/payments.csv?merchant=merchant-alpha-77&statuses=paid
 ```
 
 Same filters on both: `from`, `to` (`YYYY-MM-DD`), `store_id`, `merchant` (your `external_id`),
@@ -310,7 +310,7 @@ Same filters on both: `from`, `to` (`YYYY-MM-DD`), `store_id`, `merchant` (your 
 - **Webhook endpoints are per account, not per merchant.** You cannot give each merchant their own
   URL through this API. Filter inside your handler using `data.merchant.external_id`.
 - **One API key covers every store.** Leaking it exposes all merchants, so keep it server-side, and
-  use `POST /v1/keys/{id}/rotate` if it is ever exposed.
+  use `POST /api/v1/keys/{id}/rotate` if it is ever exposed.
 - **Always send `idempotency_key`.** It is scoped per store, and a replay returns the original
   payment with `200` instead of creating a second charge.
 - **Attach the payment link when you create the store.** Otherwise it stays `draft` and every

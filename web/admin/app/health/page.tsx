@@ -70,7 +70,7 @@ export default function AdminHealthPage() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await apiFetch("/v1/admin/health", { credentials: "include" });
+      const res = await apiFetch("/api/v1/admin/health", { credentials: "include" });
       if (!res.ok) throw new Error(await readApiError(res));
       setPayload((await res.json()) as HealthPayload);
       setCheckedAt(new Date());

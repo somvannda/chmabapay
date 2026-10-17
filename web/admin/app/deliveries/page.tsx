@@ -132,7 +132,7 @@ export default function AdminDeliveriesPage() {
         if (sinceHours) params.set("since_hours", sinceHours);
         params.set("page", String(page));
         params.set("per_page", "25");
-        const res = await apiFetch(`/v1/admin/deliveries?${params.toString()}`, {
+        const res = await apiFetch(`/api/v1/admin/deliveries?${params.toString()}`, {
           credentials: "include",
         });
         if (!res.ok) throw new Error(await readApiError(res));
@@ -161,7 +161,7 @@ export default function AdminDeliveriesPage() {
       setBusy(row.id);
       try {
         const res = await apiFetch(
-          `/v1/admin/deliveries/${row.id}/retry${
+          `/api/v1/admin/deliveries/${row.id}/retry${
             includeSuccesses ? "?include_successes=true" : ""
           }`,
           { method: "POST", credentials: "include" },

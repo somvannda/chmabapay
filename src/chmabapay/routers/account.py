@@ -18,7 +18,7 @@ from ..security import MAX_PASSWORD_BYTES, hash_password, verify_password
 from .auth import get_current_session_account, session_auth_method
 
 router = APIRouter(
-    prefix="/v1",
+    prefix="/api/v1",
     tags=["account"],
     # Session-only: these are the routes a signed-in person drives from the dashboard,
     # and an API key must not be able to change the account's own credentials.
@@ -178,7 +178,7 @@ async def change_email(
 ):
     """Move the account's address, with proof that the caller owns the account.
 
-    This used to be a plain `PATCH /v1/me` field: any holder of the session cookie
+    This used to be a plain `PATCH /api/v1/me` field: any holder of the session cookie
     could point the account's email at an address of their choosing, which is an
     account takeover rather than a setting — notifications, receipts and any future
     sign-in link would all flow to the attacker.

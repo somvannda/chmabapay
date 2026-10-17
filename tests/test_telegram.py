@@ -1,6 +1,6 @@
 """The merchant alert channel must not report a send it never made.
 
-`POST /v1/stores/{id}/telegram/test` used to log "Would send Telegram test msg"
+`POST /api/v1/stores/{id}/telegram/test` used to log "Would send Telegram test msg"
 and answer `ok: true` regardless, so a merchant could be told their alerts worked
 while nothing ever left the building. These tests pin the honest contract: a
 success answer is reachable only through a send Telegram actually accepted.
@@ -50,7 +50,7 @@ async def _provision(client, *, chat_id: str | None = CHAT_ID):
 
     if chat_id is not None:
         saved = await client.patch(
-            f"/v1/stores/{store.public_id}",
+            f"/api/v1/stores/{store.public_id}",
             json={"telegram_chat_id": chat_id},
             headers=headers,
         )
@@ -64,7 +64,7 @@ async def test_the_test_alert_really_sends(client, bot_token, outbound):
     store, headers = await _provision(client)
 
     response = await client.post(
-        f"/v1/stores/{store.public_id}/telegram/test", headers=headers
+        f"/api/v1/stores/{store.public_id}/telegram/test", headers=headers
     )
 
     assert response.status_code == 200
@@ -103,7 +103,7 @@ async def test_a_refusal_from_telegram_is_not_a_success(
     monkeypatch.setattr(telegram, "http_post", refuse)
 
     response = await client.post(
-        f"/v1/stores/{store.public_id}/telegram/test", headers=headers
+        f"/api/v1/stores/{store.public_id}/telegram/test", headers=headers
     )
 
     assert response.status_code == 502
@@ -122,7 +122,7 @@ async def test_an_unreachable_telegram_is_a_gateway_error(
     monkeypatch.setattr(telegram, "http_post", unreachable)
 
     response = await client.post(
-        f"/v1/stores/{store.public_id}/telegram/test", headers=headers
+        f"/api/v1/stores/{store.public_id}/telegram/test", headers=headers
     )
 
     assert response.status_code == 502
@@ -135,7 +135,7 @@ async def test_a_store_without_a_chat_id_is_refused_and_nothing_is_sent(
     store, headers = await _provision(client, chat_id=None)
 
     response = await client.post(
-        f"/v1/stores/{store.public_id}/telegram/test", headers=headers
+        f"/api/v1/stores/{store.public_id}/telegram/test", headers=headers
     )
 
     assert response.status_code == 400
@@ -153,7 +153,7 @@ async def test_a_deployment_without_a_bot_token_refuses_rather_than_lying(
     store, headers = await _provision(client)
 
     response = await client.post(
-        f"/v1/stores/{store.public_id}/telegram/test", headers=headers
+        f"/api/v1/stores/{store.public_id}/telegram/test", headers=headers
     )
 
     assert response.status_code == 503

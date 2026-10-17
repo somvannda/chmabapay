@@ -472,7 +472,7 @@ export default function BillingPage() {
   const [payStatus, setPayStatus] = useState("pending");
   const [paySecondsLeft, setPaySecondsLeft] = useState<number | null>(null);
   // The store allowance, for the slot chooser. Only meaningful when something is held —
-  // `GET /v1/stores` is a read, so it stays available while the account is frozen.
+  // `GET /api/v1/stores` is a read, so it stays available while the account is frozen.
   const [stores, setStores] = useState<StoreOut[]>([]);
   const [storesError, setStoresError] = useState<string | null>(null);
   const [movingStoreId, setMovingStoreId] = useState<string | null>(null);
@@ -481,7 +481,7 @@ export default function BillingPage() {
     setPlansLoading(true);
     setPlansError(null);
     try {
-      const res = await fetch("/v1/billing/plans", { credentials: "include" });
+      const res = await fetch("/api/v1/billing/plans", { credentials: "include" });
       if (!res.ok) throw new Error(await readApiError(res));
       const data = (await res.json()) as PlanOut[];
       setPlans(Array.isArray(data) ? data : []);
@@ -496,7 +496,7 @@ export default function BillingPage() {
     setSubLoading(true);
     setSubError(null);
     try {
-      const res = await fetch("/v1/billing/subscription", {
+      const res = await fetch("/api/v1/billing/subscription", {
         credentials: "include",
       });
       // 501 is the documented "no billing here" answer, not a failure.
@@ -519,7 +519,7 @@ export default function BillingPage() {
       const d = new Date();
       const from = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
       const res = await fetch(
-        `/v1/reports/payments.json?from=${from}&per_page=1`,
+        `/api/v1/reports/payments.json?from=${from}&per_page=1`,
         { credentials: "include" },
       );
       if (res.ok) {
@@ -537,7 +537,7 @@ export default function BillingPage() {
     setInvoicesLoading(true);
     setInvoicesError(null);
     try {
-      const res = await fetch("/v1/billing/invoices", { credentials: "include" });
+      const res = await fetch("/api/v1/billing/invoices", { credentials: "include" });
       if (!res.ok) throw new Error(await readApiError(res));
       const data = await res.json().catch(() => ({}));
       const items: Invoice[] = Array.isArray(data)
@@ -565,7 +565,7 @@ export default function BillingPage() {
   const loadStores = useCallback(async () => {
     setStoresError(null);
     try {
-      const res = await fetch("/v1/stores", { credentials: "include" });
+      const res = await fetch("/api/v1/stores", { credentials: "include" });
       if (!res.ok) throw new Error(await readApiError(res));
       const data = await res.json().catch(() => ({}));
       setStores(Array.isArray(data?.data) ? data.data : []);
@@ -590,7 +590,7 @@ export default function BillingPage() {
     if (movingStoreId) return;
     setMovingStoreId(store.id);
     try {
-      const res = await fetch(`/v1/stores/${store.id}/activate`, {
+      const res = await fetch(`/api/v1/stores/${store.id}/activate`, {
         method: "POST",
         credentials: "include",
       });
@@ -618,7 +618,7 @@ export default function BillingPage() {
     setErrorMsg(null);
     setChangingPlanCode(planCode);
     try {
-      const res = await fetch("/v1/billing/change-plan", {
+      const res = await fetch("/api/v1/billing/change-plan", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -675,7 +675,7 @@ export default function BillingPage() {
     setPaySecondsLeft(null);
     setKhqrLoading(true);
     try {
-      const res = await fetch(`/v1/billing/invoices/${invoice.id}/khqr`, {
+      const res = await fetch(`/api/v1/billing/invoices/${invoice.id}/khqr`, {
         credentials: "include",
       });
       if (!res.ok) throw new Error(await readApiError(res));

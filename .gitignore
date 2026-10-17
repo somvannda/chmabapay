@@ -29,6 +29,12 @@ next-env.d.ts
 !**/.env.local.example
 *.db
 *.sqlite3
+# SQLite sidecar files. They appear beside a `*.db` while a connection holds a
+# write and are deleted on clean close — but a test run killed mid-transaction
+# leaves them behind, and `.db` being ignored does not cover them.
+*.db-journal
+*.db-wal
+*.db-shm
 # Runtime logs. `.backend.log` and the web apps' `.server.log` files carry request
 # paths and headers, so they are local artefacts, never history.
 *.log

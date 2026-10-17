@@ -43,7 +43,7 @@ PASSWORD = "correct horse battery"
 
 
 async def _signed_in(client, email: str = "sokha@example.com"):
-    """Sign in for real and return the account's /v1/me profile.
+    """Sign in for real and return the account's /api/v1/me profile.
 
     A password sign-in rather than a hand-minted cookie, so the acceptance below
     is reached the way a merchant reaches it — through the session dependency,
@@ -60,7 +60,7 @@ async def _signed_in(client, email: str = "sokha@example.com"):
         "/auth/login", json={"email": email, "password": PASSWORD}
     )
     assert sign_in.status_code == 200, sign_in.text
-    return (await client.get("/v1/me")).json()
+    return (await client.get("/api/v1/me")).json()
 
 
 async def _audit_rows(action: str) -> list[models.AuditLog]:
@@ -141,7 +141,7 @@ async def test_accepting_the_terms_records_the_version_and_the_moment(client):
     await _signed_in(client)
 
     response = await client.post(
-        "/v1/me/terms", json={"version": get_settings().terms_version}
+        "/api/v1/me/terms", json={"version": get_settings().terms_version}
     )
     assert response.status_code == 200
     body = response.json()
@@ -149,14 +149,14 @@ async def test_accepting_the_terms_records_the_version_and_the_moment(client):
     assert body["terms_accepted_at"] is not None
 
     # And it persisted, rather than only being echoed back.
-    profile = (await client.get("/v1/me")).json()
+    profile = (await client.get("/api/v1/me")).json()
     assert profile["terms_accepted_version"] == get_settings().terms_version
     assert profile["terms_accepted_at"] is not None
 
 
 async def test_the_acceptance_is_attributable_to_the_merchant(client):
     profile = await _signed_in(client)
-    await client.post("/v1/me/terms", json={"version": get_settings().terms_version})
+    await client.post("/api/v1/me/terms", json={"version": get_settings().terms_version})
 
     rows = await _audit_rows("account.terms_accepted")
     assert len(rows) == 1
@@ -176,11 +176,11 @@ async def test_a_superseded_version_is_refused_rather_than_recorded(client):
     """
     profile = await _signed_in(client)
 
-    response = await client.post("/v1/me/terms", json={"version": "0"})
+    response = await client.post("/api/v1/me/terms", json={"version": "0"})
     assert response.status_code == 409
     assert response.json()["detail"] == "terms_version_superseded"
 
-    assert (await client.get("/v1/me")).json()["terms_accepted_version"] is None
+    assert (await client.get("/api/v1/me")).json()["terms_accepted_version"] is None
     assert await _audit_rows("account.terms_accepted") == []
     assert profile["terms_required_version"] != "0"
 
@@ -191,8 +191,8 @@ async def test_accepting_the_same_version_twice_writes_one_audit_row(client):
     await _signed_in(client)
     version = get_settings().terms_version
 
-    assert (await client.post("/v1/me/terms", json={"version": version})).status_code == 200
-    assert (await client.post("/v1/me/terms", json={"version": version})).status_code == 200
+    assert (await client.post("/api/v1/me/terms", json={"version": version})).status_code == 200
+    assert (await client.post("/api/v1/me/terms", json={"version": version})).status_code == 200
 
     assert len(await _audit_rows("account.terms_accepted")) == 1
 
@@ -208,17 +208,17 @@ async def test_a_new_published_version_makes_the_old_acceptance_visible_as_stale
     """
     await _signed_in(client)
     monkeypatch.setattr(get_settings(), "terms_version", "1", raising=False)
-    await client.post("/v1/me/terms", json={"version": "1"})
+    await client.post("/api/v1/me/terms", json={"version": "1"})
 
     monkeypatch.setattr(get_settings(), "terms_version", "2", raising=False)
 
-    profile = (await client.get("/v1/me")).json()
+    profile = (await client.get("/api/v1/me")).json()
     assert profile["terms_accepted_version"] == "1"
     assert profile["terms_required_version"] == "2"
 
     # Old text is refused; the new one is accepted and recorded as a second event.
-    assert (await client.post("/v1/me/terms", json={"version": "1"})).status_code == 409
-    accepted = await client.post("/v1/me/terms", json={"version": "2"})
+    assert (await client.post("/api/v1/me/terms", json={"version": "1"})).status_code == 409
+    accepted = await client.post("/api/v1/me/terms", json={"version": "2"})
     assert accepted.status_code == 200
     assert accepted.json()["terms_accepted_version"] == "2"
     actions = await _audit_rows("account.terms_accepted")
@@ -236,16 +236,16 @@ async def test_a_key_cannot_be_minted_before_the_terms_are_accepted(client):
     profile = await _signed_in(client)
     assert profile["terms_accepted_version"] is None
 
-    refused = await client.post("/v1/keys", json={"name": "first key"})
+    refused = await client.post("/api/v1/keys", json={"name": "first key"})
     assert refused.status_code == 403
     assert refused.json()["detail"] == "terms_not_accepted"
 
     # Accepting is the only thing that changes the answer.
     accepted = await client.post(
-        "/v1/me/terms", json={"version": get_settings().terms_version}
+        "/api/v1/me/terms", json={"version": get_settings().terms_version}
     )
     assert accepted.status_code == 200
-    assert (await client.post("/v1/keys", json={"name": "first key"})).status_code == 201
+    assert (await client.post("/api/v1/keys", json={"name": "first key"})).status_code == 201
 
 
 async def test_republishing_the_agreement_asks_for_consent_again(client, monkeypatch):
@@ -254,30 +254,30 @@ async def test_republishing_the_agreement_asks_for_consent_again(client, monkeyp
     `terms_accepted_at` checked for null."""
     await _signed_in(client)
     monkeypatch.setattr(get_settings(), "terms_version", "1", raising=False)
-    assert (await client.post("/v1/me/terms", json={"version": "1"})).status_code == 200
+    assert (await client.post("/api/v1/me/terms", json={"version": "1"})).status_code == 200
 
     monkeypatch.setattr(get_settings(), "terms_version", "2", raising=False)
-    blocked = await client.post("/v1/keys", json={"name": "after republish"})
+    blocked = await client.post("/api/v1/keys", json={"name": "after republish"})
     assert blocked.status_code == 403
     assert blocked.json()["detail"] == "terms_not_accepted"
 
-    assert (await client.post("/v1/me/terms", json={"version": "2"})).status_code == 200
+    assert (await client.post("/api/v1/me/terms", json={"version": "2"})).status_code == 200
     assert (
-        await client.post("/v1/keys", json={"name": "after republish"})
+        await client.post("/api/v1/keys", json={"name": "after republish"})
     ).status_code == 201
 
 
 async def test_terms_cannot_be_accepted_without_a_session(client):
     """An anonymous caller accepting the merchant agreement would be meaningless:
     there is no merchant to attribute it to."""
-    assert (await client.post("/v1/me/terms", json={"version": "1"})).status_code == 401
+    assert (await client.post("/api/v1/me/terms", json={"version": "1"})).status_code == 401
 
 
 async def test_a_malformed_version_is_rejected_before_it_reaches_the_record(client):
     await _signed_in(client)
 
-    assert (await client.post("/v1/me/terms", json={"version": ""})).status_code == 422
-    assert (await client.post("/v1/me/terms", json={})).status_code == 422
+    assert (await client.post("/api/v1/me/terms", json={"version": ""})).status_code == 422
+    assert (await client.post("/api/v1/me/terms", json={})).status_code == 422
 
 
 # --------------------------------------------------------------------------- #

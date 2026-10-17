@@ -15,7 +15,7 @@ interface KHQRProps {
   data: KHQRData;
   /**
    * URL of an <img>-renderable encoding of this payment's KHQR payload — in
-   * this platform, `/v1/khqr/render.svg?payload=<qr_string>`. Required for the
+   * this platform, `/api/v1/khqr/render.svg?payload=<qr_string>`. Required for the
    * code to be scannable: the card used to synthesize a decorative hash pattern
    * from an arbitrary string, which looked like a QR and decoded as nothing.
    */

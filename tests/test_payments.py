@@ -28,7 +28,7 @@ async def test_expired_qr_is_no_longer_served_and_reissue_mints_a_successor(clie
 
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 4.0, "reference_id": "order_7", "hosted_qr": False},
             headers=headers,
         )
@@ -42,7 +42,7 @@ async def test_expired_qr_is_no_longer_served_and_reissue_mints_a_successor(clie
     assert "viewBox" in live_qr.text
 
     # a code that still has time on it is not replaceable
-    early = await client.post(f"/v1/payments/{created['id']}/reissue", headers=headers)
+    early = await client.post(f"/api/v1/payments/{created['id']}/reissue", headers=headers)
     assert early.status_code == 409
     assert early.json()["detail"] == "payment_not_expired"
 
@@ -63,7 +63,7 @@ async def test_expired_qr_is_no_longer_served_and_reissue_mints_a_successor(clie
     assert dead.json()["detail"] == "payment_expired"
 
     # one merchant action mints the replacement
-    minted = await client.post(f"/v1/payments/{created['id']}/reissue", headers=headers)
+    minted = await client.post(f"/api/v1/payments/{created['id']}/reissue", headers=headers)
     assert minted.status_code == 201
     successor = minted.json()
     assert successor["id"] != created["id"]
@@ -75,13 +75,13 @@ async def test_expired_qr_is_no_longer_served_and_reissue_mints_a_successor(clie
 
     # the parent is left behind as the record of the session that expired
     parent = (
-        await client.get(f"/v1/payments/{created['id']}", headers=headers)
+        await client.get(f"/api/v1/payments/{created['id']}", headers=headers)
     ).json()
     assert parent["status"] == "expired"
 
     # pressing the button again reuses the live code instead of stacking ABA
     # sessions for one sale
-    replay = await client.post(f"/v1/payments/{created['id']}/reissue", headers=headers)
+    replay = await client.post(f"/api/v1/payments/{created['id']}/reissue", headers=headers)
     assert replay.status_code == 200
     assert replay.json()["id"] == successor["id"]
 
@@ -94,7 +94,7 @@ async def test_expired_qr_is_no_longer_served_and_reissue_mints_a_successor(clie
         )
         await session.commit()
         await expire_due_payments(session)
-    third = await client.post(f"/v1/payments/{successor['id']}/reissue", headers=headers)
+    third = await client.post(f"/api/v1/payments/{successor['id']}/reissue", headers=headers)
     assert third.status_code == 201
     assert third.json()["id"] not in (created["id"], successor["id"])
 
@@ -113,7 +113,7 @@ async def test_reissue_refuses_paid_payment_and_another_tenant(client):
 
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 6.0, "hosted_qr": False},
             headers=headers,
         )
@@ -130,7 +130,7 @@ async def test_reissue_refuses_paid_payment_and_another_tenant(client):
 
     # a settled payment is not a candidate for replacement
     assert (await client.post(f"/_dev/payments/{created['id']}/pay")).status_code == 200
-    paid = await client.post(f"/v1/payments/{created['id']}/reissue", headers=headers)
+    paid = await client.post(f"/api/v1/payments/{created['id']}/reissue", headers=headers)
     assert paid.status_code == 409
     assert paid.json()["detail"] == "payment_already_paid"
 
@@ -138,7 +138,7 @@ async def test_reissue_refuses_paid_payment_and_another_tenant(client):
     other = await make_account(email="other@chmaba.test", name="Other")
     other_raw, _ = await make_key(other)
     cross = await client.post(
-        f"/v1/payments/{created['id']}/reissue",
+        f"/api/v1/payments/{created['id']}/reissue",
         headers={"Authorization": f"Bearer {other_raw}"},
     )
     assert cross.status_code == 404
@@ -171,7 +171,7 @@ async def test_offline_qr_is_refused_when_nothing_can_confirm_it(client, monkeyp
     )
 
     refused = await client.post(
-        "/v1/payments", json={"amount": 1.0, "hosted_qr": False}, headers=headers
+        "/api/v1/payments", json={"amount": 1.0, "hosted_qr": False}, headers=headers
     )
     assert refused.status_code == 400
     assert refused.json()["detail"].startswith("offline_qr_requires_a_confirmation_source")
@@ -179,7 +179,7 @@ async def test_offline_qr_is_refused_when_nothing_can_confirm_it(client, monkeyp
     # A test-mode key is settled by W1's test-mode bypass, which needs no ledger.
     test_key, _ = await make_key(account, mode="test")
     allowed = await client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={"amount": 1.0, "hosted_qr": False},
         headers={"Authorization": f"Bearer {test_key}"},
     )
@@ -188,7 +188,7 @@ async def test_offline_qr_is_refused_when_nothing_can_confirm_it(client, monkeyp
     # Omitting hosted_qr must never trip the guard, because ABA issues the code
     # and answers for it. It runs for real here, so it fails at ABA instead —
     # what matters is which failure.
-    auto = await client.post("/v1/payments", json={"amount": 1.0}, headers=headers)
+    auto = await client.post("/api/v1/payments", json={"amount": 1.0}, headers=headers)
     assert "offline_qr_requires_a_confirmation_source" not in auto.text
 
 
@@ -212,7 +212,7 @@ async def test_account_key_payment_flow_plus_shared_webhook(client, monkeypatch)
     headers = {"Authorization": f"Bearer {raw_key}"}
     # create for store A
     body = {"amount": 1.5, "reference_id": "order_1024", "store": store_a.public_id}
-    r = await client.post("/v1/payments", json=body, headers=headers)
+    r = await client.post("/api/v1/payments", json=body, headers=headers)
     assert r.status_code == 201
     created = r.json()
     assert created["status"] == "pending"
@@ -224,13 +224,13 @@ async def test_account_key_payment_flow_plus_shared_webhook(client, monkeypatch)
 
     # idempotent replay
     r2 = await client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={**body, "idempotency_key": "dup-1"},
         headers=headers,
     )
     assert r2.status_code == 201
     r3 = await client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={**body, "idempotency_key": "dup-1"},
         headers=headers,
     )
@@ -240,7 +240,7 @@ async def test_account_key_payment_flow_plus_shared_webhook(client, monkeypatch)
     payment_id = r2.json()["id"]
 
     # list + single get
-    lst = (await client.get(f"/v1/payments?store={store_a.public_id}", headers=headers)).json()
+    lst = (await client.get(f"/api/v1/payments?store={store_a.public_id}", headers=headers)).json()
     assert [p["id"] for p in lst["data"]] == [payment_id, created["id"]]
 
     # simulate the rail reporting the credit
@@ -248,7 +248,7 @@ async def test_account_key_payment_flow_plus_shared_webhook(client, monkeypatch)
     assert dev.status_code == 200
     assert dev.json()["status"] == "paid"
 
-    got = (await client.get(f"/v1/payments/{payment_id}", headers=headers)).json()
+    got = (await client.get(f"/api/v1/payments/{payment_id}", headers=headers)).json()
     assert got["status"] == "paid"
     assert got["approved_at"] is not None
 
@@ -279,7 +279,7 @@ async def test_store_provisioning_api(client):
 
     created = (
         await client.post(
-            "/v1/stores",
+            "/api/v1/stores",
             json={"name": "New Store"},
             headers=headers,
         )
@@ -288,7 +288,7 @@ async def test_store_provisioning_api(client):
 
     linked = (
         await client.put(
-            f"/v1/stores/{created['id']}/link",
+            f"/api/v1/stores/{created['id']}/link",
             json={
                 "raw_link": "https://link.payway.com.kh/ownerpayway",
                 "merchant_account_id": "ownerpayway",
@@ -300,17 +300,17 @@ async def test_store_provisioning_api(client):
     assert linked["status"] == "active"
     assert linked["link"]["merchant_account_id"] == "ownerpayway"
 
-    listing = (await client.get("/v1/stores", headers=headers)).json()
+    listing = (await client.get("/api/v1/stores", headers=headers)).json()
     assert any(s["id"] == created["id"] for s in listing["data"])
 
     disabled = (
-        await client.post(f"/v1/stores/{created['id']}/disable", headers=headers)
+        await client.post(f"/api/v1/stores/{created['id']}/disable", headers=headers)
     ).json()
     assert disabled["status"] == "disabled"
 
     # creating a payment for a disabled store fails
     r = await client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={"amount": 1.0, "store": created["id"]},
         headers=headers,
     )
@@ -321,12 +321,12 @@ async def test_store_provisioning_api(client):
     # permanent, because both the settings PATCH and the link attach refuse a
     # disabled store.
     enabled = (
-        await client.post(f"/v1/stores/{created['id']}/enable", headers=headers)
+        await client.post(f"/api/v1/stores/{created['id']}/enable", headers=headers)
     ).json()
     assert enabled["status"] == "active"
 
     r = await client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={"amount": 1.0, "store": created["id"], "hosted_qr": False},
         headers=headers,
     )
@@ -339,13 +339,13 @@ async def test_account_key_requires_store_when_multiple_stores(client):
     await make_store(account, name="Dara Shop", owner="Dara")
     raw_key, _ = await make_key(account)
     r = await client.post(
-        "/v1/payments", json={"amount": 1.0}, headers={"Authorization": f"Bearer {raw_key}"}
+        "/api/v1/payments", json={"amount": 1.0}, headers={"Authorization": f"Bearer {raw_key}"}
     )
     assert r.status_code == 400
 
 
 async def test_payment_list_spans_every_store_on_the_account(client):
-    """`GET /v1/payments` with no `store` lists the whole account.
+    """`GET /api/v1/payments` with no `store` lists the whole account.
 
     The portal's payments page asks for "All stores". Creating a payment without a
     store *is* refused on a multi-store account (see the test above), but *listing*
@@ -360,20 +360,20 @@ async def test_payment_list_spans_every_store_on_the_account(client):
 
     first = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 1.5, "store": cafe.public_id, "hosted_qr": False},
             headers=headers,
         )
     ).json()
     second = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 2.5, "store": shop.public_id, "hosted_qr": False},
             headers=headers,
         )
     ).json()
 
-    listing = (await client.get("/v1/payments", headers=headers)).json()
+    listing = (await client.get("/api/v1/payments", headers=headers)).json()
     assert [p["id"] for p in listing["data"]] == [second["id"], first["id"]]
     # Every row names its own store — a cross-store list that cannot say which store
     # a payment belongs to is not readable.
@@ -387,7 +387,7 @@ async def test_payment_list_spans_every_store_on_the_account(client):
     assert all(p["paid_at"] is None for p in listing["data"])
     paid = await client.post(f"/_dev/payments/{first['id']}/pay")
     assert paid.status_code == 200
-    after = (await client.get("/v1/payments", headers=headers)).json()
+    after = (await client.get("/api/v1/payments", headers=headers)).json()
     row = next(p for p in after["data"] if p["id"] == first["id"])
     assert row["status"] == "paid"
     assert row["paid_at"] is not None
@@ -395,11 +395,11 @@ async def test_payment_list_spans_every_store_on_the_account(client):
     # Status filtering still applies across stores, and scoping to one store is
     # unchanged.
     only_paid = (
-        await client.get("/v1/payments?status=paid", headers=headers)
+        await client.get("/api/v1/payments?status=paid", headers=headers)
     ).json()
     assert [p["id"] for p in only_paid["data"]] == [first["id"]]
     scoped = (
-        await client.get(f"/v1/payments?store={shop.public_id}", headers=headers)
+        await client.get(f"/api/v1/payments?store={shop.public_id}", headers=headers)
     ).json()
     assert [p["id"] for p in scoped["data"]] == [second["id"]]
 
@@ -415,7 +415,7 @@ async def test_expiry_worker(client):
     raw_key, _ = await make_key(account)
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 3.0, "hosted_qr": False},
             headers={"Authorization": f"Bearer {raw_key}"},
         )
@@ -435,7 +435,7 @@ async def test_expiry_worker(client):
         expired = await expire_due_payments(session)
         assert any(p.public_id == created["id"] for p in expired)
 
-    got = (await client.get(f"/v1/payments/{created['id']}", headers={"Authorization": f"Bearer {raw_key}"})).json()
+    got = (await client.get(f"/api/v1/payments/{created['id']}", headers={"Authorization": f"Bearer {raw_key}"})).json()
     assert got["status"] == "expired"
 
 
@@ -445,7 +445,7 @@ async def test_checkout_pages(client):
     raw_key, _ = await make_key(account)
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 5.0, "hosted_qr": False},
             headers={"Authorization": f"Bearer {raw_key}"},
         )
@@ -465,7 +465,7 @@ async def test_checkout_page_renders_branding_and_cannot_be_escaped(client):
     headers = {"Authorization": f"Bearer {raw_key}"}
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 1.0, "hosted_qr": False},
             headers=headers,
         )
@@ -477,7 +477,7 @@ async def test_checkout_page_renders_branding_and_cannot_be_escaped(client):
         await session.commit()
 
     r = await client.patch(
-        f"/v1/stores/{store.public_id}",
+        f"/api/v1/stores/{store.public_id}",
         json={
             "brand_color": "#0f766e",
             "logo_image_url": "https://cdn.example.com/a.png",
@@ -504,14 +504,14 @@ async def test_branding_requires_the_whitelabel_entitlement(client):
     headers = {"Authorization": f"Bearer {raw_key}"}
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 1.0, "hosted_qr": False},
             headers=headers,
         )
     ).json()
 
     denied = await client.patch(
-        f"/v1/stores/{store.public_id}",
+        f"/api/v1/stores/{store.public_id}",
         json={"whitelabel_css": ".card{background:#000}"},
         headers=headers,
     )
@@ -539,7 +539,7 @@ async def test_payment_resolves_merchant_external_id(client):
     headers = {"Authorization": f"Bearer {raw_key}"}
 
     r = await client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={"amount": 2.5, "merchant": "merchant-42", "hosted_qr": False},
         headers=headers,
     )
@@ -548,7 +548,7 @@ async def test_payment_resolves_merchant_external_id(client):
     assert created["external_id"] == "merchant-42"
 
     unknown = await client.post(
-        "/v1/payments", json={"amount": 2.5, "merchant": "nope"}, headers=headers
+        "/api/v1/payments", json={"amount": 2.5, "merchant": "nope"}, headers=headers
     )
     assert unknown.status_code == 404
     assert unknown.json()["detail"] == "merchant_not_found"
@@ -560,18 +560,18 @@ async def test_sub_merchant_and_bank_destination_surfaces_are_gone(client):
     headers = {"Authorization": f"Bearer {raw_key}"}
 
     # the SaaS sub-merchant API and the Bakong/bank destination endpoints no longer exist
-    assert (await client.get("/v1/platform/sub-merchants", headers=headers)).status_code == 404
-    assert (await client.get("/v1/khqr/bank-codes", headers=headers)).status_code == 404
+    assert (await client.get("/api/v1/platform/sub-merchants", headers=headers)).status_code == 404
+    assert (await client.get("/api/v1/khqr/bank-codes", headers=headers)).status_code == 404
     assert (
         await client.post(
-            "/v1/khqr/from-account",
+            "/api/v1/khqr/from-account",
             json={"bank_code": "ABA", "account_number": "071610243081", "merchant_name": "X", "amount": 1},
             headers=headers,
         )
     ).status_code == 404
     assert (
         await client.post(
-            "/v1/transactions/account/check", json={"account_id": "user@bank"}, headers=headers
+            "/api/v1/transactions/account/check", json={"account_id": "user@bank"}, headers=headers
         )
     ).status_code == 404
 
@@ -582,11 +582,11 @@ async def test_sub_merchant_and_bank_destination_surfaces_are_gone(client):
     # sale. PayWay-only is now enforced at the write, not just in the column.
     created = (
         await client.post(
-            "/v1/stores", json={"name": "PayWay Only"}, headers=headers
+            "/api/v1/stores", json={"name": "PayWay Only"}, headers=headers
         )
     ).json()
     bad = await client.put(
-        f"/v1/stores/{created['id']}/link",
+        f"/api/v1/stores/{created['id']}/link",
         json={"raw_link": "bakong://126071610243081", "merchant_account_id": "126071610243081"},
         headers=headers,
     )
@@ -594,7 +594,7 @@ async def test_sub_merchant_and_bank_destination_surfaces_are_gone(client):
     assert bad.json()["detail"].startswith("payway_link_invalid:")
 
     ok = await client.put(
-        f"/v1/stores/{created['id']}/link",
+        f"/api/v1/stores/{created['id']}/link",
         json={
             "raw_link": "https://link.payway.com.kh/ABAPAYpe518710Y",
             "merchant_account_id": "ABAPAYpe518710Y",
@@ -605,7 +605,7 @@ async def test_sub_merchant_and_bank_destination_surfaces_are_gone(client):
     assert ok.json()["link"]["link_type"] == "aba_payway"
 
     legacy = await client.post(
-        f"/v1/stores/{created['id']}/link",
+        f"/api/v1/stores/{created['id']}/link",
         json={"raw_link": "x", "merchant_account_id": "y"},
         headers=headers,
     )
@@ -614,7 +614,7 @@ async def test_sub_merchant_and_bank_destination_surfaces_are_gone(client):
     # legacy destination fields are unknown to the schema now: they are ignored,
     # never persisted, and never echoed back
     unwanted = await client.post(
-        "/v1/stores",
+        "/api/v1/stores",
         json={"name": "Bad Store", "destination_type": "bakong", "destination_details": {"bakong_id": "1"}},
         headers=headers,
     )
@@ -650,7 +650,7 @@ async def test_every_detection_attempt_is_recorded_not_only_the_first(client):
 
     # Hosted by default, so this is the path a real PayWay payment takes.
     created = (
-        await client.post("/v1/payments", json={"amount": 1.0}, headers=headers)
+        await client.post("/api/v1/payments", json={"amount": 1.0}, headers=headers)
     ).json()
 
     async with session_factory() as session:
@@ -682,7 +682,7 @@ async def test_every_detection_attempt_is_recorded_not_only_the_first(client):
 
 
 async def test_payment_list_offset_paginates_without_changing_the_first_page(client):
-    """`GET /v1/payments` now pages with `offset`, so older rows are reachable.
+    """`GET /api/v1/payments` now pages with `offset`, so older rows are reachable.
 
     A merchant could previously only ever see the newest `limit` payments. The
     first page must stay exactly what it was for a caller that sends no `offset`,
@@ -696,7 +696,7 @@ async def test_payment_list_offset_paginates_without_changing_the_first_page(cli
     created = [
         (
             await client.post(
-                "/v1/payments",
+                "/api/v1/payments",
                 json={"amount": 1.0 + index, "hosted_qr": False},
                 headers=headers,
             )
@@ -705,19 +705,19 @@ async def test_payment_list_offset_paginates_without_changing_the_first_page(cli
     ]
     newest_first = [payment["id"] for payment in reversed(created)]
 
-    first = (await client.get("/v1/payments?limit=2", headers=headers)).json()
+    first = (await client.get("/api/v1/payments?limit=2", headers=headers)).json()
     assert [p["id"] for p in first["data"]] == newest_first[:2]
 
     second = (
-        await client.get("/v1/payments?limit=2&offset=2", headers=headers)
+        await client.get("/api/v1/payments?limit=2&offset=2", headers=headers)
     ).json()
     assert [p["id"] for p in second["data"]] == newest_first[2:]
 
     # The first page is byte-for-byte what it always was: no `offset` and an
     # explicit `offset=0` return the same body, and the shape is unchanged.
-    default = (await client.get("/v1/payments", headers=headers)).json()
+    default = (await client.get("/api/v1/payments", headers=headers)).json()
     explicit_zero = (
-        await client.get("/v1/payments?offset=0", headers=headers)
+        await client.get("/api/v1/payments?offset=0", headers=headers)
     ).json()
     assert default == explicit_zero
     assert set(default.keys()) == {"data"}
@@ -736,10 +736,10 @@ async def test_payment_list_offset_paginates_without_changing_the_first_page(cli
 
     # A negative offset is rejected by the parameter declaration (422), not clamped.
     assert (
-        await client.get("/v1/payments?offset=-1", headers=headers)
+        await client.get("/api/v1/payments?offset=-1", headers=headers)
     ).status_code == 422
 
     # An absurd offset is clamped rather than walked: an empty page, not an error.
-    clamped = await client.get("/v1/payments?offset=1000000000", headers=headers)
+    clamped = await client.get("/api/v1/payments?offset=1000000000", headers=headers)
     assert clamped.status_code == 200
     assert clamped.json()["data"] == []

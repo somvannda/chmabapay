@@ -186,7 +186,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     let alive = true;
     (async () => {
       try {
-        const res = await apiFetch("/v1/me", { credentials: "include" });
+        const res = await apiFetch("/api/v1/me", { credentials: "include" });
         if (res.status === 401) {
           const next = encodeURIComponent(
             window.location.pathname + window.location.search,

@@ -48,29 +48,29 @@ WEBHOOKS_FORM = (
 # money can be taken, or an account's standing. Each entry names the audit action
 # the route writes, which the behavioural tests below assert.
 AUDITED: dict[tuple[str, str], tuple[str, ...]] = {
-    ("post", "/v1/keys"): ("key.created",),
-    ("post", "/v1/keys/{key_id}/revoke"): ("key.revoked",),
-    ("post", "/v1/keys/{key_id}/rotate"): ("key.rotated",),
-    ("post", "/v1/webhooks"): ("webhook.created",),
-    ("patch", "/v1/webhooks/{endpoint_id}"): ("webhook.updated",),
-    ("delete", "/v1/webhooks/{endpoint_id}"): ("webhook.deleted",),
-    ("post", "/v1/webhooks/{endpoint_id}/rotate-secret"): ("webhook.secret_rotated",),
-    ("post", "/v1/stores"): ("store.created", "store.link_set"),
-    ("put", "/v1/stores/{public_id}/link"): ("store.link_set",),
-    ("put", "/v1/stores/{public_id}"): ("store.updated", "store.link_set"),
-    ("patch", "/v1/stores/{public_id}"): ("store.updated", "store.link_set"),
-    ("post", "/v1/stores/{public_id}/disable"): ("store.disabled",),
-    ("post", "/v1/stores/{public_id}/enable"): ("store.enabled",),
+    ("post", "/api/v1/keys"): ("key.created",),
+    ("post", "/api/v1/keys/{key_id}/revoke"): ("key.revoked",),
+    ("post", "/api/v1/keys/{key_id}/rotate"): ("key.rotated",),
+    ("post", "/api/v1/webhooks"): ("webhook.created",),
+    ("patch", "/api/v1/webhooks/{endpoint_id}"): ("webhook.updated",),
+    ("delete", "/api/v1/webhooks/{endpoint_id}"): ("webhook.deleted",),
+    ("post", "/api/v1/webhooks/{endpoint_id}/rotate-secret"): ("webhook.secret_rotated",),
+    ("post", "/api/v1/stores"): ("store.created", "store.link_set"),
+    ("put", "/api/v1/stores/{public_id}/link"): ("store.link_set",),
+    ("put", "/api/v1/stores/{public_id}"): ("store.updated", "store.link_set"),
+    ("patch", "/api/v1/stores/{public_id}"): ("store.updated", "store.link_set"),
+    ("post", "/api/v1/stores/{public_id}/disable"): ("store.disabled",),
+    ("post", "/api/v1/stores/{public_id}/enable"): ("store.enabled",),
     # Which of a merchant's stores stay live is a change to whether money can be taken, and the
     # row names both ids because the caller chose one store and the platform suspended another.
-    ("post", "/v1/stores/{public_id}/activate"): ("store.slot_moved",),
+    ("post", "/api/v1/stores/{public_id}/activate"): ("store.slot_moved",),
 }
 
 # Mutating verbs that change no state, so there is no action to attribute. Both
 # send a message and nothing else.
 NOT_A_MUTATION = {
-    ("post", "/v1/stores/{public_id}/telegram/test"),
-    ("post", "/v1/webhooks/{endpoint_id}/test"),
+    ("post", "/api/v1/stores/{public_id}/telegram/test"),
+    ("post", "/api/v1/webhooks/{endpoint_id}/test"),
 }
 
 
@@ -118,7 +118,7 @@ def test_every_mutating_route_on_the_privileged_surface_is_classified():
         for path, operations in paths.items()
         for method in operations
         if method in ("post", "put", "patch", "delete")
-        and path.startswith(("/v1/keys", "/v1/webhooks", "/v1/stores"))
+        and path.startswith(("/api/v1/keys", "/api/v1/webhooks", "/api/v1/stores"))
     }
 
     unclassified = mutating - set(AUDITED) - NOT_A_MUTATION
@@ -154,17 +154,17 @@ async def test_key_lifecycle_is_attributed_to_the_merchant():
     account = await make_account()
 
     async with session_client(account) as api:
-        created = await api.post("/v1/keys", json={"name": "production"})
+        created = await api.post("/api/v1/keys", json={"name": "production"})
         assert created.status_code == 201
         key_id = created.json()["id"]
         issued_secret = created.json()["raw_key"]
 
-        rotated = await api.post(f"/v1/keys/{key_id}/rotate")
+        rotated = await api.post(f"/api/v1/keys/{key_id}/rotate")
         assert rotated.status_code == 200
         rotated_id = rotated.json()["id"]
         rotated_secret = rotated.json()["raw_key"]
 
-        revoked = await api.post(f"/v1/keys/{rotated_id}/revoke")
+        revoked = await api.post(f"/api/v1/keys/{rotated_id}/revoke")
         assert revoked.status_code == 200
 
     written = {entry.action: entry for entry in await rows()}
@@ -200,11 +200,11 @@ async def test_revoking_an_already_revoked_key_records_nothing_new():
     account = await make_account()
 
     async with session_client(account) as api:
-        created = await api.post("/v1/keys", json={"name": "once"})
+        created = await api.post("/api/v1/keys", json={"name": "once"})
         key_id = created.json()["id"]
 
-        assert (await api.post(f"/v1/keys/{key_id}/revoke")).status_code == 200
-        assert (await api.post(f"/v1/keys/{key_id}/revoke")).status_code == 200
+        assert (await api.post(f"/api/v1/keys/{key_id}/revoke")).status_code == 200
+        assert (await api.post(f"/api/v1/keys/{key_id}/revoke")).status_code == 200
 
     assert len(await rows("key.revoked")) == 1
 
@@ -218,7 +218,7 @@ async def test_webhook_lifecycle_is_attributed_to_the_merchant(client):
     headers = bearer(raw_key)
 
     created = await client.post(
-        "/v1/webhooks",
+        "/api/v1/webhooks",
         json={"url": "https://sink.example.com/hook", "events": ["payment.completed"]},
         headers=headers,
     )
@@ -228,19 +228,19 @@ async def test_webhook_lifecycle_is_attributed_to_the_merchant(client):
     # Pointing the URL somewhere new is how a merchant's events would be diverted,
     # so the trail keeps both ends of the change.
     moved = await client.patch(
-        f"/v1/webhooks/{endpoint_id}",
+        f"/api/v1/webhooks/{endpoint_id}",
         json={"url": "https://elsewhere.example.com/hook"},
         headers=headers,
     )
     assert moved.status_code == 200
 
     rotated = await client.post(
-        f"/v1/webhooks/{endpoint_id}/rotate-secret", headers=headers
+        f"/api/v1/webhooks/{endpoint_id}/rotate-secret", headers=headers
     )
     assert rotated.status_code == 200
     new_secret = rotated.json()["signing_secret"]
 
-    deleted = await client.delete(f"/v1/webhooks/{endpoint_id}", headers=headers)
+    deleted = await client.delete(f"/api/v1/webhooks/{endpoint_id}", headers=headers)
     assert deleted.status_code == 200
 
     written = {entry.action: entry for entry in await rows()}
@@ -277,7 +277,7 @@ async def test_a_webhook_create_accepts_the_dashboard_payload(client):
     headers = bearer(raw_key)
 
     accepted = await client.post(
-        "/v1/webhooks",
+        "/api/v1/webhooks",
         json={"url": "https://sink.example.com/hook", "events": ["*"]},
         headers=headers,
     )
@@ -287,7 +287,7 @@ async def test_a_webhook_create_accepts_the_dashboard_payload(client):
     assert accepted.json()["enabled"] is True
 
     refused = await client.post(
-        "/v1/webhooks",
+        "/api/v1/webhooks",
         json={"url": "https://sink.example.com/other", "events": ["*"], "enabled": True},
         headers=headers,
     )
@@ -324,12 +324,12 @@ async def test_a_webhook_patch_that_changes_nothing_is_not_recorded(client):
     headers = bearer(raw_key)
 
     created = await client.post(
-        "/v1/webhooks", json={"url": "https://sink.example.com/hook"}, headers=headers
+        "/api/v1/webhooks", json={"url": "https://sink.example.com/hook"}, headers=headers
     )
     endpoint_id = created.json()["id"]
 
     same = await client.patch(
-        f"/v1/webhooks/{endpoint_id}",
+        f"/api/v1/webhooks/{endpoint_id}",
         json={"url": "https://sink.example.com/hook"},
         headers=headers,
     )
@@ -349,7 +349,7 @@ async def test_the_payout_destination_is_recorded_whenever_it_changes(client):
 
     # Created with a link.
     created = await client.post(
-        "/v1/stores",
+        "/api/v1/stores",
         json={
             "name": "Sokha Cafe",
             "link": {
@@ -364,7 +364,7 @@ async def test_the_payout_destination_is_recorded_whenever_it_changes(client):
 
     # Replaced through the dedicated route.
     replaced = await client.put(
-        f"/v1/stores/{public_id}/link",
+        f"/api/v1/stores/{public_id}/link",
         json={
             "raw_link": "https://link.payway.com.kh/other",
             "merchant_account_id": "otherpayway",
@@ -375,7 +375,7 @@ async def test_the_payout_destination_is_recorded_whenever_it_changes(client):
 
     # And replaced again through a plain PATCH, which is the quiet path.
     patched = await client.patch(
-        f"/v1/stores/{public_id}",
+        f"/api/v1/stores/{public_id}",
         json={
             "link": {
                 "raw_link": "https://link.payway.com.kh/third",
@@ -401,19 +401,19 @@ async def test_store_mutations_are_recorded(client):
     raw_key, _ = await make_key(account)
     headers = bearer(raw_key)
 
-    created = await client.post("/v1/stores", json={"name": "Draft Only"}, headers=headers)
+    created = await client.post("/api/v1/stores", json={"name": "Draft Only"}, headers=headers)
     assert created.status_code == 201
     public_id = created.json()["id"]
 
     renamed = await client.patch(
-        f"/v1/stores/{public_id}", json={"name": "Renamed"}, headers=headers
+        f"/api/v1/stores/{public_id}", json={"name": "Renamed"}, headers=headers
     )
     assert renamed.status_code == 200
 
-    disabled = await client.post(f"/v1/stores/{public_id}/disable", headers=headers)
+    disabled = await client.post(f"/api/v1/stores/{public_id}/disable", headers=headers)
     assert disabled.status_code == 200
 
-    enabled = await client.post(f"/v1/stores/{public_id}/enable", headers=headers)
+    enabled = await client.post(f"/api/v1/stores/{public_id}/enable", headers=headers)
     assert enabled.status_code == 200
     # This store never had a link, so it comes back as a draft rather than active:
     # `active` would advertise a store with nowhere to send money.
@@ -421,7 +421,7 @@ async def test_store_mutations_are_recorded(client):
 
     # Enabling a store that is not disabled changes nothing, so it records nothing —
     # the rule an empty PATCH follows.
-    again = await client.post(f"/v1/stores/{public_id}/enable", headers=headers)
+    again = await client.post(f"/api/v1/stores/{public_id}/enable", headers=headers)
     assert again.status_code == 200
 
     written = {entry.action: entry for entry in await rows()}
@@ -442,11 +442,11 @@ async def test_an_empty_store_patch_is_not_recorded(client):
     raw_key, _ = await make_key(account)
     headers = bearer(raw_key)
 
-    created = await client.post("/v1/stores", json={"name": "Untouched"}, headers=headers)
+    created = await client.post("/api/v1/stores", json={"name": "Untouched"}, headers=headers)
     public_id = created.json()["id"]
 
     assert (
-        await client.patch(f"/v1/stores/{public_id}", json={}, headers=headers)
+        await client.patch(f"/api/v1/stores/{public_id}", json={}, headers=headers)
     ).status_code == 200
     assert await rows("store.updated") == []
 
@@ -462,7 +462,7 @@ async def test_reissuing_a_payment_is_recorded_with_its_lineage(client):
 
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 4.0, "reference_id": "order_7", "hosted_qr": False},
             headers=headers,
         )
@@ -477,7 +477,7 @@ async def test_reissuing_a_payment_is_recorded_with_its_lineage(client):
         await session.commit()
         await expire_due_payments(session)
 
-    reissued = await client.post(f"/v1/payments/{created['id']}/reissue", headers=headers)
+    reissued = await client.post(f"/api/v1/payments/{created['id']}/reissue", headers=headers)
     assert reissued.status_code == 201
     successor = reissued.json()
 
@@ -492,7 +492,7 @@ async def test_reissuing_a_payment_is_recorded_with_its_lineage(client):
     }
 
     # A replay changes nothing, so it must not add a second row.
-    replay = await client.post(f"/v1/payments/{created['id']}/reissue", headers=headers)
+    replay = await client.post(f"/api/v1/payments/{created['id']}/reissue", headers=headers)
     assert replay.status_code == 200
     assert len(await rows("payment.reissued")) == 1
 
@@ -510,14 +510,14 @@ async def test_suspending_and_reactivating_an_account_is_recorded(client):
     ).status_code == 200
 
     suspended = await client.patch(
-        f"/v1/admin/accounts/{merchant.id}",
+        f"/api/v1/admin/accounts/{merchant.id}",
         json={"status": "suspended", "reason": "chargeback fraud"},
     )
     assert suspended.status_code == 200
     assert suspended.json()["status"] == "suspended"
 
     activated = await client.patch(
-        f"/v1/admin/accounts/{merchant.id}", json={"status": "active"}
+        f"/api/v1/admin/accounts/{merchant.id}", json={"status": "active"}
     )
     assert activated.status_code == 200
 
@@ -538,7 +538,7 @@ async def test_a_standing_change_cannot_be_smuggled_through_as_an_entitlement(cl
     await client.post("/auth/login", json={"email": operator.email, "password": PASSWORD})
 
     res = await client.patch(
-        f"/v1/admin/accounts/{merchant.id}", json={"whitelabel_enabled": True}
+        f"/api/v1/admin/accounts/{merchant.id}", json={"whitelabel_enabled": True}
     )
     assert res.status_code == 200
 
@@ -550,7 +550,7 @@ async def test_a_standing_change_cannot_be_smuggled_through_as_an_entitlement(cl
 
     # An unknown standing is refused outright.
     rejected = await client.patch(
-        f"/v1/admin/accounts/{merchant.id}", json={"status": "deleted"}
+        f"/api/v1/admin/accounts/{merchant.id}", json={"status": "deleted"}
     )
     assert rejected.status_code == 422
 
@@ -567,9 +567,9 @@ async def test_the_audit_view_is_operator_only(client):
     # has no `Bearer ck_` branch, and `get_current_session_account` raises before the body
     # runs when there is no cookie. Either status means the same thing here — a merchant
     # key does not open the trail.
-    by_key = await client.get("/v1/admin/audit-logs", headers=bearer(raw_key))
+    by_key = await client.get("/api/v1/admin/audit-logs", headers=bearer(raw_key))
     assert by_key.status_code in (401, 403)
-    assert (await client.get("/v1/admin/audit-logs")).status_code == 401
+    assert (await client.get("/api/v1/admin/audit-logs")).status_code == 401
 
 
 async def test_the_audit_view_lists_the_trail_newest_first_with_the_actor(client):
@@ -580,13 +580,13 @@ async def test_the_audit_view_lists_the_trail_newest_first_with_the_actor(client
     # Key creation is session-only, so it comes from the merchant's own session — the
     # operator's console session on `client` must not be the recorded actor.
     async with session_client(merchant) as merchant_api:
-        await merchant_api.post("/v1/keys", json={"name": "audited"})
+        await merchant_api.post("/api/v1/keys", json={"name": "audited"})
     await client.patch(
-        f"/v1/admin/accounts/{merchant.id}",
+        f"/api/v1/admin/accounts/{merchant.id}",
         json={"status": "suspended", "reason": "review"},
     )
 
-    res = await client.get("/v1/admin/audit-logs")
+    res = await client.get("/api/v1/admin/audit-logs")
     assert res.status_code == 200
     body = res.json()
     assert body["pagination"]["total_rows"] >= 2
@@ -600,17 +600,17 @@ async def test_the_audit_view_lists_the_trail_newest_first_with_the_actor(client
     assert by_action["account.suspended"]["actor_email"] == operator.email
 
     # Filters narrow the trail rather than the page.
-    only_keys = await client.get("/v1/admin/audit-logs", params={"action": "key.created"})
+    only_keys = await client.get("/api/v1/admin/audit-logs", params={"action": "key.created"})
     assert only_keys.json()["pagination"]["total_rows"] == 1
     assert {row["action"] for row in only_keys.json()["data"]} == {"key.created"}
 
     by_actor = await client.get(
-        "/v1/admin/audit-logs", params={"actor_account_id": operator.id}
+        "/api/v1/admin/audit-logs", params={"actor_account_id": operator.id}
     )
     assert {row["actor_account_id"] for row in by_actor.json()["data"]} == {operator.id}
 
     by_type = await client.get(
-        "/v1/admin/audit-logs", params={"target_type": "ApiKey"}
+        "/api/v1/admin/audit-logs", params={"target_type": "ApiKey"}
     )
     assert {row["target_type"] for row in by_type.json()["data"]} == {"ApiKey"}
 
@@ -628,27 +628,27 @@ async def test_the_trail_can_be_narrowed_to_a_date_range(client):
     merchant = await make_account(email="sokha@chmaba.test", name="Sokha")
     await client.post("/auth/login", json={"email": operator.email, "password": PASSWORD})
     await client.patch(
-        f"/v1/admin/accounts/{merchant.id}",
+        f"/api/v1/admin/accounts/{merchant.id}",
         json={"status": "suspended", "reason": "review"},
     )
 
     today = datetime.now(UTC).date().isoformat()
     yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
 
-    inside = (await client.get("/v1/admin/audit-logs", params={"from": today, "to": today})).json()
+    inside = (await client.get("/api/v1/admin/audit-logs", params={"from": today, "to": today})).json()
     assert inside["pagination"]["total_rows"] >= 2  # the sign-in and the suspension
 
     # `to` is inclusive of its whole day, so a range that ends yesterday cannot
     # contain anything that happened today.
     closed = (
         await client.get(
-            "/v1/admin/audit-logs", params={"from": yesterday, "to": yesterday}
+            "/api/v1/admin/audit-logs", params={"from": yesterday, "to": yesterday}
         )
     ).json()
     assert closed["pagination"]["total_rows"] == 0
 
     # A value that is not a date is refused rather than silently matching nothing.
-    bad = await client.get("/v1/admin/audit-logs", params={"from": "last-tuesday"})
+    bad = await client.get("/api/v1/admin/audit-logs", params={"from": "last-tuesday"})
     assert bad.status_code == 400
 
 
@@ -664,12 +664,12 @@ async def test_the_trail_exports_as_csv_and_json_with_the_view_s_filters(client)
     merchant = await make_account(email="sokha@chmaba.test", name="Sokha")
     await client.post("/auth/login", json={"email": operator.email, "password": PASSWORD})
     await client.patch(
-        f"/v1/admin/accounts/{merchant.id}",
+        f"/api/v1/admin/accounts/{merchant.id}",
         json={"status": "suspended", "reason": "review"},
     )
 
     csv_res = await client.get(
-        "/v1/admin/audit-logs/export", params={"action": "account.suspended"}
+        "/api/v1/admin/audit-logs/export", params={"action": "account.suspended"}
     )
     assert csv_res.status_code == 200
     assert csv_res.headers["content-type"].startswith("text/csv")
@@ -697,7 +697,7 @@ async def test_the_trail_exports_as_csv_and_json_with_the_view_s_filters(client)
     assert int(csv_res.headers["x-total-rows"]) >= returned
 
     as_json = await client.get(
-        "/v1/admin/audit-logs/export",
+        "/api/v1/admin/audit-logs/export",
         params={"format": "json", "action": "account.suspended"},
     )
     assert as_json.status_code == 200
@@ -712,5 +712,5 @@ async def test_the_trail_exports_as_csv_and_json_with_the_view_s_filters(client)
         transport=httpx.ASGITransport(app=app), base_url=BASE_URL
     ) as anonymous:
         assert (
-            await anonymous.get("/v1/admin/audit-logs/export")
+            await anonymous.get("/api/v1/admin/audit-logs/export")
         ).status_code == 401

@@ -8,7 +8,7 @@ Replicate CutLuy's developer-facing product and go beyond it with a **tenant (su
   stores (sub-merchants) via API** instead of CutLuy's manual per-store dashboard flow.
 - Each store owns **its own payment link** (ABA Payway / Bakong merchant account), entered once by
   the sub-merchant.
-- `POST /v1/payments` (targeting one of the account's stores) -> returns a `qr_string` + hosted
+- `POST /api/v1/payments` (targeting one of the account's stores) -> returns a `qr_string` + hosted
   `checkout_url` per payment. Money lands **directly in that store's own bank account**.
 - Platform reports status in real time and delivers **signed webhooks to ONE account-level
   endpoint with one signing secret**, each event tagged with the sub-merchant so the POS can route.
@@ -21,7 +21,7 @@ Money flow is **direct-to-merchant** (never pooled, never held). We confirm cred
                          ┌───────────────────────────────────────────────┐
    Developer's server    │                  OUR PLATFORM                  │
    (merchant app)        │                                               │
-        │  HTTPS /v1/*   │   ┌──────────┐   ┌────────────┐  ┌─────────┐ │
+        │  HTTPS /api/v1/*   │   ┌──────────┐   ┌────────────┐  ┌─────────┐ │
         ├──────────────► │   │ API edge │──►│ App logic  │  │ Postgres│ │
         │   API key      │   │ FastAPI  │   │ (payments, │  │ (source │ │
         ◄───────────────► │   │          │   │  stores,   │  │  of     │ │
@@ -51,8 +51,8 @@ Money flow is **direct-to-merchant** (never pooled, never held). We confirm cred
 ```
 
 ### 2.1 Public surface (FastAPI)
-- `POST /v1/payments`, `GET /v1/payments/:id`, `GET /v1/payments` — create/read payments.
-- Store (sub-merchant) provisioning: `POST /v1/stores`, link management, `GET /v1/stores…` —
+- `POST /api/v1/payments`, `GET /api/v1/payments/:id`, `GET /api/v1/payments` — create/read payments.
+- Store (sub-merchant) provisioning: `POST /api/v1/stores`, link management, `GET /api/v1/stores…` —
   lets a hosting platform auto-create a store the moment its end-user supplies a payment link.
 - Hosted checkout page `/pay/:id` (public, no auth) — renders the KHQR card and polls status.
 - Dashboard app (later): manage account, stores, webhook endpoints, API keys, billing.
@@ -69,7 +69,7 @@ All share one DB and one Redis. Deploy as containers.
 
 ## 3. Request lifecycle
 
-1. Developer calls `POST /v1/payments {amount, reference_id, store}` with an API key.
+1. Developer calls `POST /api/v1/payments {amount, reference_id, store}` with an API key.
 2. API auth resolves the key to its account. The **store** is chosen by the `store` param
    (or implied when a store-scoped key is used). The store's own payment link supplies the
    merchant's destination account + credentials — money goes to that store, not the account.
@@ -117,7 +117,7 @@ provisions stores:
   adds their own link in the dashboard, and uses either an account-scoped or a store-scoped key
   plus their own webhook endpoint. Nothing new needed.
 - **Hosting platform / POS provider (chmaba POS):** the same account shape with many stores,
-  auto-provisioned via `POST /v1/stores`, an account-scoped key, and one shared webhook + signing
+  auto-provisioned via `POST /api/v1/stores`, an account-scoped key, and one shared webhook + signing
   secret; events carry the `store` for routing.
 
 ```

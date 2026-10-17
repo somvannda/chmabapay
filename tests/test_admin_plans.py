@@ -66,12 +66,12 @@ async def test_password_login_creates_a_usable_session(client):
     assert res.status_code == 200
     assert res.json()["is_platform_admin"] is True
 
-    me = await client.get("/v1/me")
+    me = await client.get("/api/v1/me")
     assert me.status_code == 200
     assert me.json()["email"] == account.email
 
     # and the session is an admin session
-    assert (await client.get("/v1/admin/overview")).status_code == 200
+    assert (await client.get("/api/v1/admin/overview")).status_code == 200
 
 
 async def test_password_login_is_case_insensitive_on_email(client):
@@ -112,7 +112,7 @@ async def test_admin_plan_crud(client):
     assert (await sign_in(client, "duke@chmaba.test", PASSWORD)).status_code == 200
 
     created = await client.post(
-        "/v1/admin/plans",
+        "/api/v1/admin/plans",
         json={
             "code": "growth",
             "name": "Growth",
@@ -131,33 +131,33 @@ async def test_admin_plan_crud(client):
     assert plan["subscriptions_count"] == 0
 
     duplicate = await client.post(
-        "/v1/admin/plans", json={"code": "growth", "name": "Another"}
+        "/api/v1/admin/plans", json={"code": "growth", "name": "Another"}
     )
     assert duplicate.status_code == 409
     assert duplicate.json()["detail"] == "plan_code_exists"
 
     # a new public plan shows up in the catalogue the website and user portal read
-    catalogue = await client.get("/v1/billing/plans")
+    catalogue = await client.get("/api/v1/billing/plans")
     assert "growth" in [p["code"] for p in catalogue.json()]
 
     patched = await client.patch(
-        f"/v1/admin/plans/{plan['id']}",
+        f"/api/v1/admin/plans/{plan['id']}",
         json={"tagline": "For scaling teams.", "features": ["One", "Two", "Three"]},
     )
     assert patched.status_code == 200
     assert patched.json()["features"] == ["One", "Two", "Three"]
 
     too_many = await client.patch(
-        f"/v1/admin/plans/{plan['id']}",
+        f"/api/v1/admin/plans/{plan['id']}",
         json={"features": [f"bullet {i}" for i in range(20)]},
     )
     assert too_many.status_code == 422
 
-    deleted = await client.delete(f"/v1/admin/plans/{plan['id']}")
+    deleted = await client.delete(f"/api/v1/admin/plans/{plan['id']}")
     assert deleted.status_code == 200
     assert deleted.json() == {"retired": False, "deleted": True, "plan": None}
 
-    assert (await client.delete(f"/v1/admin/plans/{plan['id']}")).status_code == 404
+    assert (await client.delete(f"/api/v1/admin/plans/{plan['id']}")).status_code == 404
 
 
 async def test_deleting_a_plan_in_use_retires_it_instead(client):
@@ -166,7 +166,7 @@ async def test_deleting_a_plan_in_use_retires_it_instead(client):
     await sign_in(client, "duke@chmaba.test", PASSWORD)
 
     created = await client.post(
-        "/v1/admin/plans", json={"code": "in_use", "name": "In Use"}
+        "/api/v1/admin/plans", json={"code": "in_use", "name": "In Use"}
     )
     plan_id = created.json()["id"]
 
@@ -182,7 +182,7 @@ async def test_deleting_a_plan_in_use_retires_it_instead(client):
         )
         await session.commit()
 
-    res = await client.delete(f"/v1/admin/plans/{plan_id}")
+    res = await client.delete(f"/api/v1/admin/plans/{plan_id}")
     assert res.status_code == 200
     body = res.json()
     assert body["retired"] is True
@@ -192,9 +192,9 @@ async def test_deleting_a_plan_in_use_retires_it_instead(client):
     assert body["plan"]["subscriptions_count"] == 1
 
     # gone from the public catalogue, still visible to the operator
-    catalogue = await client.get("/v1/billing/plans")
+    catalogue = await client.get("/api/v1/billing/plans")
     assert "in_use" not in [p["code"] for p in catalogue.json()]
-    admin_list = await client.get("/v1/admin/plans")
+    admin_list = await client.get("/api/v1/admin/plans")
     assert "in_use" in [p["code"] for p in admin_list.json()]
 
 
@@ -230,11 +230,11 @@ async def test_seeding_never_overwrites_operator_edits(client):
 
 
 async def test_me_reports_how_the_session_was_created(client):
-    """The console refuses SSO sessions, so /v1/me must expose the auth method."""
+    """The console refuses SSO sessions, so /api/v1/me must expose the auth method."""
     account = await make_admin()
 
     await sign_in(client, account.email, PASSWORD)
-    assert (await client.get("/v1/me")).json()["auth_method"] == "password"
+    assert (await client.get("/api/v1/me")).json()["auth_method"] == "password"
 
     # A Google session for the same admin carries a different label — this is what the
     # console gate keys off to keep the SSO flow out of platform controls.
@@ -246,7 +246,7 @@ async def test_me_reports_how_the_session_was_created(client):
         base_url=BASE_URL,
         cookies={SESSION_COOKIE: google_token},
     ) as google_client:
-        res = await google_client.get("/v1/me")
+        res = await google_client.get("/api/v1/me")
 
     assert res.status_code == 200
     assert res.json()["auth_method"] == "google"
@@ -255,9 +255,9 @@ async def test_me_reports_how_the_session_was_created(client):
 async def test_an_sso_session_cannot_reach_the_admin_api(client):
     """The console's password-only rule is enforced by the API, not just by React.
 
-    `/v1/me` reported `auth_method` and the admin shell refused anything that was
+    `/api/v1/me` reported `auth_method` and the admin shell refused anything that was
     not "password" — but the shell is not a security boundary. An admin's Google
-    session could call every `/v1/admin/*` route directly with curl, which is the
+    session could call every `/api/v1/admin/*` route directly with curl, which is the
     whole privilege the console claims to withhold. This asserts the refusal now
     happens server-side, which is what `session_auth_method` was written for.
     """
@@ -265,7 +265,7 @@ async def test_an_sso_session_cannot_reach_the_admin_api(client):
 
     # The console's own path still works.
     await sign_in(client, account.email, PASSWORD)
-    assert (await client.get("/v1/admin/accounts")).status_code == 200
+    assert (await client.get("/api/v1/admin/accounts")).status_code == 200
 
     # The same admin, authenticated by Google instead, is refused.
     async with session_factory() as session:
@@ -276,7 +276,7 @@ async def test_an_sso_session_cannot_reach_the_admin_api(client):
         base_url=BASE_URL,
         cookies={SESSION_COOKIE: google_token},
     ) as sso_client:
-        refused = await sso_client.get("/v1/admin/accounts")
+        refused = await sso_client.get("/api/v1/admin/accounts")
 
     assert refused.status_code == 403
     assert refused.json()["detail"] == "password_session_required"
@@ -290,14 +290,14 @@ async def test_an_api_key_cannot_skip_the_password_claim(client):
     alongside an SSO cookie reached every admin route with no password claim at
     all — the exact bypass the claim check exists to close, since the console
     tells operators it is password-only. The key is now not a credential on
-    `/v1/admin/*` in any combination.
+    `/api/v1/admin/*` in any combination.
     """
     account = await make_admin()
     raw_key, _ = await make_key(account)
     key_header = {"Authorization": f"Bearer {raw_key}"}
 
     # A key with no session at all: the session dependency refuses first.
-    assert (await client.get("/v1/admin/overview", headers=key_header)).status_code == 401
+    assert (await client.get("/api/v1/admin/overview", headers=key_header)).status_code == 401
 
     # A key alongside a valid but password-less session: the claim check refuses.
     async with session_factory() as session:
@@ -308,7 +308,7 @@ async def test_an_api_key_cannot_skip_the_password_claim(client):
         base_url=BASE_URL,
         cookies={SESSION_COOKIE: google_token},
     ) as sso_client:
-        bypass = await sso_client.get("/v1/admin/overview", headers=key_header)
+        bypass = await sso_client.get("/api/v1/admin/overview", headers=key_header)
 
     assert bypass.status_code == 403
     assert bypass.json()["detail"] == "password_session_required"
@@ -422,7 +422,7 @@ async def test_admin_payment_feed_spans_the_platform(client):
 
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={
                 "amount": 4.5,
                 "reference_id": "order_7",
@@ -436,7 +436,7 @@ async def test_admin_payment_feed_spans_the_platform(client):
 
     await sign_in(client, admin.email, PASSWORD)
 
-    body = (await client.get("/v1/admin/payments")).json()
+    body = (await client.get("/api/v1/admin/payments")).json()
     row = next(p for p in body["data"] if p["id"] == created["id"])
     assert row["account_id"] == merchant.id
     assert row["account_email"] == merchant.email
@@ -452,30 +452,30 @@ async def test_admin_payment_feed_spans_the_platform(client):
 
     # `q` is the string a support thread actually contains: our public id, or the
     # merchant's own reference.
-    by_reference = (await client.get("/v1/admin/payments?q=order_7")).json()
+    by_reference = (await client.get("/api/v1/admin/payments?q=order_7")).json()
     assert [p["id"] for p in by_reference["data"]] == [created["id"]]
-    by_public_id = (await client.get(f"/v1/admin/payments?q={created['id']}")).json()
+    by_public_id = (await client.get(f"/api/v1/admin/payments?q={created['id']}")).json()
     assert [p["id"] for p in by_public_id["data"]] == [created["id"]]
 
     # ...and a partial match still finds it, because an operator pastes whatever
     # the merchant sent them rather than a tidied-up identifier.
-    partial = (await client.get("/v1/admin/payments?q=order")).json()
+    partial = (await client.get("/api/v1/admin/payments?q=order")).json()
     assert created["id"] in [p["id"] for p in partial["data"]]
 
-    narrowed = (await client.get(f"/v1/admin/payments?account_id={merchant.id}")).json()
+    narrowed = (await client.get(f"/api/v1/admin/payments?account_id={merchant.id}")).json()
     assert [p["id"] for p in narrowed["data"]] == [created["id"]]
     # The admin's own account owns no stores, so it has taken no payments.
-    assert (await client.get(f"/v1/admin/payments?account_id={admin.id}")).json()["data"] == []
+    assert (await client.get(f"/api/v1/admin/payments?account_id={admin.id}")).json()["data"] == []
 
-    assert (await client.get("/v1/admin/payments?status=paid")).json()["data"] == []
+    assert (await client.get("/api/v1/admin/payments?status=paid")).json()["data"] == []
     assert [
-        p["id"] for p in (await client.get("/v1/admin/payments?status=pending")).json()["data"]
+        p["id"] for p in (await client.get("/api/v1/admin/payments?status=pending")).json()["data"]
     ] == [created["id"]]
 
     # Settling it moves the timestamp an operator reads to answer "did the money
     # arrive", rather than only changing the status pill.
     assert (await client.post(f"/_dev/payments/{created['id']}/pay")).status_code == 200
-    settled = (await client.get("/v1/admin/payments?status=paid")).json()["data"]
+    settled = (await client.get("/api/v1/admin/payments?status=paid")).json()["data"]
     assert [p["id"] for p in settled] == [created["id"]]
     assert settled[0]["paid_at"] is not None
 
@@ -493,12 +493,12 @@ async def test_an_operator_can_point_plan_fees_at_a_payway_link(
     admin = await make_admin()
     await sign_in(client, admin.email, PASSWORD)
 
-    before = (await client.get("/v1/admin/hq-store")).json()
+    before = (await client.get("/api/v1/admin/hq-store")).json()
     assert before["configured"] is False
     assert before["source"] == "none"
 
     saved = await client.put(
-        "/v1/admin/hq-store/link",
+        "/api/v1/admin/hq-store/link",
         json={"raw_link": "https://link.payway.com.kh/ABAPAYpe518710Y"},
     )
     assert saved.status_code == 200, saved.text
@@ -510,7 +510,7 @@ async def test_an_operator_can_point_plan_fees_at_a_payway_link(
     assert body["store_status"] == "active"
 
     # It persisted, and it is the store the billing route will resolve.
-    again = (await client.get("/v1/admin/hq-store")).json()
+    again = (await client.get("/api/v1/admin/hq-store")).json()
     assert again["merchant_account_id"] == "ABAPAYpe518710Y"
     assert again["store_public_id"] == body["store_public_id"]
 
@@ -536,7 +536,7 @@ async def test_the_link_set_reason_is_recorded(client, unconfigured_hq_store):
     await sign_in(client, admin.email, PASSWORD)
 
     saved = await client.put(
-        "/v1/admin/hq-store/link",
+        "/api/v1/admin/hq-store/link",
         json={
             "raw_link": "https://link.payway.com.kh/ABAPAYreason01",
             "reason": "Moving collection to the new company ABA account",
@@ -566,13 +566,13 @@ async def test_saving_a_link_twice_replaces_it_rather_than_adding_a_store(client
 
     first = (
         await client.put(
-            "/v1/admin/hq-store/link",
+            "/api/v1/admin/hq-store/link",
             json={"raw_link": "https://link.payway.com.kh/ABAPAYfirst001"},
         )
     ).json()
     second = (
         await client.put(
-            "/v1/admin/hq-store/link",
+            "/api/v1/admin/hq-store/link",
             json={"raw_link": "https://link.payway.com.kh/ABAPAYsecond02"},
         )
     ).json()
@@ -614,12 +614,12 @@ async def test_a_link_that_is_not_a_payway_link_is_refused(
         "https://example.com/pay/abc",  # some other host
         "not a link at all",  # not a slug either
     ):
-        res = await client.put("/v1/admin/hq-store/link", json={"raw_link": bad})
+        res = await client.put("/api/v1/admin/hq-store/link", json={"raw_link": bad})
         assert res.status_code == 400, bad
         assert res.json()["detail"].startswith("invalid_payway_link")
 
     # Nothing was written on the way through.
-    assert (await client.get("/v1/admin/hq-store")).json()["configured"] is False
+    assert (await client.get("/api/v1/admin/hq-store")).json()["configured"] is False
 
 
 async def test_a_merchant_cannot_set_where_plan_fees_are_collected(client):
@@ -632,14 +632,14 @@ async def test_a_merchant_cannot_set_where_plan_fees_are_collected(client):
     await sign_in(client, merchant.email, PASSWORD)
 
     res = await client.put(
-        "/v1/admin/hq-store/link",
+        "/api/v1/admin/hq-store/link",
         json={"raw_link": "https://link.payway.com.kh/ABAPAYpe518710Y"},
     )
     assert res.status_code == 403
 
 
 async def test_admin_delivery_feed_shows_a_stalled_sender(client):
-    """`GET /v1/admin/deliveries` answers "is the webhook rail delivering at all".
+    """`GET /api/v1/admin/deliveries` answers "is the webhook rail delivering at all".
 
     The merchant-facing route answers "did *my* endpoint receive it" and only for
     an endpoint the caller owns, so three merchants reporting silence at once each
@@ -653,7 +653,7 @@ async def test_admin_delivery_feed_shows_a_stalled_sender(client):
 
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={
                 "amount": 2.0,
                 "store": store.public_id,
@@ -687,7 +687,7 @@ async def test_admin_delivery_feed_shows_a_stalled_sender(client):
         await session.commit()
 
     await sign_in(client, admin.email, PASSWORD)
-    body = (await client.get("/v1/admin/deliveries")).json()
+    body = (await client.get("/api/v1/admin/deliveries")).json()
     row = next(d for d in body["data"] if d["endpoint_id"] == endpoint.id)
     assert row["account_id"] == merchant.id
     assert row["account_email"] == merchant.email
@@ -700,21 +700,21 @@ async def test_admin_delivery_feed_shows_a_stalled_sender(client):
 
     # The filters an operator reaches for when deciding whether this is one endpoint
     # or the whole rail.
-    retrying = (await client.get("/v1/admin/deliveries?status=retrying")).json()
+    retrying = (await client.get("/api/v1/admin/deliveries?status=retrying")).json()
     assert [d["id"] for d in retrying["data"]] == [row["id"]]
-    assert (await client.get("/v1/admin/deliveries?status=success")).json()["data"] == []
+    assert (await client.get("/api/v1/admin/deliveries?status=success")).json()["data"] == []
 
-    both = await client.get(f"/v1/admin/deliveries?status=retrying&account_id={merchant.id}")
+    both = await client.get(f"/api/v1/admin/deliveries?status=retrying&account_id={merchant.id}")
     assert [d["id"] for d in both.json()["data"]] == [row["id"]]
-    assert (await client.get(f"/v1/admin/deliveries?account_id={admin.id}")).json()["data"] == []
+    assert (await client.get(f"/api/v1/admin/deliveries?account_id={admin.id}")).json()["data"] == []
 
-    by_endpoint = await client.get(f"/v1/admin/deliveries?endpoint_id={endpoint.id}")
+    by_endpoint = await client.get(f"/api/v1/admin/deliveries?endpoint_id={endpoint.id}")
     assert [d["id"] for d in by_endpoint.json()["data"]] == [row["id"]]
 
 
 async def test_admin_read_views_are_closed_to_everyone_else(client):
     """Both feeds expose every account's money and integration health."""
-    for path in ("/v1/admin/payments", "/v1/admin/deliveries"):
+    for path in ("/api/v1/admin/payments", "/api/v1/admin/deliveries"):
         assert (await client.get(path)).status_code == 401
 
     # A signed-in merchant who is not a platform admin. The gate is on
@@ -726,7 +726,7 @@ async def test_admin_read_views_are_closed_to_everyone_else(client):
         await session.commit()
 
     assert (await sign_in(client, merchant.email, PASSWORD)).status_code == 200
-    for path in ("/v1/admin/payments", "/v1/admin/deliveries"):
+    for path in ("/api/v1/admin/payments", "/api/v1/admin/deliveries"):
         assert (await client.get(path)).status_code == 403
 
 
@@ -755,7 +755,7 @@ async def make_disputed_payment(
 
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={
                 "amount": 12.5,
                 "reference_id": "order_99",
@@ -770,7 +770,7 @@ async def make_disputed_payment(
     if reverse:
         # Reversed as the merchant, because that route is scoped to the owner.
         reverted = await client.post(
-            f"/v1/payments/{created['id']}/reverse",
+            f"/api/v1/payments/{created['id']}/reverse",
             json={"reason": "customer refund"},
             headers={"Authorization": f"Bearer {raw_key}"},
         )
@@ -807,7 +807,7 @@ async def test_payment_detail_exposes_the_evidence_a_dispute_needs(client):
     """
     admin, merchant, store, created = await make_disputed_payment(client)
 
-    res = await client.get(f"/v1/admin/payments/{created['id']}")
+    res = await client.get(f"/api/v1/admin/payments/{created['id']}")
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["id"] == created["id"]
@@ -832,7 +832,7 @@ async def test_payment_detail_exposes_the_evidence_a_dispute_needs(client):
     assert body["detection_closed_at"] is None
     assert body["deliveries"] == []
 
-    assert (await client.get("/v1/admin/payments/ps_nope")).status_code == 404
+    assert (await client.get("/api/v1/admin/payments/ps_nope")).status_code == 404
 
 
 async def test_payment_dispute_routes_are_closed_to_everyone_else(client):
@@ -843,7 +843,7 @@ async def test_payment_dispute_routes_are_closed_to_everyone_else(client):
     raw_key, _ = await make_key(merchant)
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 3.0, "store": store.public_id, "hosted_qr": False},
             headers={"Authorization": f"Bearer {raw_key}"},
         )
@@ -854,9 +854,9 @@ async def test_payment_dispute_routes_are_closed_to_everyone_else(client):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url=BASE_URL
     ) as anonymous:
-        assert (await anonymous.get(f"/v1/admin/payments/{pid}")).status_code == 401
+        assert (await anonymous.get(f"/api/v1/admin/payments/{pid}")).status_code == 401
         for action in ("reconcile", "mark-paid", "redeliver"):
-            res = await anonymous.post(f"/v1/admin/payments/{pid}/{action}", json=body)
+            res = await anonymous.post(f"/api/v1/admin/payments/{pid}/{action}", json=body)
             assert res.status_code == 401, action
 
     # A signed-in merchant is not an operator: the gate is `is_platform_admin`, not
@@ -867,9 +867,9 @@ async def test_payment_dispute_routes_are_closed_to_everyone_else(client):
         await session.commit()
     assert (await sign_in(client, merchant.email, PASSWORD)).status_code == 200
 
-    assert (await client.get(f"/v1/admin/payments/{pid}")).status_code == 403
+    assert (await client.get(f"/api/v1/admin/payments/{pid}")).status_code == 403
     for action in ("reconcile", "mark-paid", "redeliver"):
-        res = await client.post(f"/v1/admin/payments/{pid}/{action}", json=body)
+        res = await client.post(f"/api/v1/admin/payments/{pid}/{action}", json=body)
         assert res.status_code == 403, action
 
 
@@ -880,7 +880,7 @@ async def test_reconciling_a_paid_payment_is_a_no_op(client):
     async with session_factory() as session:
         before = (await session.execute(select(func.count(models.AuditLog.id)))).scalar_one()
 
-    res = await client.post(f"/v1/admin/payments/{created['id']}/reconcile")
+    res = await client.post(f"/api/v1/admin/payments/{created['id']}/reconcile")
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["status"] == "paid"
@@ -910,7 +910,7 @@ async def test_a_reconcile_attempt_records_what_the_rail_said(client, monkeypatc
 
     monkeypatch.setattr(admin_router, "reconcile_payment", fake)
 
-    res = await client.post(f"/v1/admin/payments/{created['id']}/reconcile")
+    res = await client.post(f"/api/v1/admin/payments/{created['id']}/reconcile")
     assert res.status_code == 200, res.text
     body = res.json()
     # The rail said pending and so do we — but they are reported separately, because
@@ -956,12 +956,12 @@ async def test_marking_paid_manually_credits_the_sale_and_names_the_operator(cli
     # A missing or too-short reason is refused: that string is the only record of why
     # money was credited with nothing from the rail to back it.
     for bad in ({}, {"reason": ""}, {"reason": "  "}, {"reason": "no"}):
-        res = await client.post(f"/v1/admin/payments/{created['id']}/mark-paid", json=bad)
+        res = await client.post(f"/api/v1/admin/payments/{created['id']}/mark-paid", json=bad)
         assert res.status_code == 422, bad
 
     reason = "Customer receipt ABA ref 998877 confirms payment; hosted status unreachable"
     res = await client.post(
-        f"/v1/admin/payments/{created['id']}/mark-paid", json={"reason": reason}
+        f"/api/v1/admin/payments/{created['id']}/mark-paid", json={"reason": reason}
     )
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "paid"
@@ -990,7 +990,7 @@ async def test_marking_paid_manually_credits_the_sale_and_names_the_operator(cli
     # A second attempt is refused. Crediting it twice would double-count the sale in
     # every report built on it.
     again = await client.post(
-        f"/v1/admin/payments/{created['id']}/mark-paid", json={"reason": "trying again"}
+        f"/api/v1/admin/payments/{created['id']}/mark-paid", json={"reason": "trying again"}
     )
     assert again.status_code == 409
     assert again.json()["detail"] == "payment_already_paid"
@@ -1003,7 +1003,7 @@ async def test_marking_a_refunded_payment_paid_is_refused(client):
     )
 
     res = await client.post(
-        f"/v1/admin/payments/{created['id']}/mark-paid", json={"reason": "restoring it"}
+        f"/api/v1/admin/payments/{created['id']}/mark-paid", json={"reason": "restoring it"}
     )
     assert res.status_code == 409
     assert res.json()["detail"] == "payment_is_reversed"
@@ -1018,7 +1018,7 @@ async def test_redelivering_requeues_a_payments_webhooks(client):
     raw_key, _ = await make_key(merchant)
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 2.0, "store": store.public_id, "hosted_qr": False},
             headers={"Authorization": f"Bearer {raw_key}"},
         )
@@ -1037,14 +1037,14 @@ async def test_redelivering_requeues_a_payments_webhooks(client):
     assert (await sign_in(client, admin.email, PASSWORD)).status_code == 200
 
     # The detail view shows the operator the delivery that is stuck.
-    body = (await client.get(f"/v1/admin/payments/{created['id']}")).json()
+    body = (await client.get(f"/api/v1/admin/payments/{created['id']}")).json()
     row = next(d for d in body["deliveries"] if d["id"] == delivery_id)
     assert row["status"] == "failed"
     assert row["attempts"] == 8
     assert row["event_type"] == models.EVENT_COMPLETED
     assert row["last_error"] == "ConnectError: connection refused"
 
-    res = await client.post(f"/v1/admin/payments/{created['id']}/redeliver")
+    res = await client.post(f"/api/v1/admin/payments/{created['id']}/redeliver")
     assert res.status_code == 200, res.text
     assert res.json()["redelivered"] == 1
     assert res.json()["delivery_ids"] == [delivery_id]
@@ -1078,7 +1078,7 @@ async def test_redeliver_skips_successes_unless_explicitly_asked(client):
     raw_key, _ = await make_key(merchant)
     created = (
         await client.post(
-            "/v1/payments",
+            "/api/v1/payments",
             json={"amount": 2.0, "store": store.public_id, "hosted_qr": False},
             headers={"Authorization": f"Bearer {raw_key}"},
         )
@@ -1098,7 +1098,7 @@ async def test_redeliver_skips_successes_unless_explicitly_asked(client):
 
     # Default: the success is left alone, and nothing is recorded because nothing
     # changed.
-    res = await client.post(f"/v1/admin/payments/{created['id']}/redeliver")
+    res = await client.post(f"/api/v1/admin/payments/{created['id']}/redeliver")
     assert res.status_code == 200, res.text
     assert res.json()["redelivered"] == 0
     assert res.json()["delivery_ids"] == []
@@ -1118,7 +1118,7 @@ async def test_redeliver_skips_successes_unless_explicitly_asked(client):
 
     # Opt in, and the success is queued and the choice is in the record.
     opted = await client.post(
-        f"/v1/admin/payments/{created['id']}/redeliver?include_successes=true"
+        f"/api/v1/admin/payments/{created['id']}/redeliver?include_successes=true"
     )
     assert opted.status_code == 200, opted.text
     assert opted.json()["redelivered"] == 1
@@ -1135,7 +1135,7 @@ async def test_redelivering_a_payment_with_no_webhook_is_a_404(client):
     """Saying "sent" when nothing exists would be worse than saying nothing."""
     admin, merchant, store, created = await make_disputed_payment(client)
 
-    res = await client.post(f"/v1/admin/payments/{created['id']}/redeliver")
+    res = await client.post(f"/api/v1/admin/payments/{created['id']}/redeliver")
     assert res.status_code == 404
     assert res.json()["detail"] == "no_deliveries_for_payment"
 
@@ -1169,12 +1169,12 @@ async def test_a_pending_subscription_is_visible_in_the_plan_panel(client):
 
     await sign_in(client, admin.email, PASSWORD)
 
-    detail = (await client.get(f"/v1/admin/accounts/{merchant.id}")).json()
+    detail = (await client.get(f"/api/v1/admin/accounts/{merchant.id}")).json()
     assert detail["plan"]["code"] == "pro"
     assert detail["plan"]["name"] == "Pro"
     assert detail["plan"]["subscription_status"] == "pending"
 
-    listing = (await client.get("/v1/admin/accounts")).json()
+    listing = (await client.get("/api/v1/admin/accounts")).json()
     row = next(r for r in listing["data"] if r["id"] == merchant.id)
     assert row["plan_code"] == "pro"
     assert row["subscription_status"] == "pending"
@@ -1215,6 +1215,6 @@ async def test_an_active_plan_wins_over_a_pending_upgrade(client):
         await session.commit()
 
     await sign_in(client, admin.email, PASSWORD)
-    detail = (await client.get(f"/v1/admin/accounts/{merchant.id}")).json()
+    detail = (await client.get(f"/api/v1/admin/accounts/{merchant.id}")).json()
     assert detail["plan"]["code"] == "starter"
     assert detail["plan"]["subscription_status"] == "active"

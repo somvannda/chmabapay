@@ -6,7 +6,7 @@ Three properties are deliberate:
   single-replica constraint the workers carry until P2-3. Two replicas would each
   admit the full limit. Stated, not implied.
 * **The limits over money are keyed by API key**, so a caller cannot rotate them
-  away. `POST /v1/payments` and the reissue path both mint an ABA session, and
+  away. `POST /api/v1/payments` and the reissue path both mint an ABA session, and
   both need a key, so a per-key limit is what bounds outbound ABA traffic.
 * **The unauthenticated surfaces are keyed by IP**, because there is no key to
   key on. `X-Forwarded-For` is caller-controlled when this service is reached
@@ -57,7 +57,7 @@ class _Window:
 def rule_for(request: Request) -> Rule | None:
     """The rule governing this request, or None to wave it through.
 
-    Ordered: the costly surfaces are matched before the generic `/v1/` bucket
+    Ordered: the costly surfaces are matched before the generic `/api/v1/` bucket
     they would otherwise fall into.
     """
     settings = get_settings()
@@ -71,8 +71,8 @@ def rule_for(request: Request) -> Rule | None:
 
     # Both of these mint an ABA-issued QR, so they are the calls that cost money
     # to abuse.
-    reissue = path.startswith("/v1/payments/") and path.rstrip("/").endswith("/reissue")
-    if method == "POST" and (path.rstrip("/") == "/v1/payments" or reissue):
+    reissue = path.startswith("/api/v1/payments/") and path.rstrip("/").endswith("/reissue")
+    if method == "POST" and (path.rstrip("/") == "/api/v1/payments" or reissue):
         return Rule(
             "payment_create", settings.rate_limit_payment_create_per_minute, "key"
         )
@@ -81,7 +81,7 @@ def rule_for(request: Request) -> Rule | None:
     # address rather than per key on purpose — the limiter runs *before* the route
     # rejects a bad key, so a made-up token per request would otherwise mint a
     # fresh bucket every time. There is a test for exactly that.
-    if path.startswith("/v1/khqr"):
+    if path.startswith("/api/v1/khqr"):
         return Rule("khqr", settings.rate_limit_khqr_per_minute, "ip")
 
     # Credential surfaces: the brute-force target.
@@ -92,7 +92,7 @@ def rule_for(request: Request) -> Rule | None:
     if path.startswith("/pay/"):
         return Rule("checkout", settings.rate_limit_checkout_per_minute, "ip")
 
-    if path.startswith("/v1/"):
+    if path.startswith("/api/v1/"):
         return Rule("api", settings.rate_limit_api_per_minute, "key")
 
     return None

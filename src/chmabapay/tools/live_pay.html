@@ -205,9 +205,9 @@ footer{color:var(--muted);font-size:12px;margin-top:26px}
   </div>
 
   <footer>
-    The QR is encoded by the backend at <span class="mono">/v1/khqr/render.svg</span> — ECC H, 4-module quiet zone.
-    Payload generation: <span class="mono">POST /v1/khqr/from-link</span>. Status: <span class="mono">POST
-    /v1/khqr/probe-aba-status</span> (re-reads the public ABA page, no credentials). Dev-only surface.
+    The QR is encoded by the backend at <span class="mono">/api/v1/khqr/render.svg</span> — ECC H, 4-module quiet zone.
+    Payload generation: <span class="mono">POST /api/v1/khqr/from-link</span>. Status: <span class="mono">POST
+    /api/v1/khqr/probe-aba-status</span> (re-reads the public ABA page, no credentials). Dev-only surface.
   </footer>
 </div>
 
@@ -268,9 +268,9 @@ async function generate() {
   if ($("clientId").value.trim()) body.payway_client_id = $("clientId").value.trim();
 
   $("gen").disabled = true;
-  log("POST /v1/khqr/from-link amount=" + amount.toFixed(2) + (body.bakong_id ? " (bakong_id override)" : " (slug routing)"));
+  log("POST /api/v1/khqr/from-link amount=" + amount.toFixed(2) + (body.bakong_id ? " (bakong_id override)" : " (slug routing)"));
   try {
-    const res = await fetch("/v1/khqr/from-link", {
+    const res = await fetch("/api/v1/khqr/from-link", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -295,7 +295,7 @@ async function generate() {
 }
 
 function render(j) {
-  const src = "/v1/khqr/render.svg?payload=" + encodeURIComponent(j.qr_string) + "&scale=8";
+  const src = "/api/v1/khqr/render.svg?payload=" + encodeURIComponent(j.qr_string) + "&scale=8";
   $("qr").src = src;
   $("qr").classList.remove("hide");
   $("qrEmpty").classList.add("hide");
@@ -383,7 +383,7 @@ async function probe() {
   });
   if (j.reference_id) qs.set("reference_id", j.reference_id);
   try {
-    const res = await fetch("/v1/khqr/probe-aba-status?" + qs.toString(), { method: "POST" });
+    const res = await fetch("/api/v1/khqr/probe-aba-status?" + qs.toString(), { method: "POST" });
     const json = await res.json().catch(() => null);
     if (!res.ok || !json) { log("probe HTTP " + res.status); return; }
     setStatus(json.status);
@@ -410,9 +410,9 @@ async function probe() {
 async function bakongCheck() {
   if (!S.current) return;
   const md5 = S.current.qr_md5;
-  log("GET /v1/transactions/md5/" + md5.slice(0, 12) + "… (independent confirmation)");
+  log("GET /api/v1/transactions/md5/" + md5.slice(0, 12) + "… (independent confirmation)");
   try {
-    const res = await fetch("/v1/transactions/md5/" + md5 + "?amount=" + S.current.amount + "&currency=" + S.current.currency);
+    const res = await fetch("/api/v1/transactions/md5/" + md5 + "?amount=" + S.current.amount + "&currency=" + S.current.currency);
     const txt = await res.text();
     log("Bakong API → HTTP " + res.status + " " + txt.slice(0, 220));
   } catch (e) {
@@ -481,7 +481,7 @@ function wire() {
   $("dlSvg").addEventListener("click", () => {
     if (!S.current) return;
     const a = document.createElement("a");
-    a.href = "/v1/khqr/render.svg?payload=" + encodeURIComponent(S.current.qr_string) + "&scale=16";
+    a.href = "/api/v1/khqr/render.svg?payload=" + encodeURIComponent(S.current.qr_string) + "&scale=16";
     a.download = "khqr-" + S.current.instruction_ref + ".svg";
     a.click();
   });

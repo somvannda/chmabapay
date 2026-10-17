@@ -72,7 +72,7 @@ function backendBaseUrl(): string {
 
 async function fetchPublicPlans(): Promise<PublicPlan[]> {
   try {
-    const res = await fetch(`${backendBaseUrl()}/v1/billing/plans`, {
+    const res = await fetch(`${backendBaseUrl()}/api/v1/billing/plans`, {
       next: { revalidate: 60 },
       // A hung API must not hold the marketing page hostage. Unreachable is already
       // fast (connection refused), but "accepting and silent" is not, so the wait
@@ -92,6 +92,54 @@ async function fetchPublicPlans(): Promise<PublicPlan[]> {
 function planPrice(plan: PublicPlan): { amount: string; period: string } {
   if (plan.monthly_fee_cents === 0) return { amount: "$0", period: "" };
   return { amount: plan.monthly_fee_formatted, period: "/mo" };
+}
+
+/**
+ * Platform totals shown on the homepage. Same shape as the API's
+ * `/api/v1/public/stats` — counts are plain integers and volume is per currency
+ * in minor units, because USD and KHR do not add up to one number.
+ */
+type PublicStats = {
+  active_customers: number;
+  active_stores: number;
+  transactions_processed: number;
+  volumes: Record<string, number>;
+};
+
+async function fetchPublicStats(): Promise<PublicStats | null> {
+  try {
+    const res = await fetch(`${backendBaseUrl()}/api/v1/public/stats`, {
+      next: { revalidate: 60 },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as PublicStats;
+    if (data === null || typeof data !== "object") return null;
+    return data;
+  } catch {
+    // The homepage must render even when the API is unreachable. The metrics
+    // section falls back to its placeholder rather than blocking the page.
+    return null;
+  }
+}
+
+const compact = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+/** USD volume, `amount_cents` is 2-decimal minor units. */
+function formatUsd(cents: number): string {
+  const dollars = cents / 100;
+  if (dollars >= 1000) return `$${compact.format(dollars)}`;
+  return `$${dollars.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+}
+
+/** KHR volume, stored as 2-decimal minor units but riel has no fractional part. */
+function formatKhr(cents: number): string {
+  const riel = Math.round(cents / 100);
+  if (riel >= 1000) return `៛${compact.format(riel)}`;
+  return `៛${riel.toLocaleString("en-US")}`;
 }
 
 
@@ -251,6 +299,54 @@ function BandSection() {
   );
 }
 
+/**
+ * Platform-wide traction, pulled live from `/api/v1/public/stats`. This is the
+ * one section on the page that is a *claim about the platform* rather than a
+ * description of the product, so it only renders numbers the API actually
+ * returned — no inflated or illustrative figures in a "customers" counter. When
+ * the API is unreachable the section is omitted entirely rather than showing a
+ * row of zeros, which would read as "nobody uses this".
+ */
+function MetricsSection({ stats }: { stats: PublicStats }) {
+  const usd = stats.volumes?.USD ?? 0;
+  const khr = stats.volumes?.KHR ?? 0;
+  const items = [
+    { key: "customers", label: "Active customers", value: compact.format(stats.active_customers) },
+    { key: "stores", label: "Active stores", value: compact.format(stats.active_stores) },
+    {
+      key: "transactions",
+      label: "Transactions processed",
+      value: compact.format(stats.transactions_processed),
+    },
+    {
+      key: "volume",
+      label: "Amount processed",
+      // Both currencies shown side by side: USD and KHR settle in different
+      // units, so one summed figure would be a meaningless addition.
+      value: khr > 0 ? `${formatUsd(usd)} · ${formatKhr(khr)}` : formatUsd(usd),
+    },
+  ];
+
+  return (
+    <section className="landing-section landing-metrics">
+      <div className="landing-shell">
+        <div className="landing-metrics-head">
+          <p className="landing-section-eyebrow">Live on the platform</p>
+          <h2 className="landing-section-title">Real numbers, not marketing math.</h2>
+        </div>
+        <div className="landing-metrics-grid">
+          {items.map((item) => (
+            <div key={item.key} className="landing-metrics-card">
+              <div className="landing-metrics-value">{item.value}</div>
+              <div className="landing-metrics-label">{item.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function FeatureSection() {
   return (
     <section id="how-it-works" className="landing-section landing-surface">
@@ -404,11 +500,15 @@ function ClosingSection() {
   );
 }
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  // Fetched here rather than inside `MetricsSection` so one failed request can
+  // omit the section cleanly instead of rendering an empty shell.
+  const stats = await fetchPublicStats();
   return (
     <main>
       <HeroSection />
       <BandSection />
+      {stats ? <MetricsSection stats={stats} /> : null}
       <FeatureSection />
       <PricingSection />
       <ClosingSection />

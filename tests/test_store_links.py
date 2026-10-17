@@ -101,7 +101,7 @@ async def test_a_link_payway_confirms_activates_the_store(client, monkeypatch):
     probe_returning(monkeypatch, "ok", merchant_name="Sokha Cafe")
     _account, headers, payload = await _store_payload(client, PAYWAY_LINK)
 
-    res = await client.post("/v1/stores", json=payload, headers=headers)
+    res = await client.post("/api/v1/stores", json=payload, headers=headers)
     assert res.status_code == 201, res.text
     store = res.json()
     assert store["status"] == "active"
@@ -118,7 +118,7 @@ async def test_the_callers_merchant_name_wins_over_the_probe(client, monkeypatch
         client, PAYWAY_LINK, merchant_name="Sokha Cafe"
     )
 
-    res = await client.post("/v1/stores", json=payload, headers=headers)
+    res = await client.post("/api/v1/stores", json=payload, headers=headers)
     assert res.status_code == 201, res.text
     assert res.json()["link"]["merchant_name"] == "Sokha Cafe"
 
@@ -130,13 +130,13 @@ async def test_a_link_payway_does_not_know_is_refused(client, monkeypatch):
         client, "https://link.payway.com.kh/ABAPAYpe518710X"
     )
 
-    res = await client.post("/v1/stores", json=payload, headers=headers)
+    res = await client.post("/api/v1/stores", json=payload, headers=headers)
     assert res.status_code == 400, res.text
     detail = res.json()["detail"]
     assert detail.startswith("payway_link_not_found:")
 
     # Refused means refused: no store was created to sit there looking active.
-    assert (await client.get("/v1/stores", headers=headers)).json()["data"] == []
+    assert (await client.get("/api/v1/stores", headers=headers)).json()["data"] == []
 
 
 async def test_a_value_that_is_not_a_payway_link_never_reaches_the_probe(
@@ -149,7 +149,7 @@ async def test_a_value_that_is_not_a_payway_link_never_reaches_the_probe(
         client, "bakong://126071610243081"
     )
 
-    res = await client.post("/v1/stores", json=payload, headers=headers)
+    res = await client.post("/api/v1/stores", json=payload, headers=headers)
     assert res.status_code == 400, res.text
     assert res.json()["detail"].startswith("payway_link_invalid:")
     assert calls == []
@@ -160,7 +160,7 @@ async def test_a_link_that_is_too_short_to_be_a_slug_is_refused(client, monkeypa
     probe_returning(monkeypatch, "ok", calls=calls)
     _account, headers, payload = await _store_payload(client, "abc")
 
-    res = await client.post("/v1/stores", json=payload, headers=headers)
+    res = await client.post("/api/v1/stores", json=payload, headers=headers)
     assert res.status_code == 400, res.text
     assert res.json()["detail"].startswith("payway_link_invalid:")
     assert calls == []
@@ -179,14 +179,14 @@ async def test_payway_being_unreachable_does_not_block_the_merchant(client, monk
         client, PAYWAY_LINK, merchant_name="Sokha Cafe"
     )
 
-    res = await client.post("/v1/stores", json=payload, headers=headers)
+    res = await client.post("/api/v1/stores", json=payload, headers=headers)
     assert res.status_code == 201, res.text
     store = res.json()
     assert store["status"] == "draft"
     assert store["link"]["verification"] == models.LINK_UNVERIFIED
 
     created = await client.post(
-        "/v1/payments",
+        "/api/v1/payments",
         json={"amount": 2.0, "store": store["id"], "hosted_qr": False},
         headers=headers,
     )
@@ -197,12 +197,12 @@ async def test_replacing_a_live_stores_link_does_not_downgrade_it(client, monkey
     """Promotion is one-way here: a failed re-check must not take a store offline."""
     probe_returning(monkeypatch, "ok")
     _account, headers, payload = await _store_payload(client, PAYWAY_LINK)
-    created = (await client.post("/v1/stores", json=payload, headers=headers)).json()
+    created = (await client.post("/api/v1/stores", json=payload, headers=headers)).json()
     assert created["status"] == "active"
 
     probe_returning(monkeypatch, "inconclusive")
     res = await client.put(
-        f"/v1/stores/{created['id']}/link",
+        f"/api/v1/stores/{created['id']}/link",
         json={"raw_link": PAYWAY_LINK, "merchant_account_id": "ABAPAYpe518710Y"},
         headers=headers,
     )

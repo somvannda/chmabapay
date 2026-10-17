@@ -9,7 +9,7 @@ import type { Profile } from "@/components/portal/useSession";
  * The landing pages are statically rendered — `revalidate = 60` on the homepage — and the
  * session lives in an httpOnly cookie that a build machine cannot read. Consulting it on
  * the server would opt every marketing route out of static rendering, so it is read here,
- * in the browser, from the same-origin `GET /v1/me`.
+ * in the browser, from the same-origin `GET /api/v1/me`.
  *
  * One request serves the whole page. The header's account chip and each session-aware call
  * to action subscribe to this module instead of fetching for themselves, and the answer is
@@ -36,7 +36,7 @@ function announce(next: AccountState): void {
 
 /** Resolve the session once per document; every later caller awaits the same promise. */
 export function checkAccount(): Promise<void> {
-  pending ??= fetch("/v1/me", { credentials: "include" })
+  pending ??= fetch("/api/v1/me", { credentials: "include" })
     .then(async (res) => {
       // Any non-2xx is "not signed in". There is nothing useful to render for an error
       // here, and the signed-out treatment is the right fallback for all of them.

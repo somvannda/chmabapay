@@ -47,8 +47,8 @@ async def test_payment_creation_is_capped_per_key(client, tight):
     headers = {"Authorization": f"Bearer {raw_key}"}
     body = {"amount": 1.0, "hosted_qr": False}
 
-    first = await client.post("/v1/payments", json=body, headers=headers)
-    second = await client.post("/v1/payments", json=body, headers=headers)
+    first = await client.post("/api/v1/payments", json=body, headers=headers)
+    second = await client.post("/api/v1/payments", json=body, headers=headers)
     assert first.status_code != 429
     assert second.status_code != 429
     # Limits are reported while there is still room, so an integrator can back off
@@ -56,7 +56,7 @@ async def test_payment_creation_is_capped_per_key(client, tight):
     assert second.headers["X-RateLimit-Limit"] == "2"
     assert second.headers["X-RateLimit-Remaining"] == "0"
 
-    refused = await client.post("/v1/payments", json=body, headers=headers)
+    refused = await client.post("/api/v1/payments", json=body, headers=headers)
     assert refused.status_code == 429
     assert refused.json()["detail"] == "rate_limited: payment_create"
     assert refused.json()["limit"] == 2
@@ -74,17 +74,17 @@ async def test_a_second_key_has_its_own_allowance(client, tight):
 
     for _ in range(2):
         await client.post(
-            "/v1/payments", json=body, headers={"Authorization": f"Bearer {spent_key}"}
+            "/api/v1/payments", json=body, headers={"Authorization": f"Bearer {spent_key}"}
         )
     exhausted = await client.post(
-        "/v1/payments", json=body, headers={"Authorization": f"Bearer {spent_key}"}
+        "/api/v1/payments", json=body, headers={"Authorization": f"Bearer {spent_key}"}
     )
     assert exhausted.status_code == 429
 
     # A different tenant is unaffected, which is the difference between a limit
     # and an outage.
     other = await client.post(
-        "/v1/payments", json=body, headers={"Authorization": f"Bearer {fresh_key}"}
+        "/api/v1/payments", json=body, headers={"Authorization": f"Bearer {fresh_key}"}
     )
     assert other.status_code != 429
 
@@ -94,7 +94,7 @@ async def test_the_unauthenticated_khqr_surface_is_capped_per_address(
 ):
     """A rotated Bearer token must not buy a fresh bucket.
 
-    `/v1/khqr/*` needs no key and still reaches out to ABA, so it is counted by
+    `/api/v1/khqr/*` needs no key and still reaches out to ABA, so it is counted by
     address. If it were counted by whatever credential the caller presented, a
     made-up token per request would be an unlimited supply of buckets.
 
@@ -110,13 +110,13 @@ async def test_the_unauthenticated_khqr_surface_is_capped_per_address(
     body = {"link": "https://link.payway.com.kh/ABAPAYpe518710Y", "amount": 1.0}
 
     first = await client.post(
-        "/v1/khqr/from-link", json=body, headers={"Authorization": "Bearer made-up-1"}
+        "/api/v1/khqr/from-link", json=body, headers={"Authorization": "Bearer made-up-1"}
     )
     second = await client.post(
-        "/v1/khqr/from-link", json=body, headers={"Authorization": "Bearer made-up-2"}
+        "/api/v1/khqr/from-link", json=body, headers={"Authorization": "Bearer made-up-2"}
     )
     third = await client.post(
-        "/v1/khqr/from-link", json=body, headers={"Authorization": "Bearer made-up-3"}
+        "/api/v1/khqr/from-link", json=body, headers={"Authorization": "Bearer made-up-3"}
     )
 
     assert first.status_code != 429
@@ -154,7 +154,7 @@ async def test_health_and_the_dev_gateway_are_never_limited(client, tight):
 
 
 async def test_one_bucket_does_not_spend_another(client, tight):
-    """`/pay/*` is exhausted without touching the `/v1/*` allowance."""
+    """`/pay/*` is exhausted without touching the `/api/v1/*` allowance."""
     for _ in range(3):
         await client.get("/pay/whatever")
 
@@ -163,7 +163,7 @@ async def test_one_bucket_does_not_spend_another(client, tight):
     account = await make_account()
     raw_key, _ = await make_key(account)
     listed = await client.get(
-        "/v1/stores", headers={"Authorization": f"Bearer {raw_key}"}
+        "/api/v1/stores", headers={"Authorization": f"Bearer {raw_key}"}
     )
     assert listed.status_code != 429
 

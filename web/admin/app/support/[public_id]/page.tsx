@@ -113,7 +113,7 @@ export default function AdminSupportDetailPage({
     setErrorMsg(null);
     setNotFound(false);
     try {
-      const res = await apiFetch(`/v1/admin/support/requests/${publicId}`, {
+      const res = await apiFetch(`/api/v1/admin/support/requests/${publicId}`, {
         credentials: "include",
       });
       if (res.status === 404) {
@@ -141,7 +141,7 @@ export default function AdminSupportDetailPage({
       status?: string;
       assigned_admin_account_id?: number | null;
     }) => {
-      const res = await apiFetch(`/v1/admin/support/requests/${publicId}`, {
+      const res = await apiFetch(`/api/v1/admin/support/requests/${publicId}`, {
         method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -185,7 +185,7 @@ export default function AdminSupportDetailPage({
     setBusy("reply");
     try {
       const res = await apiFetch(
-        `/v1/admin/support/requests/${publicId}/reply`,
+        `/api/v1/admin/support/requests/${publicId}/reply`,
         {
           method: "POST",
           credentials: "include",

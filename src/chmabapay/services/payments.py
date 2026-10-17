@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import models, observability, webhooks
 from ..config import get_settings
 from ..khqr import build_khqr_payload
+from ..schemas import money_to_str, normalize_currency
 from . import billing as billing_svc
 from . import notifications
 from .payway_parser import PayWayHostedError, create_hosted_checkout
@@ -87,6 +88,7 @@ async def mint_qr(
     *,
     public_id: str,
     now: datetime,
+    currency: str | None = None,
     hosted_qr: bool | None = None,
 ) -> tuple[str, str | None, datetime, dict | None]:
     """Mint a payable QR and return (qr_string, qr_md5, expires_at, hosted_session).
@@ -96,6 +98,7 @@ async def mint_qr(
     or we would advertise a payment window the customer cannot use.
     """
     settings = get_settings()
+    resolved_currency = normalize_currency(currency or link.currency)
     expires_at = now + timedelta(seconds=settings.checkout_ttl_seconds)
     hosted_session: dict | None = None
     # None means "decide from the link". An offline QR for a PayWay link is a
@@ -105,8 +108,18 @@ async def mint_qr(
     if use_hosted:
         if not is_payway_link(link):
             raise HTTPException(status_code=400, detail="not_a_payway_link")
+        # ABA issues the QR and settles it in the link's own currency, so a request
+        # for a different one cannot be honoured here. Refused rather than silently
+        # minting a code in the wrong currency.
+        if resolved_currency != normalize_currency(link.currency):
+            raise HTTPException(
+                status_code=400,
+                detail="currency_not_supported_by_hosted_checkout",
+            )
         try:
-            checkout = await create_hosted_checkout(link.raw_link, f"{amount_cents / 100:.2f}")
+            checkout = await create_hosted_checkout(
+                link.raw_link, money_to_str(amount_cents, resolved_currency)
+            )
         except PayWayHostedError as exc:
             # Better a clear 502 than a QR nobody can pay.
             raise HTTPException(status_code=502, detail=f"payway_hosted_error: {exc}") from exc
@@ -128,7 +141,12 @@ async def mint_qr(
         }
     else:
         qr_string = build_khqr_payload(
-            store, link, amount_cents, bill_number=public_id, expires_at=expires_at
+            store,
+            link,
+            amount_cents,
+            bill_number=public_id,
+            expires_at=expires_at,
+            currency=resolved_currency,
         )
         qr_md5 = hashlib.md5(qr_string.encode()).hexdigest()
     return qr_string, qr_md5, expires_at, hosted_session
@@ -154,6 +172,35 @@ def _refuse_unusable_store(store: models.Store) -> None:
         raise HTTPException(status_code=400, detail="store_billing_suspended")
 
 
+def _resolve_payment_currency(
+    link: models.PaymentLink, requested: str | None
+) -> str:
+    """The currency a payment is created in, or a refusal.
+
+    Omitted means the destination's own currency. A caller may ask for a different
+    one only when the destination is not an ABA PayWay link — a PayWay link settles
+    in exactly one currency and ABA issues the QR for it, so honouring a different
+    request would hand out a code the payer's wallet refuses. Refused explicitly
+    rather than silently downgraded to the link's currency, which would misreport
+    what the customer is being charged.
+    """
+    link_currency = normalize_currency(link.currency)
+    if not requested:
+        return link_currency
+    wanted = normalize_currency(requested)
+    if wanted == link_currency:
+        return wanted
+    if is_payway_link(link):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"currency_mismatch: this store's ABA PayWay link settles in "
+                f"{link_currency}, so a {wanted} payment cannot be created for it."
+            ),
+        )
+    return wanted
+
+
 async def create_payment(
     session: AsyncSession,
     *,
@@ -162,10 +209,18 @@ async def create_payment(
     reference_id: str | None,
     metadata: dict | None,
     idempotency_key: str | None,
+    currency: str | None = None,
     hosted_qr: bool | None = None,
 ) -> tuple[models.Payment, bool]:
     _refuse_unusable_store(store)
     link = await load_active_link(session, store.id)
+    resolved_currency = _resolve_payment_currency(link, currency)
+
+    # The riel has no subunit, so a fractional KHR amount has no valid KHQR Tag 54
+    # value. Refused rather than rounded: rounding a charge silently changes what
+    # the customer owes.
+    if resolved_currency == "KHR" and amount_cents % 100 != 0:
+        raise HTTPException(status_code=400, detail="khr_amount_must_be_whole")
 
     if idempotency_key:
         res = await session.execute(
@@ -194,6 +249,7 @@ async def create_payment(
         amount_cents,
         public_id=public_id,
         now=now,
+        currency=resolved_currency,
         hosted_qr=hosted_qr,
     )
 
@@ -202,7 +258,7 @@ async def create_payment(
         store_id=store.id,
         payment_link_id=link.id,
         amount_cents=amount_cents,
-        currency=link.currency,
+        currency=resolved_currency,
         reference_id=reference_id,
         metadata_=metadata,
         idempotency_key=idempotency_key,
@@ -284,6 +340,8 @@ async def reissue_payment(
         parent.amount_cents,
         public_id=public_id,
         now=now,
+        # A reissue is the same sale, so it keeps the parent's currency.
+        currency=parent.currency,
         hosted_qr=was_hosted,
     )
 

@@ -37,7 +37,7 @@ Two paths exist, and only one of them is payable.
   encoder is correct: `tests/test_khqr.py` pins our CRC-16 against a real captured
   ABA payload. But nothing on ABA's side has a record of the code, so a wallet
   answers **"QR not found"**. Not payable, and there is nothing to poll.
-- **Hosted (`POST /v1/khqr/payway/checkout`, and `POST /v1/payments` with the
+- **Hosted (`POST /api/v1/khqr/payway/checkout`, and `POST /api/v1/payments` with the
   default `hosted_qr`)** — ABA issues the code and the session. **This is the
   payable path.** It needs no PayWay API key, no signed request and no browser:
   the link page is fetched, its `aba_data`/`request_time` are extracted, and a
@@ -63,7 +63,7 @@ Observed payload (real, amount 0.10 USD):
 Working call (the only one that has ever confirmed a payment):
 
 ```
-POST /v1/khqr/payway/status
+POST /api/v1/khqr/payway/status
 {"client_id": "2364634-518710-27272373",
  "request_time": "20260917070508",
  "token": "<the opaque session token ABA returns at mint — ~1.5 KB, redacted>"}
@@ -156,7 +156,7 @@ customers notice.
   the promotion, so a real payment is never discarded — observed working: the row
   went `expired` → `paid` and `payment.completed` fired nine minutes after
   `payment.expired`. A merchant dashboard must render that as a recovery, not as
-  a contradiction. `POST /v1/payments/{id}/reissue` mints a fresh code for a
+  a contradiction. `POST /api/v1/payments/{id}/reissue` mints a fresh code for a
   genuine non-payment, and reusing it on a row that later settles is safe:
   reissue reuses a live successor rather than stacking sessions.
 

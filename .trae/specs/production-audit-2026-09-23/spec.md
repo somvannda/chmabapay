@@ -38,12 +38,12 @@ Verified live or in source during this audit:
   events all match the code. `payment.scanned` is dev-gateway-only and
   `payment.failed` has no producer, so omitting both is *correct*.
 - **Money path.** Proven live 2026-09-17: a real ABA wallet settled a real
-  `POST /v1/payments`, and a signature-verified `payment.completed` left the
+  `POST /api/v1/payments`, and a signature-verified `payment.completed` left the
   platform 104 ms after the row was written.
 - **Tenant isolation.** Every merchant-facing path filters `account_id`
   server-side (payments, stores, keys, webhooks, reports). Changing a `public_id`
   in a URL returns 404, never another tenant's row.
-- **Admin authorisation.** All 25 `/v1/admin/*` handlers carry the admin guard and
+- **Admin authorisation.** All 25 `/api/v1/admin/*` handlers carry the admin guard and
   require `is_platform_admin`; audit rows are written for every admin mutation.
 - **Production health.** `GET /health` answers `{"status":"ok"}`; a
   platform-admin account exists and password login works.
@@ -82,11 +82,11 @@ reference.
 | ID | Sev | Finding | Evidence |
 | --- | --- | --- | --- |
 | B-01 | **S2** | The **"Bakong Ledger Lookup" group (10 endpoints)** is published on the marketing page. Its own text admits they answer `503 bakong_not_configured` today. This is internal operational state on a customer-facing page and pure noise for an integrator. | `web/landing/app/api/docs/page.tsx:76-93` |
-| B-02 | **S2** | Non-payable / advisory-only helpers are presented as integration surface: `POST /v1/khqr/from-link` ("the code it returns is not payable") and `POST /v1/khqr/probe-aba-status` ("advisory only"). | `web/landing/app/api/docs/page.tsx:99-100` |
+| B-02 | **S2** | Non-payable / advisory-only helpers are presented as integration surface: `POST /api/v1/khqr/from-link` ("the code it returns is not payable") and `POST /api/v1/khqr/probe-aba-status` ("advisory only"). | `web/landing/app/api/docs/page.tsx:99-100` |
 | B-03 | **S2** | No **error-code reference**. The API returns structured `detail` codes everywhere; integrators have no table to code against. | `src/chmabapay/errors.py` |
 | B-04 | **S3** | No **rate-limit documentation**, although limits are enforced (60/min payment-create, 600/min API, 120/min checkout, 20/min auth). | `src/chmabapay/config.py:89-94`, `src/chmabapay/ratelimit.py:77-96` |
 | B-05 | **S3** | No **authentication / environments section**, so nothing states that only live keys exist and that a first integration moves real money. | `src/chmabapay/security.py:20`, `src/chmabapay/routers/keys.py:120-127` |
-| B-06 | **S3** | No **idempotency**, **pagination**, or **versioning** conventions section, though all three exist (`idempotency_key`, `limit`/`offset`, `/v1`). | `src/chmabapay/schemas.py:143-163`, `src/chmabapay/routers/payments.py:403` |
+| B-06 | **S3** | No **idempotency**, **pagination**, or **versioning** conventions section, though all three exist (`idempotency_key`, `limit`/`offset`, `/api/v1`). | `src/chmabapay/schemas.py:143-163`, `src/chmabapay/routers/payments.py:403` |
 | B-07 | **S3** | The page is hand-written, so it drifts from `openapi.json` with no test to catch it. | `web/landing/app/api/docs/page.tsx` |
 | B-08 | **S4** | Amount units are mixed in one surface (`amount` decimal vs `*_cents` integer) with no explicit rule stated. | `web/landing/app/api/docs/page.tsx:58` |
 
@@ -116,9 +116,9 @@ reference.
 
 | ID | Sev | Finding | Evidence |
 | --- | --- | --- | --- |
-| D-01 | **S2** | **`amr: password` is bypassable.** The `Bearer ck_` branch is evaluated before the amr check, so a platform-admin API key **plus any valid session cookie** reaches every admin route without the password claim. The key alone is insufficient (no cookie → 401), but the documented guarantee ("SSO sessions cannot access `/v1/admin/*`") does not hold. | `src/chmabapay/routers/admin.py:87-108` |
+| D-01 | **S2** | **`amr: password` is bypassable.** The `Bearer ck_` branch is evaluated before the amr check, so a platform-admin API key **plus any valid session cookie** reaches every admin route without the password claim. The key alone is insufficient (no cookie → 401), but the documented guarantee ("SSO sessions cannot access `/api/v1/admin/*`") does not hold. | `src/chmabapay/routers/admin.py:87-108` |
 | D-02 | **S2** | **No payment refund/reversal in the console.** Operators can reconcile, mark-paid and redeliver but cannot resolve a "I was refunded" dispute in-product; the merchant-facing route is scoped to the merchant's own account. | `src/chmabapay/routers/admin.py` (no reverse route), `src/chmabapay/routers/payments.py:344-375` |
-| D-03 | **S2** | `PUT /v1/admin/stores/{public_id}/internal` is implemented and described in the console README but **wired to no UI**, so a wrongly-internal store cannot be corrected. | `src/chmabapay/routers/admin.py:1289-1348`, `web/admin/README.md:87-94` |
+| D-03 | **S2** | `PUT /api/v1/admin/stores/{public_id}/internal` is implemented and described in the console README but **wired to no UI**, so a wrongly-internal store cannot be corrected. | `src/chmabapay/routers/admin.py:1289-1348`, `web/admin/README.md:87-94` |
 | D-04 | **S3** | Account-detail invoice panel omits `void`, so a voided invoice still renders **Resolve** and always returns 409; `invoice_already_void` is untranslated. | `web/admin/app/accounts/[account_id]/page.tsx:93,959`, `web/admin/lib/apiError.ts:14-45` |
 | D-05 | **S3** | Account standing cannot be set to `restricted` (billing freeze), and a restricted account renders as "active". | `src/chmabapay/routers/admin.py:449-451`, `src/chmabapay/models.py:43` |
 | D-06 | **S3** | Account detail loads **all** stores and keys unbounded; only invoices are capped. | `src/chmabapay/routers/admin.py:316-439` |
@@ -136,7 +136,7 @@ reference.
 | E-01 | **S2** | **No sandbox / test key.** `create_key` hardcodes `mode="live"`, so a first integration must move real money, and the docs never say so. Decision D3 deferred test keys. | `src/chmabapay/routers/keys.py:120-127` |
 | E-02 | **S2** | Internal dev tooling instructs the operator to use a `ck_test_` key that **cannot be minted**; `new_api_key` produces `ck_live_` only. | `src/chmabapay/security.py:20`, `src/chmabapay/tools/testplan.py:469`, `src/chmabapay/tools/integration_test.html:122-123` |
 | E-03 | **S3** | `deploy/.env` ships empty `CHMABAPAY_HQ_STORE_ID`; the HQ link is console-resolved instead. Correct, but undocumented where an operator would look. | `deploy/.env.example`, `src/chmabapay/services/billing.py:204` |
-| E-04 | **S2** | **`POST /v1/me/password` returned an unhandled 500 for a long password.** The schema bounds the password in *characters* (`max_length=200`) but bcrypt hashes at most 72 **bytes** and `hash_password` raises past that. A 73-character ASCII password, or any password whose UTF-8 form passes 72 bytes — 25 Khmer characters is 75 bytes — reached the hash call and 500'd. Found while enumerating the error surface for the docs (PA-10). | `src/chmabapay/routers/account.py:88,253`, `src/chmabapay/security.py:37-46` |
+| E-04 | **S2** | **`POST /api/v1/me/password` returned an unhandled 500 for a long password.** The schema bounds the password in *characters* (`max_length=200`) but bcrypt hashes at most 72 **bytes** and `hash_password` raises past that. A 73-character ASCII password, or any password whose UTF-8 form passes 72 bytes — 25 Khmer characters is 75 bytes — reached the hash call and 500'd. Found while enumerating the error surface for the docs (PA-10). | `src/chmabapay/routers/account.py:88,253`, `src/chmabapay/security.py:37-46` |
 
 ---
 
@@ -154,8 +154,8 @@ in the admin console, with a response-time target attached to the merchant's pla
 | --- | --- | --- |
 | F-01 | S2 | **`SupportRequest` model + migration.** `public_id` (`sup_…`), `account_id` FK, `subject`, `category`, `status`, `priority`, `assigned_admin_account_id`, `first_response_at`, `resolved_at`, `created_at`, `updated_at`. Alembic revision after the current head; `alembic check` must stay clean. |
 | F-02 | S2 | **`SupportMessage` model.** Threaded replies: `request_id` FK, `author_account_id`, `author_kind` (`merchant` \| `operator`), `body`, `created_at`. The opening message is message #1 so a request is never headerless. |
-| F-03 | S2 | **Merchant API.** `POST /v1/support/requests` (open), `GET /v1/support/requests` (own account only), `GET /v1/support/requests/{public_id}`, `POST /v1/support/requests/{public_id}/reply`, `POST /v1/support/requests/{public_id}/close`. Session or API key, scoped to `account_id` exactly like every other merchant route — no cross-tenant read. |
-| F-04 | S2 | **Operator API.** `GET /v1/admin/support/requests` (queue with status/priority/account filters and paging), `GET /v1/admin/support/requests/{public_id}`, `POST /v1/admin/support/requests/{public_id}/reply`, `PATCH /v1/admin/support/requests/{public_id}` (status and assignment). Every operator write writes an audit row. |
+| F-03 | S2 | **Merchant API.** `POST /api/v1/support/requests` (open), `GET /api/v1/support/requests` (own account only), `GET /api/v1/support/requests/{public_id}`, `POST /api/v1/support/requests/{public_id}/reply`, `POST /api/v1/support/requests/{public_id}/close`. Session or API key, scoped to `account_id` exactly like every other merchant route — no cross-tenant read. |
+| F-04 | S2 | **Operator API.** `GET /api/v1/admin/support/requests` (queue with status/priority/account filters and paging), `GET /api/v1/admin/support/requests/{public_id}`, `POST /api/v1/admin/support/requests/{public_id}/reply`, `PATCH /api/v1/admin/support/requests/{public_id}` (status and assignment). Every operator write writes an audit row. |
 | F-05 | S2 | **Priority derives from the plan, and orders the queue.** `priority` is set from `Plan.priority_support` at open time (Pro → `priority`, others → `standard`). The operator queue sorts priority first, then oldest-unanswered. This is what makes the Pro promise real rather than decorative. |
 | F-06 | S2 | **First-response tracking.** `first_response_at` is set on the first operator reply only. The portal shows the target for the account's plan and whether it was met; the console shows requests approaching or past target, highlighted. |
 | F-07 | S2 | **Merchant portal surface.** A support page under `/dashboard` with: open a request, the thread, reply, close, and the account's response-time target stated inline. Reachable from the help page. |
@@ -181,9 +181,9 @@ are text + status + assignment, nothing more, until there is a reason.
 | **D-3** | Bakong ledger group (B-01, B-02) | **Delete from the public page.** Remove the 10 Bakong Ledger Lookup rows and the two non-payable KHQR helper rows. Routes stay mounted, unadvertised. |
 | **D-4** | "Priority support" (A-08) | **Build it.** Ship a full support ticketing system: support request records, status tracking in the merchant portal, and an operator queue in the admin console. Pro carries a **24-hour calendar** first-response target, stated on `/contact` and in the portal. See §F. |
 | **D-5** | Merchant agreement (A-03) | **Align the labels and the recorded evidence to the Terms** (recommended option b) so the button label, the linked document and the stored `terms_accepted_version` name the same thing. |
-| **D-6** | Admin API-key access (D-01) | **Reject `ck_` on `/v1/admin/*` outright** (recommended option a). The console is password-only by design; correct the README claim to match. |
+| **D-6** | Admin API-key access (D-01) | **Reject `ck_` on `/api/v1/admin/*` outright** (recommended option a). The console is password-only by design; correct the README claim to match. |
 | **D-7** | The public reference listed the platform's own dashboard surface (API Keys, Billing & Plans, Account) beside the integration API. | **Hide it.** The public reference keeps only what an integrator calls with an API key — Stores, Payments, Reconciliation, Webhooks, Reports, Hosted checkout, KHQR. API Keys, Billing and Account come off the page and into `docs/api.md` for internal use. Routes stay mounted; the drift test records the paths as withheld, so the omission is a decision. |
-| **D-8** | `/v1/keys` accepted an API key, so a leaked key could mint a replacement for itself and outlive its own revocation, or revoke every other key on the account. | **Make key management session-only**, matching `/v1/me`, `/v1/account` and `/v1/billing/*`. No credential may extend or destroy itself. |
+| **D-8** | `/api/v1/keys` accepted an API key, so a leaked key could mint a replacement for itself and outlive its own revocation, or revoke every other key on the account. | **Make key management session-only**, matching `/api/v1/me`, `/api/v1/account` and `/api/v1/billing/*`. No credential may extend or destroy itself. |
 | **D-9** | The Quick-start cards all used the same icon (`-setup`). | **Keep four steps and give each its own icon.** Four is the number of things a merchant must actually do; three would drop the webhook step, which is the one integrators get wrong. |
 | **D-10** | Code panels were `#111217` near-black, reading as a terminal rather than a code block. | **Light panel with a Copy button** — `#fbfbfd` on a `#e9e9ef` border, a slim header carrying the language, muted comments. Applied to every code panel on the page so the signature section matches. |
 | **D-11** | PA-46 lightened the code panels but left their shells dark — `.docs-qs-block` was `#0c0d10` and `.docs-signature-panel` `#0f1015` — so each card held a light snippet inside a black frame. The Quick-start steps were also a two-column grid, which made a six-step sequence read left-right-left-right. | **Rebuild the section as a numbered vertical timeline**, and light every remaining shell. A violet rail with a numbered node per step, the snippet hanging off it; the section header becomes an eyebrow, the title and chips, replacing the plain heading and paragraph. |

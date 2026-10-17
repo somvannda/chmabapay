@@ -263,7 +263,7 @@ export default function AdminAccountDetailPage({
   const [invoiceAmount, setInvoiceAmount] = useState("");
 
   // The signed-in operator's own account id, so suspending *yourself* can be called
-  // out before it signs you out. `/v1/me` is the only place the console learns who
+  // out before it signs you out. `/api/v1/me` is the only place the console learns who
   // it is acting as.
   const [selfId, setSelfId] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
@@ -279,7 +279,7 @@ export default function AdminAccountDetailPage({
     setErrorMsg(null);
     setNotFound(false);
     try {
-      const res = await apiFetch(`/v1/admin/accounts/${accountId}`, {
+      const res = await apiFetch(`/api/v1/admin/accounts/${accountId}`, {
         credentials: "include",
       });
       if (res.status === 404) {
@@ -307,7 +307,7 @@ export default function AdminAccountDetailPage({
     let alive = true;
     (async () => {
       try {
-        const res = await apiFetch("/v1/me", { credentials: "include" });
+        const res = await apiFetch("/api/v1/me", { credentials: "include" });
         if (!res.ok) return;
         const me = (await res.json()) as { id?: number };
         if (alive && typeof me.id === "number") setSelfId(me.id);
@@ -330,7 +330,7 @@ export default function AdminAccountDetailPage({
     const next = !account.whitelabel_enabled;
     setEntitlementSaving(true);
     try {
-      const res = await apiFetch(`/v1/admin/accounts/${accountId}`, {
+      const res = await apiFetch(`/api/v1/admin/accounts/${accountId}`, {
         method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -375,7 +375,7 @@ export default function AdminAccountDetailPage({
     setPlanOpen(true);
     if (plans !== null) return;
     try {
-      const res = await apiFetch("/v1/admin/plans", { credentials: "include" });
+      const res = await apiFetch("/api/v1/admin/plans", { credentials: "include" });
       if (!res.ok) throw new Error(await readApiError(res));
       const data = (await res.json()) as PlanOption[];
       setPlans(data.filter((p) => p.is_active));
@@ -396,7 +396,7 @@ export default function AdminAccountDetailPage({
     }
     setBusy("plan");
     try {
-      const res = await apiFetch(`/v1/admin/accounts/${accountId}/plan`, {
+      const res = await apiFetch(`/api/v1/admin/accounts/${accountId}/plan`, {
         method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -441,7 +441,7 @@ export default function AdminAccountDetailPage({
     }
     setBusy("invoice");
     try {
-      const res = await apiFetch(`/v1/admin/invoices/${invoice.id}/resolve`, {
+      const res = await apiFetch(`/api/v1/admin/invoices/${invoice.id}/resolve`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -481,7 +481,7 @@ export default function AdminAccountDetailPage({
     }
     setBusy("mint-key");
     try {
-      const res = await apiFetch(`/v1/admin/accounts/${accountId}/keys`, {
+      const res = await apiFetch(`/api/v1/admin/accounts/${accountId}/keys`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -549,7 +549,7 @@ export default function AdminAccountDetailPage({
       }
       setStatusSaving(true);
       try {
-        const res = await apiFetch(`/v1/admin/accounts/${accountId}`, {
+        const res = await apiFetch(`/api/v1/admin/accounts/${accountId}`, {
           method: "PATCH",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -582,7 +582,7 @@ export default function AdminAccountDetailPage({
       const key = confirm.key;
       setBusy(`key-${key.id}`);
       try {
-        const res = await apiFetch(`/v1/admin/keys/${key.id}/revoke`, {
+        const res = await apiFetch(`/api/v1/admin/keys/${key.id}/revoke`, {
           method: "POST",
           credentials: "include",
         });
@@ -603,7 +603,7 @@ export default function AdminAccountDetailPage({
       const key = confirm.key;
       setBusy(`rotate-${key.id}`);
       try {
-        const res = await apiFetch(`/v1/admin/keys/${key.id}/rotate`, {
+        const res = await apiFetch(`/api/v1/admin/keys/${key.id}/rotate`, {
           method: "POST",
           credentials: "include",
         });
@@ -626,7 +626,7 @@ export default function AdminAccountDetailPage({
       const next = !store.is_internal;
       setBusy(`internal-${store.id}`);
       try {
-        const res = await apiFetch(`/v1/admin/stores/${store.id}/internal`, {
+        const res = await apiFetch(`/api/v1/admin/stores/${store.id}/internal`, {
           method: "PUT",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -656,7 +656,7 @@ export default function AdminAccountDetailPage({
     setBusy(`store-${store.id}`);
     try {
       const res = await apiFetch(
-        `/v1/admin/stores/${store.id}/${enabling ? "enable" : "disable"}`,
+        `/api/v1/admin/stores/${store.id}/${enabling ? "enable" : "disable"}`,
         { method: "POST", credentials: "include" },
       );
       if (!res.ok) throw new Error(await readApiError(res));

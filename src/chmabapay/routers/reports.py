@@ -19,7 +19,7 @@ from ..openapi import AUTH_ERRORS, AUTH_SECURITY
 from ..schemas import money_to_str
 
 router = APIRouter(
-    prefix="/v1/reports",
+    prefix="/api/v1/reports",
     tags=["reports"],
     dependencies=AUTH_SECURITY,
     responses=AUTH_ERRORS,
@@ -99,7 +99,7 @@ def _row_to_dict(
     return {
         "public_id": payment.public_id,
         "status": payment.status,
-        "amount": money_to_str(payment.amount_cents),
+        "amount": money_to_str(payment.amount_cents, payment.currency),
         "currency": payment.currency,
         "reference_id": payment.reference_id or "",
         "store_public_id": store_public_id,
@@ -225,14 +225,25 @@ async def export_payments_json(
     total_res = await session.execute(count_stmt)
     total_matching_rows = total_res.scalar_one() or 0
 
-    sum_stmt = select(func.coalesce(func.sum(models.Payment.amount_cents), 0)).where(
-        models.Payment.status == "paid"
-    )
+    # Paid volume is summed **per currency**. USD and KHR are different units, so a
+    # single summed total is meaningless the moment an account runs both; the map
+    # below is the field a multi-currency account should read. `_amount_cents` and
+    # `_amount_formatted` are kept for existing consumers and remain meaningful
+    # while an account settles in one currency only.
+    sum_stmt = select(
+        models.Payment.currency,
+        func.coalesce(func.sum(models.Payment.amount_cents), 0),
+    ).where(models.Payment.status == "paid")
     sum_params = dict(params_dict)
     sum_params["statuses_list"] = []
     sum_stmt = await _build_filter_stmt(sum_stmt, ctx.account, ctx, sum_params, session)
+    sum_stmt = sum_stmt.group_by(models.Payment.currency)
     sum_res = await session.execute(sum_stmt)
-    total_matching_paid_amount_cents = sum_res.scalar_one() or 0
+    paid_by_currency: dict[str, int] = {}
+    for currency, amount in sum_res.all():
+        key = (currency or "USD").upper()
+        paid_by_currency[key] = paid_by_currency.get(key, 0) + int(amount or 0)
+    total_matching_paid_amount_cents = sum(paid_by_currency.values())
 
     paid_count_stmt = select(func.count(models.Payment.id)).where(
         models.Payment.status == "paid"
@@ -246,9 +257,10 @@ async def export_payments_json(
     # Refunds get their own line because the two figures above count only
     # `status == "paid"` — a reversed payment is already excluded from the paid
     # total, so a dashboard reading it has no way to say why the number is lower
-    # than the merchant expects. One query for both the count and the sum: they
-    # are always wanted together.
+    # than the merchant expects. Grouped by currency for the same reason the paid
+    # total is: USD and KHR do not sum into one meaningful number.
     reversed_stmt = select(
+        models.Payment.currency,
         func.count(models.Payment.id),
         func.coalesce(func.sum(models.Payment.amount_cents), 0),
     ).where(models.Payment.status == models.PAYMENT_REVERSED)
@@ -260,10 +272,15 @@ async def export_payments_json(
     reversed_stmt = await _build_filter_stmt(
         reversed_stmt, ctx.account, ctx, reversed_params, session
     )
+    reversed_stmt = reversed_stmt.group_by(models.Payment.currency)
     reversed_res = await session.execute(reversed_stmt)
-    total_matching_reversed_count, total_matching_reversed_amount_cents = (
-        reversed_res.one()
-    )
+    reversed_by_currency: dict[str, int] = {}
+    total_matching_reversed_count = 0
+    for currency, count, amount in reversed_res.all():
+        key = (currency or "USD").upper()
+        reversed_by_currency[key] = reversed_by_currency.get(key, 0) + int(amount or 0)
+        total_matching_reversed_count += int(count or 0)
+    total_matching_reversed_amount_cents = sum(reversed_by_currency.values())
 
     total_pages = (total_matching_rows + per_page - 1) // per_page if total_matching_rows > 0 else 0
 
@@ -300,10 +317,21 @@ async def export_payments_json(
             "total_matching_paid_count": total_matching_paid_count,
             "total_matching_paid_amount_cents": total_matching_paid_amount_cents,
             "total_matching_paid_amount_formatted": money_to_str(total_matching_paid_amount_cents),
+            # Per-currency breakdown. `total_matching_paid_amount_*` above sums across
+            # currencies, which is only sound while an account settles in one; this is
+            # the honest figure when USD and KHR both appear.
+            "total_matching_paid_by_currency": {
+                cur: {"cents": amt, "formatted": money_to_str(amt, cur)}
+                for cur, amt in sorted(paid_by_currency.items())
+            },
             "total_matching_reversed_count": int(total_matching_reversed_count or 0),
             "total_matching_reversed_amount_cents": int(
                 total_matching_reversed_amount_cents or 0
             ),
+            "total_matching_reversed_by_currency": {
+                cur: {"cents": amt, "formatted": money_to_str(amt, cur)}
+                for cur, amt in sorted(reversed_by_currency.items())
+            },
             "filters_applied": filters_applied,
         },
         "pagination": {

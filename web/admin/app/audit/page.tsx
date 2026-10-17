@@ -105,7 +105,7 @@ export default function AdminAuditPage() {
         if (toDate) params.set("to", toDate);
         params.set("page", String(page));
         params.set("per_page", "50");
-        const res = await apiFetch(`/v1/admin/audit-logs?${params.toString()}`, {
+        const res = await apiFetch(`/api/v1/admin/audit-logs?${params.toString()}`, {
           credentials: "include",
         });
         if (!res.ok) throw new Error(await readApiError(res));
@@ -146,7 +146,7 @@ export default function AdminAuditPage() {
         if (toDate) params.set("to", toDate);
         params.set("format", format);
         const res = await apiFetch(
-          `/v1/admin/audit-logs/export?${params.toString()}`,
+          `/api/v1/admin/audit-logs/export?${params.toString()}`,
           { credentials: "include" },
         );
         if (!res.ok) throw new Error(await readApiError(res));
