@@ -6306,3 +6306,64 @@ body.dash-hide-landing-chrome > .chmaba-site-chrome { display: none !important; 
   border-color: rgb(var(--color-line-strong));
 }
 .dark .landing-button-secondary:hover { background: rgb(var(--color-surface-muted)); }
+
+/* ==================================================================
+   Chmaba POS page headings + panel surface — applies to every portal
+   page (Stores, Payments, Reports, Billing, Settings, ...).
+   ================================================================== */
+.dash-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+.dash-page-title {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  color: var(--ink);
+}
+.dash-page-subtitle {
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.4;
+  color: #898a95;
+}
+.dark .dash-page-subtitle { color: #a4a5ad; }
+
+/* Panels: Chmaba POS card — rounded-2xl, hairline border, white surface. */
+.dash-panel {
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--surface-card);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+.dash-panel-title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+}
+.dark .dash-panel { background: #1f2025; border-color: #2a2b30; }
+
+/* Status pills → Chmaba Badge tones (rounded-md, soft backgrounds). */
+.dash-pill {
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.dash-pill-paid { background: #edf9e4; color: #4f8b32; }
+.dash-pill-expired, .dash-pill-retrying { background: #fff6df; color: #ad7d1c; }
+.dash-pill-failed, .dash-pill-reversed { background: #fff0ee; color: #c2564b; }
+.dash-pill-scanned { background: #f0efff; color: #6555df; }
+.dash-pill-superseded { background: #eaf4ff; color: #3579b8; }
+.dash-pill-pending { background: #f1f1f5; color: #686974; }
+.dark .dash-pill-paid { background: #1f2f1c; color: #a7d7b0; }
+.dark .dash-pill-expired, .dark .dash-pill-retrying { background: #362c17; color: #e6c07a; }
+.dark .dash-pill-failed, .dark .dash-pill-reversed { background: #39211f; color: #e6b0aa; }
+.dark .dash-pill-scanned { background: #2b2850; color: #b3a7ff; }
+.dark .dash-pill-superseded { background: #1d2a38; color: #a9c4ff; }
+.dark .dash-pill-pending { background: #2a2b30; color: #9a9aa4; }
