@@ -168,35 +168,56 @@ function planName(profile: Profile | null, subscription: Subscription | null): s
 function MetricCard({
   label,
   value,
-  caption,
+  change,
+  direction = "flat",
   tone = "violet",
   icon,
+  detail,
 }: {
   label: string;
   value: React.ReactNode;
-  caption: React.ReactNode;
-  tone?: "violet" | "green" | "amber" | "blue";
+  change: string;
+  direction?: "up" | "down" | "alert" | "flat";
+  tone?: "violet" | "lime" | "peach" | "yellow";
   icon: React.ReactNode;
+  detail?: React.ReactNode;
 }) {
   const tones: Record<string, string> = {
-    violet: "bg-[#f0efff] text-[#6957f5] dark:bg-[#2b2850]",
-    green: "bg-[#ecfdf5] text-[#4f9b3a] dark:bg-[#1f2f1c]",
-    amber: "bg-[#fffbeb] text-[#d97706] dark:bg-[#362c17]",
-    blue: "bg-[#eff6ff] text-[#1e40af] dark:bg-[#1d2a38]",
+    violet: "bg-[#f0efff] text-[#6957f5] dark:bg-[#2b2850] dark:text-[#b3a7ff]",
+    lime: "bg-[#eff9e5] text-[#67a53c] dark:bg-[#1f2f1c]",
+    peach: "bg-[#fff1e9] text-[#cb784d] dark:bg-[#352920]",
+    yellow: "bg-[#fff5dc] text-[#b18020] dark:bg-[#362c17]",
   };
+  const trends: Record<string, string> = {
+    up: "text-[#67a53c]",
+    down: "text-[#c2564b]",
+    alert: "text-[#bd8624]",
+    flat: "text-[#92939d]",
+  };
+  const arrows: Record<string, string> = { up: "↗", down: "↘", alert: "!", flat: "–" };
   return (
-    <div className="dash-stat-card">
+    <div className="surface-shadow card-border block w-full rounded-2xl bg-white p-4 text-left dark:bg-[#1f2025] sm:p-5">
       <div className="flex items-start justify-between gap-3">
-        <div className="dash-stat-label">{label}</div>
-        <span
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-[#858690] dark:text-[#a9aab3]">{label}</p>
+          <p className="mt-2 truncate text-[25px] font-extrabold tracking-[-.055em] text-[#202128] dark:text-[#e4e4e8]">
+            {value}
+          </p>
+        </div>
+        <div
           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tones[tone]}`}
           aria-hidden="true"
         >
           {icon}
-        </span>
+        </div>
       </div>
-      <div className="dash-stat-value">{value}</div>
-      <div className="dash-stat-trend">{caption}</div>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <span className={`inline-flex items-center gap-1 text-[11px] font-bold ${trends[direction]}`}>
+          <span aria-hidden="true">{arrows[direction]}</span>
+          {change}
+        </span>
+        {detail ? <span className="truncate text-[10px] text-[#a4a5ad]">{detail}</span> : null}
+      </div>
     </div>
   );
 }
@@ -449,29 +470,39 @@ export default function DashboardOverviewPage() {
   const figuresReady = dataReady && summaryError === null;
   const anythingFailed = Boolean(paymentsError || storesError || summaryError);
 
+  const displayName = profile?.name || profile?.email?.split("@")[0] || "there";
+  const hour = new Date().getHours();
+  const greeting =
+    hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const todayLabel = new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+
   if (loading || !profile) {
     return <div className="dash-info">Loading ChmabaPay…</div>;
   }
 
   return (
     <>
-      <div className="dash-page-head">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <h1 className="dash-page-title">Your stores</h1>
-          <div className="dash-page-subtitle">
-            Each store has its own payment link. Webhooks and API keys belong to the
-            whole workspace and serve every store &mdash; as do your plan and
-            monthly quota.
+          <div className="flex items-center gap-2 text-xs text-[#92939d]">
+            <span className="h-2 w-2 rounded-full bg-[#76bc4b]" />
+            {todayLabel}
           </div>
+          <h1 className="mt-2 text-2xl font-extrabold tracking-[-.05em] text-[#202128] dark:text-[#e4e4e8]">
+            {greeting}, {displayName}
+          </h1>
+          <p className="mt-1 text-sm text-[#898a95]">
+            Here is what is happening across your stores today.
+          </p>
         </div>
-        <div>
-          <Link
-            className="dash-btn dash-btn-primary"
-            href="/dashboard/stores/new"
-          >
-            + New store
-          </Link>
-        </div>
+        <Link className="dash-btn dash-btn-primary" href="/dashboard/payments/new">
+          <span aria-hidden="true">+</span> New payment
+        </Link>
       </div>
 
       {anythingFailed && (
@@ -542,61 +573,68 @@ export default function DashboardOverviewPage() {
         </section>
       )}
 
-      <section aria-label="Metrics" className="dash-metrics">
+      <section
+        aria-label="Metrics"
+        className="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
+      >
         <MetricCard
           label="Paid today"
-          tone="green"
+          tone="lime"
+          direction="up"
+          change={`${todayCount} payment${todayCount === 1 ? "" : "s"}`}
+          detail="today"
           icon={
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="9" />
               <path d="M12 7v10M9.5 9.5c0-1 1.1-1.8 2.5-1.8s2.5.8 2.5 1.8-1.1 1.6-2.5 1.9-2.5.9-2.5 1.9 1.1 1.8 2.5 1.8 2.5-.8 2.5-1.8" />
             </svg>
           }
           value={figuresReady ? formatSummaryMoney(summaryToday, todayCents) : "—"}
-          caption={<>{todayCount} payment{todayCount === 1 ? "" : "s"} today</>}
         />
         <MetricCard
           label="Settled"
           tone="violet"
+          direction="flat"
+          change={`${allTimeCount} paid`}
+          detail={refundedCount > 0 ? `${refundedCount} refunded` : "no refunds"}
           icon={
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
               <path d="M20 6 9 17l-5-5" />
             </svg>
           }
           value={figuresReady ? formatSummaryMoney(summaryAll, allTimeCents) : "—"}
-          caption={
-            refundedCount > 0
-              ? `all time · ${refundedCount} refunded (${formatByCurrency(summaryAll?.total_matching_reversed_by_currency, refundedCents)})`
-              : "all time · no refunds"
-          }
         />
         <MetricCard
           label="Avg. payment"
-          tone="amber"
+          tone="peach"
+          direction="flat"
+          change="average"
+          detail="all time"
           icon={
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
               <path d="M4 19V5M4 19h16M8 15l3-4 3 2 4-5" />
             </svg>
           }
           value={figuresReady ? formatDollars(avgCents) : "—"}
-          caption={`${allTimeCount} total paid`}
         />
         <MetricCard
           label="Active stores"
-          tone="blue"
+          tone="yellow"
+          direction="flat"
+          change={`${storesList.length} total`}
+          detail={
+            <Link className="font-semibold text-[#6957f5] hover:underline" href="/dashboard/stores">
+              Manage
+            </Link>
+          }
           icon={
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
               <path d="M4 9h16l-1-4H5L4 9Z" />
               <path d="M5 9v10h14V9" />
               <path d="M9 19v-5h6v5" />
             </svg>
           }
           value={dataReady && storesError === null ? String(activeStores) : "—"}
-          caption={
-            <Link className="dash-link-btn" href="/dashboard/stores">
-              Manage stores
-            </Link>
-          }
         />
       </section>
 
