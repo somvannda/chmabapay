@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { readApiError } from "@/components/portal/apiError";
 import { useSession, type Profile } from "@/components/portal/useSession";
 
@@ -201,6 +201,45 @@ function MetricCard({
   );
 }
 
+function paidAtOf(p: Payment): Date | null {
+  const raw = p.paid_at;
+  if (typeof raw !== "string") return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function storeOf(p: Payment): string {
+  const raw = p.store;
+  return typeof raw === "string" ? raw : "";
+}
+
+/** Chmaba POS-style bar chart: thin violet bars with day labels. */
+function BarChart({
+  data,
+  format,
+}: {
+  data: { label: string; cents: number }[];
+  format: (cents: number) => string;
+}) {
+  const max = Math.max(1, ...data.map((d) => d.cents));
+  return (
+    <div className="flex h-40 items-end gap-1.5" role="img" aria-label="Payment volume chart">
+      {data.map((d) => (
+        <div key={d.label} className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
+          <div className="flex w-full flex-1 items-end">
+            <div
+              className="w-full rounded-t-md bg-[#6957f5]/75 transition-all hover:bg-[#6957f5] dark:bg-[#8b7cf7]/75 dark:hover:bg-[#8b7cf7]"
+              style={{ height: `${Math.max(2, (d.cents / max) * 100)}%` }}
+              title={`${d.label}: ${format(d.cents)}`}
+            />
+          </div>
+          <span className="truncate text-[9px] text-[#92939d]">{d.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function DashboardOverviewPage() {
   const { profile, loading } = useSession();
 
@@ -353,6 +392,55 @@ export default function DashboardOverviewPage() {
       return tb - ta;
     })
     .slice(0, 5);
+
+  // — Chmaba POS-style panels: volume trend, status mix, top stores —
+  const volumeSeries = useMemo(() => {
+    const days = 14;
+    const paid = paymentsList.filter((p) => (p.status || "").toLowerCase() === "paid");
+    const now = new Date();
+    const buckets: { label: string; cents: number }[] = [];
+    for (let i = days - 1; i >= 0; i -= 1) {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - i);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 1);
+      const cents = paid.reduce((sum, p) => {
+        const at = paidAtOf(p);
+        return at && at >= start && at < end ? sum + amountCents(p) : sum;
+      }, 0);
+      buckets.push({ label: `${start.getMonth() + 1}/${start.getDate()}`, cents });
+    }
+    return buckets;
+  }, [paymentsList]);
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const p of paymentsList) {
+      const key = (p.status || "unknown").toLowerCase();
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    return counts;
+  }, [paymentsList]);
+
+  const topStores = useMemo(() => {
+    const byStore: Record<string, number> = {};
+    for (const p of paymentsList) {
+      if ((p.status || "").toLowerCase() !== "paid") continue;
+      const id = storeOf(p);
+      if (!id) continue;
+      byStore[id] = (byStore[id] || 0) + amountCents(p);
+    }
+    return Object.entries(byStore)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([id, cents]) => ({
+        id,
+        cents,
+        name:
+          storesList.find((s) => String(s.id) === id)?.name || `Store ${id.slice(0, 8)}`,
+      }));
+  }, [paymentsList, storesList]);
 
   const dataReady = !paymentsLoading && !storesLoading && !summaryLoading;
   // `isFirstRun` is a claim about the account, so it has to be false when we could
@@ -510,6 +598,87 @@ export default function DashboardOverviewPage() {
             </Link>
           }
         />
+      </section>
+
+      <section aria-label="Insights" className="dash-insights">
+        <div className="dash-panel">
+          <div>
+            <div className="dash-panel-title">Payment volume</div>
+            <div className="dash-page-subtitle">Paid volume over the last 14 days.</div>
+          </div>
+          {paymentsLoading ? (
+            <div className="dash-empty">Loading chart…</div>
+          ) : (
+            <BarChart data={volumeSeries} format={(c) => formatDollars(c)} />
+          )}
+        </div>
+
+        <div className="dash-panel">
+          <div>
+            <div className="dash-panel-title">Payment status</div>
+            <div className="dash-page-subtitle">
+              Across the {paymentsList.length} most recent payments.
+            </div>
+          </div>
+          {paymentsLoading ? (
+            <div className="dash-empty">Loading status…</div>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {[
+                ["paid", "Paid"],
+                ["pending", "Pending"],
+                ["scanned", "Scanned"],
+                ["expired", "Expired"],
+                ["failed", "Failed"],
+                ["reversed", "Reversed"],
+              ].map(([key, label]) => {
+                const count = statusCounts[key] || 0;
+                const pct = paymentsList.length
+                  ? Math.round((count / paymentsList.length) * 100)
+                  : 0;
+                return (
+                  <div key={key} className="flex items-center gap-3">
+                    <span className="w-16 shrink-0 text-[11px] font-semibold text-[#696a74] dark:text-[#9a9aa4]">
+                      {label}
+                    </span>
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#f1f1f5] dark:bg-[#2a2b30]">
+                      <div
+                        className="h-full rounded-full bg-[#6957f5]"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="w-8 shrink-0 text-right text-[11px] font-semibold text-[#92939d]">
+                      {count}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="dash-panel">
+          <div>
+            <div className="dash-panel-title">Top stores</div>
+            <div className="dash-page-subtitle">Paid volume by store.</div>
+          </div>
+          {topStores.length === 0 ? (
+            <div className="dash-empty">No paid volume yet.</div>
+          ) : (
+            <div className="flex flex-col gap-2.5">
+              {topStores.map((s) => (
+                <div key={s.id} className="flex items-center justify-between gap-3">
+                  <span className="truncate text-[13px] text-[#34353d] dark:text-[#c4c5cd]">
+                    {s.name}
+                  </span>
+                  <span className="shrink-0 text-[13px] font-semibold text-[#17181c] dark:text-[#e4e4e8]">
+                    {formatDollars(s.cents)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </section>
 
       <section aria-label="Stores and activity" className="dash-panels">
