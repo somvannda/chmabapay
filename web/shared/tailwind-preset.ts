@@ -1,52 +1,83 @@
 /**
  * ChmabaPay shared Tailwind preset — the ONE style template.
  *
- * Both `web/landing` and `web/admin` used to inline an identical copy of this
- * `theme.extend` block in their own `tailwind.config.ts`. Copies drift: the
- * landing copy quietly grew a token the admin copy did not have, and nothing
- * failed, so "the two portals share a style template" was a claim held together
- * by review rather than by the build. This file makes it a fact — there is one
- * definition of the Chmaba palette, radii, shadows and fonts, and a portal that
- * does not inherit from it is the thing you have to do on purpose.
+ * Ported onto the real Chmaba design tokens (`web/shared/tokens.css`, a 1:1 copy
+ * of `Chmaba/packages/ui/tokens.css`) rather than the old reverse-engineered
+ * approximation. Colours resolve through CSS custom properties, so the light and
+ * `.dark` token sets both work and a scoped `--color-brand` override rebrands a
+ * subtree.
  *
- * The values themselves are still owned by `web/shared/theme.ts` (the 1:1
- * reverse-engineer of chmaba.com documented in
- * `web/DESIGN_TOKENS_AND_UX_LAWS.md`); this preset only maps them to Tailwind.
+ * Both `web/landing` and `web/admin` inherit this preset, and a portal that does
+ * not is the thing you have to do on purpose.
  *
- * Deliberately typed as a plain object rather than `import type { Config }`:
- * this file is resolved from the app's own config context, and dropping the
- * type import keeps `web/shared` free of a Tailwind build-time dependency.
+ * The ChmabaPay-only additions stay: ABA green, Bakong teal, the bank swatches and
+ * the payment status colours, because a gateway carries trust colours a POS does
+ * not need.
  */
 
 import { brandColors, radius, shadows, fonts } from "./theme";
 
 const parseFonts = (stack: string) => stack.split(",").map((s) => s.trim());
 
+/** A token from `tokens.css` as a Tailwind colour that supports `/opacity`. */
+const channel = (name: string) => `rgb(var(--color-${name}) / <alpha-value>)`;
+
 export const chmabaTailwindPreset = {
   darkMode: "class",
   theme: {
     extend: {
       colors: {
-        violet: brandColors.brandViolet,
-        "violet-hover": "#5A47E0",
+        // — Chmaba token names (CSS vars → dark mode aware) —
+        brand: {
+          DEFAULT: channel("brand"),
+          hover: channel("brand-hover"),
+          soft: channel("brand-soft"),
+          tint: channel("brand-tint"),
+        },
+        ink: {
+          DEFAULT: channel("ink"),
+          soft: channel("ink-soft"),
+        },
+        muted: channel("muted"),
+        page: channel("page"),
+        line: {
+          DEFAULT: channel("line"),
+          strong: channel("line-strong"),
+        },
+        success: {
+          DEFAULT: channel("success"),
+          soft: channel("success-soft"),
+        },
+        danger: {
+          DEFAULT: channel("danger"),
+          soft: channel("danger-soft"),
+        },
+
+        // — ChmabaPay aliases kept so existing classes keep their meaning —
+        // `surface` stays the page background and `card` the raised surface, which
+        // is how the portal already reads them; `page`/`brand`/`line` above are the
+        // Chmaba-native names for new code.
+        violet: channel("brand"),
+        "violet-hover": channel("brand-hover"),
         lime: brandColors.brandLime,
         aba: brandColors.trustAbaGreen,
         bakong: brandColors.trustBakongTeal,
         navy: brandColors.trustNavy,
         gold: brandColors.goldVerified,
-        ink: brandColors.brandInk,
-        body: brandColors.textBody,
-        subtle: brandColors.subtleText,
-        surface: brandColors.surfaceLight,
-        card: brandColors.surfaceCard,
-        "border-light": brandColors.borderLight,
+        body: channel("ink-soft"),
+        subtle: channel("muted"),
+        surface: channel("page"),
+        card: channel("surface"),
+        "surface-muted": channel("surface-muted"),
+        "surface-sunken": channel("surface-sunken"),
+        "border-light": channel("line-strong"),
         "border-muted": brandColors.borderMuted,
         "border-soft": brandColors.borderSoft,
         status: {
-          paid: brandColors.statusPaid,
+          paid: channel("success"),
           pending: brandColors.statusPending,
           scanned: brandColors.statusScanned,
-          failed: brandColors.statusFailed,
+          failed: channel("danger"),
           expired: brandColors.statusExpired,
         },
         util: brandColors.util,
@@ -72,6 +103,28 @@ export const chmabaTailwindPreset = {
         "card-khqr": shadows.khqrCard,
         "plan-popular": shadows.popularPlan,
         card: shadows.card,
+        // — Chmaba's own elevation names —
+        soft: "0 14px 40px rgba(28, 31, 42, .07)",
+        panel: "0 28px 70px rgba(28, 31, 42, .12)",
+      },
+      keyframes: {
+        fadeUp: {
+          "0%": { opacity: "0", transform: "translateY(12px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        fadeIn: {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
+        pulseSoft: {
+          "0%, 100%": { opacity: ".55" },
+          "50%": { opacity: "1" },
+        },
+      },
+      animation: {
+        "fade-up": "fadeUp .5s ease-out both",
+        "fade-in": "fadeIn .35s ease-out both",
+        "pulse-soft": "pulseSoft 2.3s ease-in-out infinite",
       },
       fontFamily: {
         sans: parseFonts(fonts.sans),
@@ -84,8 +137,7 @@ export const chmabaTailwindPreset = {
 /**
  * The `content` globs every ChmabaPay portal must scan. Kept beside the preset
  * because a portal that inherits the theme but forgets to scan the shared
- * component tree drops those utilities from its stylesheet — the classic
- * "the shared component renders unstyled" bug.
+ * component tree drops those utilities from its stylesheet.
  */
 export const chmabaContentGlobs = [
   "./app/**/*.{ts,tsx}",

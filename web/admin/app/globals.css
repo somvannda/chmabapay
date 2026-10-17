@@ -1,3 +1,31 @@
+@import "../../shared/tokens.css";
+
+/* Khmer faces ported from Chmaba. Latin keeps Inter; Khmer uses Niradei. */
+@font-face {
+  font-family: "Niradei";
+  src: url("/fonts/niradei/Niradei-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+@font-face {
+  font-family: "Niradei";
+  src: url("/fonts/niradei/Niradei-ExtraBold.ttf") format("truetype");
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+@font-face {
+  font-family: "Niradei";
+  src: url("/fonts/niradei/Niradei-Black_0.ttf") format("truetype");
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+1780-17FF, U+19E0-19FF, U+200C-200D, U+25CC;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -17,7 +45,7 @@
 
      The matching `<meta name="color-scheme">` is emitted by the viewport export in
      app/layout.tsx, so the browser knows before the stylesheet arrives. */
-  color-scheme: only light;
+  color-scheme: light;
 
   /* Chrome on Windows fills a `<button>` it still renders itself with the *system
      accent colour*, and sizes its label from the system UI font. On a machine whose
@@ -28,15 +56,15 @@
      Plans, Payments and Deliveries); `appearance: none` below covers the rest. */
   accent-color: var(--violet);
 
-  --font-inter: "Inter", sans-serif;
+  --font-inter: "Inter", "Niradei", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
-  --surface: #f7f7fa;
-  --surface-card: #ffffff;
-  --ink: #17181c;
-  --muted: #747580;
-  --subtle: #8f9099;
-  --border: #e6e7ee;
-  --violet: #6957f5;
+  --surface: rgb(var(--color-page));
+  --surface-card: rgb(var(--color-surface));
+  --ink: rgb(var(--color-ink));
+  --muted: rgb(var(--color-ink-soft));
+  --subtle: rgb(var(--color-muted));
+  --border: rgb(var(--color-line-strong));
+  --violet: rgb(var(--color-brand));
   --lime: #bffa6a;
   --dark: #111217;
   --dark-card: #161820;
@@ -50,11 +78,11 @@
      the same type scale, radii, spacing grid and shadows so the
      product feels like one website.
      ---------------------------------------------------------- */
-  --ink-2: #60616c;          /* secondary text */
-  --line: #e9e9ef;           /* card / panel hairline */
-  --line-soft: #f1f1f5;      /* inner dividers */
-  --violet-hover: #5a47e0;
-  --violet-soft: #efecfe;    /* active nav / subtle violet fill */
+  --ink-2: rgb(var(--color-muted));   /* secondary text */
+  --line: rgb(var(--color-line));     /* card / panel hairline */
+  --line-soft: rgb(var(--color-line));/* inner dividers */
+  --violet-hover: rgb(var(--color-brand-hover));
+  --violet-soft: rgb(var(--color-brand-soft)); /* active nav / subtle violet fill */
   --lime-ink: #111217;
 
   --r-xs: 8px;
@@ -4471,3 +4499,41 @@ body.dash-path-dashboard > .landing-footer {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ------------------------------------------------------------------
+   Dark mode — the `.dark` token set from web/shared/tokens.css,
+   covering the console surfaces that still use literal light values.
+   ------------------------------------------------------------------ */
+.dark { color-scheme: dark; }
+.dark body { background: rgb(var(--color-page)); color: rgb(var(--color-ink)); }
+
+.dark .dash-panel,
+.dark .dash-stat-card,
+.dark .dash-empty,
+.dark .dash-info,
+.dark .dash-warn { background: rgb(var(--color-surface)); border-color: rgb(var(--color-line)); color: rgb(var(--color-ink)); }
+
+.dark .dash-input,
+.dark .dash-select { background: rgb(var(--color-surface)); color: rgb(var(--color-ink)); border-color: rgb(var(--color-line-strong)); }
+
+.dark .dash-table th { background: rgb(var(--color-surface-muted)); color: rgb(var(--color-ink-soft)); }
+
+.dark .dash-header,
+.dark .dash-sidebar { background: rgb(var(--color-surface-muted)); border-color: rgb(var(--color-line)); }
+
+/* Theme toggle in the console top bar. */
+.cp-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-card);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.cp-theme-toggle:hover { background: rgb(var(--color-surface-muted)); }
