@@ -279,6 +279,7 @@ export default function DashboardOverviewPage() {
   const [storesError, setStoresError] = useState<string | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [rangeDays, setRangeDays] = useState(14);
 
   useEffect(() => {
     let alive = true;
@@ -416,7 +417,7 @@ export default function DashboardOverviewPage() {
 
   // — Chmaba POS-style panels: volume trend, status mix, top stores —
   const volumeSeries = useMemo(() => {
-    const days = 14;
+    const days = rangeDays;
     const paid = paymentsList.filter((p) => (p.status || "").toLowerCase() === "paid");
     const now = new Date();
     const buckets: { label: string; cents: number }[] = [];
@@ -433,7 +434,16 @@ export default function DashboardOverviewPage() {
       buckets.push({ label: `${start.getMonth() + 1}/${start.getDate()}`, cents });
     }
     return buckets;
-  }, [paymentsList]);
+  }, [paymentsList, rangeDays]);
+
+  const volumeMax = useMemo(
+    () => Math.max(1, ...volumeSeries.map((b) => b.cents)),
+    [volumeSeries],
+  );
+  const volumeTotal = useMemo(
+    () => volumeSeries.reduce((sum, b) => sum + b.cents, 0),
+    [volumeSeries],
+  );
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -462,6 +472,11 @@ export default function DashboardOverviewPage() {
           storesList.find((s) => String(s.id) === id)?.name || `Store ${id.slice(0, 8)}`,
       }));
   }, [paymentsList, storesList]);
+
+  const topStoreMax = useMemo(
+    () => Math.max(1, ...topStores.map((s) => s.cents)),
+    [topStores],
+  );
 
   const dataReady = !paymentsLoading && !storesLoading && !summaryLoading;
   // `isFirstRun` is a claim about the account, so it has to be false when we could
@@ -638,78 +653,116 @@ export default function DashboardOverviewPage() {
         />
       </section>
 
-      <section aria-label="Insights" className="dash-insights">
-        <div className="dash-panel">
-          <div>
-            <div className="dash-panel-title">Payment volume</div>
-            <div className="dash-page-subtitle">Paid volume over the last 14 days.</div>
+      <section className="mt-5 grid gap-5 xl:grid-cols-[1.45fr_.85fr]" aria-label="Insights">
+        {/* Sales overview — Chmaba POS SalesChart: axis labels, chart grid, range tabs */}
+        <div className="surface-shadow card-border rounded-2xl bg-white p-5 dark:bg-[#1f2025] sm:p-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-extrabold tracking-[-.025em] dark:text-[#e4e4e8]">
+                Payment volume
+              </h3>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl font-extrabold tracking-[-.05em] dark:text-[#e4e4e8]">
+                  {formatDollars(volumeTotal)}
+                </span>
+                <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-[#68aa40]">
+                  ↗ last {rangeDays}d
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-0.5 rounded-lg border border-[#e5e5eb] bg-white p-0.5 dark:border-[#363740] dark:bg-[#1f2025]">
+              {[7, 14, 30].map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setRangeDays(d)}
+                  className={`h-7 rounded-md px-2.5 text-[11px] font-semibold transition ${
+                    rangeDays === d
+                      ? "bg-[#f0efff] text-[#6957f5] dark:bg-[#2b2850] dark:text-[#b3a7ff]"
+                      : "text-[#6f707a] hover:text-[#17181c] dark:text-[#d0d0d5]"
+                  }`}
+                >
+                  {d}d
+                </button>
+              ))}
+            </div>
           </div>
+
           {paymentsLoading ? (
             <div className="dash-empty">Loading chart…</div>
           ) : (
-            <BarChart data={volumeSeries} format={(c) => formatDollars(c)} />
-          )}
-        </div>
-
-        <div className="dash-panel">
-          <div>
-            <div className="dash-panel-title">Payment status</div>
-            <div className="dash-page-subtitle">
-              Across the {paymentsList.length} most recent payments.
-            </div>
-          </div>
-          {paymentsLoading ? (
-            <div className="dash-empty">Loading status…</div>
-          ) : (
-            <div className="flex flex-col gap-2.5">
-              {[
-                ["paid", "Paid"],
-                ["pending", "Pending"],
-                ["scanned", "Scanned"],
-                ["expired", "Expired"],
-                ["failed", "Failed"],
-                ["reversed", "Reversed"],
-              ].map(([key, label]) => {
-                const count = statusCounts[key] || 0;
-                const pct = paymentsList.length
-                  ? Math.round((count / paymentsList.length) * 100)
-                  : 0;
-                return (
-                  <div key={key} className="flex items-center gap-3">
-                    <span className="w-16 shrink-0 text-[11px] font-semibold text-[#696a74] dark:text-[#9a9aa4]">
-                      {label}
-                    </span>
-                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#f1f1f5] dark:bg-[#2a2b30]">
+            <div className="mt-6 flex gap-4">
+              <div className="flex h-[200px] flex-col justify-between py-1 text-[10px] text-[#b0b1ba]">
+                {[volumeMax, volumeMax * 0.75, volumeMax * 0.5, volumeMax * 0.25, 0].map(
+                  (v, i) => (
+                    <span key={i}>{formatDollars(v)}</span>
+                  ),
+                )}
+              </div>
+              <div className="relative min-w-0 flex-1">
+                <div className="chart-grid absolute inset-0 rounded-sm" />
+                <div className="absolute inset-x-0 bottom-0 flex h-[190px] items-end gap-1 px-1 sm:gap-2">
+                  {volumeSeries.map((b, i) => (
+                    <div key={b.label} className="group relative flex h-full flex-1 items-end">
                       <div
-                        className="h-full rounded-full bg-[#6957f5]"
-                        style={{ width: `${pct}%` }}
+                        className={`w-full rounded-t-[5px] transition group-hover:bg-[#5b4be3] ${
+                          i >= volumeSeries.length - 4
+                            ? "bg-[#6957f5]"
+                            : "bg-[#dcd9fb] dark:bg-[#3a3550]"
+                        }`}
+                        style={{ height: `${Math.max(2, (b.cents / volumeMax) * 100)}%` }}
+                        title={`${b.label}: ${formatDollars(b.cents)}`}
                       />
                     </div>
-                    <span className="w-8 shrink-0 text-right text-[11px] font-semibold text-[#92939d]">
-                      {count}
-                    </span>
-                  </div>
-                );
-              })}
+                  ))}
+                </div>
+              </div>
             </div>
           )}
         </div>
 
-        <div className="dash-panel">
-          <div>
-            <div className="dash-panel-title">Top stores</div>
-            <div className="dash-page-subtitle">Paid volume by store.</div>
+        {/* Top stores — Chmaba POS TopProducts: rank, tile, progress bar */}
+        <div className="surface-shadow card-border rounded-2xl bg-white p-5 dark:bg-[#1f2025] sm:p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-extrabold tracking-[-.025em] dark:text-[#e4e4e8]">
+                Top stores
+              </h3>
+              <p className="mt-1 text-[11px] text-[#999aa4]">Paid volume by store</p>
+            </div>
+            <Link
+              href="/dashboard/stores"
+              className="text-[11px] font-bold text-[#6957f5] hover:text-[#5040d6]"
+            >
+              View all
+            </Link>
           </div>
           {topStores.length === 0 ? (
-            <div className="dash-empty">No paid volume yet.</div>
+            <p className="mt-5 text-[13px] text-[#92939d]">No paid volume yet.</p>
           ) : (
-            <div className="flex flex-col gap-2.5">
-              {topStores.map((s) => (
-                <div key={s.id} className="flex items-center justify-between gap-3">
-                  <span className="truncate text-[13px] text-[#34353d] dark:text-[#c4c5cd]">
-                    {s.name}
+            <div className="mt-5 space-y-4">
+              {topStores.map((s, i) => (
+                <div key={s.id} className="flex items-center gap-3">
+                  <span className="w-3 text-center text-[10px] font-bold text-[#b2b2ba]">
+                    0{i + 1}
                   </span>
-                  <span className="shrink-0 text-[13px] font-semibold text-[#17181c] dark:text-[#e4e4e8]">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#f0efff] text-[10px] font-extrabold text-[#6957f5] dark:bg-[#2b2850] dark:text-[#b3a7ff]">
+                    {s.name.slice(0, 2).toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-bold text-[#303139] dark:text-[#e4e4e8]">
+                      {s.name}
+                    </p>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[#f0f0f4] dark:bg-[#2a2b30]">
+                      <div
+                        className="h-full rounded-full bg-[#b9b2fa] dark:bg-[#8b7cf7]"
+                        style={{
+                          width: `${Math.max(4, Math.round((s.cents / topStoreMax) * 100))}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-xs font-extrabold text-[#303139] dark:text-[#e4e4e8]">
                     {formatDollars(s.cents)}
                   </span>
                 </div>
@@ -856,7 +909,7 @@ export default function DashboardOverviewPage() {
         </div>
       </section>
 
-      <section className="dash-panels" aria-label="Current plan">
+      <section className="mt-5 grid gap-5 xl:grid-cols-[.85fr_1.45fr]" aria-label="Plan and actions">
         <div className="dash-panel">
           <div className="dash-panel-title">Current plan</div>
           <div className="dash-plan-card">
@@ -879,6 +932,42 @@ export default function DashboardOverviewPage() {
                 Manage plan →
               </Link>
             </div>
+          </div>
+        </div>
+
+        {/* Quick actions — Chmaba POS QuickActions (dark card, lime accent) */}
+        <div className="surface-shadow card-border rounded-2xl bg-[#17181c] p-5 text-white sm:p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#c4f27c]">
+                Quick actions
+              </p>
+              <h3 className="mt-2 text-base font-extrabold tracking-[-.03em]">
+                Keep things moving
+              </h3>
+            </div>
+            <span className="text-lg text-[#c4f27c]" aria-hidden="true">
+              ✦
+            </span>
+          </div>
+          <div className="mt-5 grid grid-cols-2 gap-2">
+            {[
+              { label: "New payment", href: "/dashboard/payments/new" },
+              { label: "New store", href: "/dashboard/stores/new" },
+              { label: "API keys", href: "/dashboard/keys" },
+              { label: "View reports", href: "/dashboard/reports" },
+            ].map((a) => (
+              <Link
+                key={a.label}
+                href={a.href}
+                className="flex items-center gap-2 rounded-xl border border-[#34353b] bg-[#222328] px-3 py-3 text-left text-[10px] font-semibold text-[#d0d0d5] transition hover:border-[#5c5d65] hover:bg-[#2b2c32]"
+              >
+                <span className="text-[#c4f27c]" aria-hidden="true">
+                  →
+                </span>
+                {a.label}
+              </Link>
+            ))}
           </div>
         </div>
       </section>
