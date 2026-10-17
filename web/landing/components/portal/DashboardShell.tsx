@@ -300,6 +300,9 @@ export function DashboardShell({
                         {item.icon}
                       </svg>
                       <span>{item.label}</span>
+                      {isActive && (
+                        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#c4f27c]" />
+                      )}
                     </Link>
                   );
                 })}
