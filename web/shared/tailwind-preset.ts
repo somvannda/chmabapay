@@ -146,4 +146,5 @@ export const chmabaContentGlobs = [
   "../shared/theme.ts",
   "../shared/ux-laws.ts",
   "../shared/chrome.tsx",
+  "../shared/ui.tsx",
 ];
