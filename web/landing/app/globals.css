@@ -6291,3 +6291,8 @@ body.dash-hide-landing-chrome > .chmaba-site-chrome { display: none !important; 
 .dark .dash-tabs { background: #202127; border-color: #2a2b30; }
 .dark .dash-tab { color: #9a9aa4; }
 .dark .dash-tab-active { background: #2a2b32; color: #e4e4e8; }
+
+/* Insights row: volume chart + status mix + top stores (Chmaba POS layout). */
+.dash-insights { display: grid; grid-template-columns: 1.4fr 0.8fr 0.8fr; gap: 20px; }
+@media (max-width: 1024px) { .dash-insights { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 720px) { .dash-insights { grid-template-columns: 1fr; } }
