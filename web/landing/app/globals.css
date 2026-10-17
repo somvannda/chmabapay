@@ -6144,3 +6144,11 @@ body.dash-path-dashboard > .landing-footer {
 .dark .landing-mobile-toggle-bar { background: #202127; }
 .dark .cp-user-avatar,
 .dark .cp-menu-avatar { background: #2a2b32; }
+
+/* ------------------------------------------------------------------
+   Chmaba master chrome (header/footer) is hidden on dashboard routes.
+   This must live OUTSIDE the generated dark sheet — the generator
+   replaces that block, which is what removed it once.
+   ------------------------------------------------------------------ */
+body.dash-hide-landing-chrome > .chmaba-site-chrome { display: none !important; }
+.landing-body:not(.dash-hide-landing-chrome) > .chmaba-site-chrome { flex: 0 0 auto; }
