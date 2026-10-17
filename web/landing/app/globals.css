@@ -6152,3 +6152,32 @@ body.dash-path-dashboard > .landing-footer {
    ------------------------------------------------------------------ */
 body.dash-hide-landing-chrome > .chmaba-site-chrome { display: none !important; }
 .landing-body:not(.dash-hide-landing-chrome) > .chmaba-site-chrome { flex: 0 0 auto; }
+
+/* ------------------------------------------------------------------
+   Featured / "Most popular" plan card. A later `.landing-plan-card`
+   rule overrides the lime background with a transparent one, which
+   left the card dark while its text stayed dark — so the Starter
+   features were invisible and the lime badge had no lime card. Raise
+   specificity so the featured card is lime, like Chmaba.
+   ------------------------------------------------------------------ */
+.landing-plan-card.landing-plan-card-featured {
+  background: var(--lime);
+  border-color: transparent;
+  color: #111217;
+}
+.landing-plan-card.landing-plan-card-featured .landing-plan-caption {
+  color: rgba(17, 18, 23, 0.68);
+}
+.landing-plan-card.landing-plan-card-featured .landing-plan-divider {
+  background: rgba(17, 18, 23, 0.08);
+}
+.landing-plan-card.landing-plan-card-featured .landing-plan-item-dark {
+  color: #20222b;
+}
+.landing-plan-card.landing-plan-card-featured .landing-plan-check-dark {
+  color: #111217;
+}
+.landing-plan-card.landing-plan-card-featured .landing-plan-badge {
+  background: #111217;
+  color: var(--lime);
+}
