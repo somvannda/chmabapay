@@ -6296,3 +6296,13 @@ body.dash-hide-landing-chrome > .chmaba-site-chrome { display: none !important; 
 .dash-insights { display: grid; grid-template-columns: 1.4fr 0.8fr 0.8fr; gap: 20px; }
 @media (max-width: 1024px) { .dash-insights { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 720px) { .dash-insights { grid-template-columns: 1fr; } }
+
+/* Secondary hero/CTA button: a translucent white background with
+   `color: var(--ink)`. Under .dark `--ink` becomes light, so the label
+   vanished on the still-white button. Pin both to tokens. */
+.dark .landing-button-secondary {
+  background: rgb(var(--color-surface));
+  color: rgb(var(--color-ink));
+  border-color: rgb(var(--color-line-strong));
+}
+.dark .landing-button-secondary:hover { background: rgb(var(--color-surface-muted)); }
