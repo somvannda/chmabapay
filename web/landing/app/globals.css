@@ -6112,3 +6112,8 @@ body.dash-path-dashboard > .landing-footer {
 .dark .cp-notice-critical { color: #e6b0aa; }
 .dark .landing-metrics-card { border-color: #2a2b30; }
 .dark .landing-metrics-card { background-color: #1a1b1f; }
+
+/* Chmaba master chrome (header/footer). Hidden on dashboard routes exactly like
+   the previous landing chrome. */
+body.dash-hide-landing-chrome > .chmaba-site-chrome { display: none !important; }
+.landing-body:not(.dash-hide-landing-chrome) > .chmaba-site-chrome { flex: 0 0 auto; }

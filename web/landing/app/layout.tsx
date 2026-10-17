@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { brandColors } from "@shared/theme";
+import { ChmabaHeader, ChmabaFooter } from "@shared/chrome";
 import { HeaderAccount } from "@/components/HeaderAccount";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import "./globals.css";
@@ -108,85 +109,40 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               "(function(){try{if(window.location.pathname.indexOf('/dashboard')===0){document.body.classList.add('dash-hide-landing-chrome','dash-path-dashboard');}}catch(e){}})();",
           }}
         />
-        <header className="landing-header">
-          <nav className="landing-header-nav">
-            <a href="/" className="landing-brandmark landing-brandmark-link">
-              <span className="landing-brandmark-mark" aria-hidden="true">
-                <span className="landing-brandmark-ring landing-brandmark-ring-primary" />
-                <span className="landing-brandmark-ring landing-brandmark-ring-secondary" />
-              </span>
-              <span className="landing-brandmark-word">
-                <span className="landing-brandmark-name">chmaba</span>
-                <span className="landing-brandmark-pay">Pay</span>
-              </span>
-            </a>
-
-            <div className="landing-header-links">
-              <a className="landing-header-link" href="/#product">
-                Product
-              </a>
-              <a className="landing-header-link" href="/#how-it-works">
-                How it works
-              </a>
-              <a className="landing-header-link" href="/#plans">
-                Plans
-              </a>
-              <a className="landing-header-link" href="/api/docs">
-                API
-              </a>
-              <a className="landing-header-link" href="/#late-payments">
-                Late payments
-              </a>
-            </div>
-
-            {/* Right Nav. `HeaderAccount` is client-side because the session lives
-                in an httpOnly cookie and reading it here would make every marketing
-                route dynamic; it renders the signed-out buttons or the account menu. */}
-            <div className="landing-header-actions">
-              <ThemeToggle />
-              <HeaderAccount />
-            </div>
-          </nav>
-        </header>
+        {/* Chmaba's master chrome (packages/ui/chrome.jsx) — same header/footer
+            style as chmaba.com, carrying ChmabaPay's own links. Wrapped in
+            `.chmaba-site-chrome` so the dashboard can hide it. */}
+        <div className="chmaba-site-chrome">
+          <ChmabaHeader
+            nav={[
+              { label: "Product", href: "/#product" },
+              { label: "How it works", href: "/#how-it-works" },
+              { label: "Plans", href: "/#plans" },
+              { label: "API", href: "/api/docs" },
+              { label: "Late payments", href: "/#late-payments" },
+            ]}
+            actions={
+              <>
+                <ThemeToggle />
+                <HeaderAccount />
+              </>
+            }
+          />
+        </div>
 
         {children}
 
-        <footer className="landing-footer">
-          <div className="landing-shell">
-            <div className="landing-footer-row">
-              <div className="landing-footer-brand">
-                <a className="landing-brandmark landing-brandmark-link" href="/" aria-label="ChmabaPay home">
-                  <span className="landing-brandmark-mark" aria-hidden="true">
-                    <span className="landing-brandmark-ring landing-brandmark-ring-primary" />
-                    <span className="landing-brandmark-ring landing-brandmark-ring-secondary" />
-                  </span>
-                  <span className="landing-brandmark-word">
-                    <span className="landing-brandmark-name">chmaba</span>
-                    <span className="landing-brandmark-pay">Pay</span>
-                  </span>
-                </a>
-              </div>
-              <span className="landing-footer-copy">© 2026 Chmaba. Built with love for better days.</span>
-              <div className="landing-footer-links">
-                <a className="landing-footer-link" href="/#plans">
-                  Pricing
-                </a>
-                <a className="landing-footer-link" href="/api/docs">
-                  API Docs
-                </a>
-                <a className="landing-footer-link" href="/privacy">
-                  Privacy
-                </a>
-                <a className="landing-footer-link" href="/terms">
-                  Terms
-                </a>
-                <a className="landing-footer-link" href="/contact">
-                  Contact
-                </a>
-              </div>
-            </div>
-          </div>
-        </footer>
+        <div className="chmaba-site-chrome chmaba-site-foot">
+          <ChmabaFooter
+            links={[
+              { label: "Pricing", href: "/#plans" },
+              { label: "API Docs", href: "/api/docs" },
+              { label: "Privacy", href: "/privacy" },
+              { label: "Terms", href: "/terms" },
+              { label: "Contact", href: "/contact" },
+            ]}
+          />
+        </div>
       </body>
     </html>
   );
