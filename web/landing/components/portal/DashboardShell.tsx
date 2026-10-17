@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BillingNotice, type BillingNoticePayload } from "./BillingNotice";
 import { ToastProvider } from "./Toast";
 import { ThemeToggle } from "@shared/ui";
+import { ChmabaLogo } from "@shared/chrome";
 
 /* ------------------------------------------------------------------ *
  * Nav model
@@ -258,98 +259,106 @@ export function DashboardShell({
   const billingIsTheWayOut = pathname.startsWith("/dashboard/billing");
 
   return (
-    <div className="cp-app">
-      <aside className="cp-side">
-        <Link href="/dashboard" className="cp-brand" aria-label="ChmabaPay dashboard">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="cp-brand-mark" src="/logo.svg" alt="" width={30} height={30} />
-          <span className="cp-brand-word">
-            <span className="cp-brand-name">chmaba</span>
-            <span className="cp-brand-pay">Pay</span>
-          </span>
-        </Link>
+    <div className="min-h-screen">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-[252px] flex-col bg-[#17181c] px-3.5 py-5 text-white lg:flex">
+        <div className="px-3">
+          <Link href="/dashboard" aria-label="ChmabaPay dashboard">
+            <ChmabaLogo light />
+          </Link>
+        </div>
 
-        <nav className="cp-nav" aria-label="Workspace">
+        <div className="mt-8 flex-1 overflow-y-auto px-2">
           {NAV_GROUPS.map((group) => (
-            <div className="cp-nav-group" key={group.label}>
-              <div className="cp-nav-group-label">{group.label}</div>
-              {group.items.map((item) => {
-                const isActive = activeNav === item.key;
-                return (
-                  <Link
-                    key={item.key}
-                    href={item.href}
-                    className={`cp-nav-item${isActive ? " cp-nav-item-active" : ""}`}
-                    aria-current={isActive ? "page" : undefined}
-                    title={item.label}
-                  >
-                    <svg
-                      className="cp-nav-icon"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
+            <div key={group.label} className="mb-5">
+              <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-[.15em] text-[#686970]">
+                {group.label}
+              </p>
+              <nav className="space-y-1" aria-label={group.label}>
+                {group.items.map((item) => {
+                  const isActive = activeNav === item.key;
+                  return (
+                    <Link
+                      key={item.key}
+                      href={item.href}
+                      aria-current={isActive ? "page" : undefined}
+                      className={`flex h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-[12px] font-semibold transition ${
+                        isActive
+                          ? "bg-[#6957f5] text-white shadow-[0_7px_18px_rgba(105,87,245,.25)]"
+                          : "text-[#8b8c95] hover:bg-[#292a30] hover:text-white"
+                      }`}
                     >
-                      {item.icon}
-                    </svg>
-                    <span className="cp-nav-label">{item.label}</span>
-                  </Link>
-                );
-              })}
+                      <svg
+                        className="h-4 w-4 shrink-0"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        {item.icon}
+                      </svg>
+                      <span>{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
             </div>
           ))}
-        </nav>
+        </div>
 
-        <div className="cp-side-foot">
-          <div className="cp-plan">
+        <div className="mt-auto">
+          <div className="mb-3 rounded-xl border border-[#33343a] bg-[#202126] p-3">
             {planLoaded ? (
               <>
-                <div className="cp-plan-top">
-                  <span className="cp-plan-name">{planName}</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold">{planName}</span>
                   {showUpgrade && (
-                    <Link className="cp-plan-upgrade" href="/dashboard/billing">
+                    <Link className="text-[10px] font-bold text-[#c4f27c] hover:underline" href="/dashboard/billing">
                       Upgrade
                     </Link>
                   )}
                 </div>
                 {safeLimit > 0 && (
                   <>
-                    <div className="cp-plan-bar">
-                      <progress
-                        className={`cp-plan-fill${nearLimit ? " cp-plan-fill-warn" : ""}`}
-                        max={100}
-                        value={pct}
-                        aria-label="Monthly payment quota used"
-                      />
-                    </div>
-                    <div className="cp-plan-usage">
+                    <progress
+                      className="mt-2 h-1 w-full"
+                      max={100}
+                      value={pct}
+                      aria-label="Monthly payment quota used"
+                    />
+                    <div className="mt-1.5 text-[9px] text-[#85868e]">
                       {used} / {limit} payments
                       {resetsLabel ? ` · resets ${resetsLabel}` : ""}
                     </div>
                   </>
                 )}
-                <Link className="cp-plan-manage" href="/dashboard/billing">
+                <Link
+                  className="mt-2 inline-block text-[10px] font-bold text-[#9a9aa4] hover:text-white"
+                  href="/dashboard/billing"
+                >
                   Manage plan
                 </Link>
               </>
             ) : (
-              <div className="cp-plan-usage">Loading plan…</div>
+              <div className="text-[9px] text-[#85868e]">Loading plan…</div>
             )}
           </div>
 
-          <div className="cp-user">
-            <span className="cp-user-avatar" aria-hidden="true">
+          <div className="flex items-center gap-2 px-1">
+            <span
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#c4f27c] text-[10px] font-extrabold text-[#1d2817]"
+              aria-hidden="true"
+            >
               {initials}
             </span>
-            <span className="cp-user-meta">
-              <span className="cp-user-name" title={displayName}>
+            <span className="min-w-0">
+              <span className="block truncate text-[11px] font-bold" title={displayName}>
                 {displayName}
               </span>
               {email && displayName !== email && (
-                <span className="cp-user-email" title={email}>
+                <span className="block truncate text-[9px] text-[#85868e]" title={email}>
                   {email}
                 </span>
               )}
@@ -358,30 +367,16 @@ export function DashboardShell({
         </div>
       </aside>
 
-      <div className="cp-app-body">
-        <header className="cp-topbar">
-          <div className="cp-topbar-inner">
-            <nav className="cp-crumbs" aria-label="Breadcrumb">
-              <Link className="cp-crumb cp-crumb-root" href="/dashboard">
-                Workspace
-              </Link>
-              {crumbs.map((c, idx) => (
-                <span className="cp-crumb-wrap" key={`${c}-${idx}`}>
-                  <span className="cp-crumb-sep" aria-hidden="true">
-                    /
-                  </span>
-                  <span
-                    className={
-                      idx === crumbs.length - 1 ? "cp-crumb cp-crumb-current" : "cp-crumb"
-                    }
-                  >
-                    {c}
-                  </span>
-                </span>
-              ))}
-            </nav>
+      <div className="lg:pl-[252px]">
+        <header className="flex min-h-[74px] items-center justify-between gap-4 border-b border-[#e9e9ef] bg-[#fafafd]/90 px-5 backdrop-blur dark:border-[#2a2b30] dark:bg-[#1a1b1f]/90 lg:px-8">
+          <div className="min-w-0">
+            <h1 className="truncate text-[18px] font-extrabold tracking-[-.04em]">
+              {crumbs[crumbs.length - 1] || "Overview"}
+            </h1>
+            <p className="mt-0.5 truncate text-[11px] text-[#898a95]">ChmabaPay workspace</p>
+          </div>
 
-            <div className="cp-topbar-actions">
+          <div className="cp-topbar-actions">
               <ThemeToggle />
               <a className="cp-toplink" href="/api/docs">
                 API docs
@@ -449,7 +444,6 @@ export function DashboardShell({
                 )}
               </div>
             </div>
-          </div>
         </header>
 
         {/* Above `<main>`, and outside it, for two reasons: it must be on screen on every
@@ -459,7 +453,9 @@ export function DashboardShell({
 
         <main
           className={
-            readOnly && !billingIsTheWayOut ? "cp-main cp-main-readonly" : "cp-main"
+            readOnly && !billingIsTheWayOut
+              ? "cp-main cp-main-readonly mx-auto w-full max-w-[1200px] p-5 lg:p-8"
+              : "cp-main mx-auto w-full max-w-[1200px] p-5 lg:p-8"
           }
         >
           {/* The only *native* way to disable a whole subtree at once, and the reason it is worth
@@ -476,32 +472,6 @@ export function DashboardShell({
             <ToastProvider>{children}</ToastProvider>
           </fieldset>
         </main>
-
-        <footer className="cp-foot">
-          <div className="cp-foot-inner">
-            <div className="cp-foot-brand">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img className="cp-foot-mark" src="/logo.svg" alt="" width={20} height={20} />
-              <span className="cp-foot-copy">
-                © 2026 Chmaba
-              </span>
-            </div>
-            <nav className="cp-foot-links" aria-label="Footer">
-              <a className="cp-foot-link" href="/">
-                Website
-              </a>
-              <a className="cp-foot-link" href="/api/docs">
-                API docs
-              </a>
-              <Link className="cp-foot-link" href="/dashboard/help">
-                Help
-              </Link>
-              <Link className="cp-foot-link" href="/dashboard/billing">
-                Pricing
-              </Link>
-            </nav>
-          </div>
-        </footer>
       </div>
     </div>
   );
