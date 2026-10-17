@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { brandColors } from "@shared/theme";
 import { HeaderAccount } from "@/components/HeaderAccount";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import "./globals.css";
 
 // The latin subsets are vendored in `app/fonts/` instead of coming from
@@ -71,28 +72,36 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: brandColors.surfaceLight,
-  // Emits `<meta name="color-scheme" content="only light">`, paired with the same
-  // declaration in globals.css. `only light` is the opt-out from Chromium's automatic
-  // dark theme; plain `light` is not enough, and the repaint it permits inverts the
-  // violet brand colour to a green at paint time.
-  colorScheme: "only light",
+  // `light dark` (not `only light`): the site now ships the Chmaba `.dark` token
+  // set and a toggle. The old `only light` was an opt-out from Chromium's
+  // automatic dark mode; with an explicit theme we declare support instead, so the
+  // browser does not invert our palette at paint time.
+  colorScheme: "light dark",
   width: "device-width",
   initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
-      {/* The script below adds `dash-*` classes to this element during parse, so the
-          DOM React hydrates into already differs from the className rendered here.
-          `suppressHydrationWarning` is the documented opt-out for exactly that — the
-          difference is deliberate, and without it every dashboard route logs a
-          hydration mismatch. It suppresses the warning for this element only, one
-          level deep, so a real mismatch anywhere else still reports. */}
+    <html
+      lang="en"
+      className={`${inter.variable} ${jetbrains.variable}`}
+      suppressHydrationWarning
+    >
+      {/* The script below adds `dash-*` / `dark` classes to this element during
+          parse, so the DOM React hydrates into already differs from the className
+          rendered here. `suppressHydrationWarning` is the documented opt-out for
+          exactly that — the difference is deliberate. */}
       <body
         className="font-sans landing-english landing-body"
         suppressHydrationWarning
       >
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{var t=localStorage.getItem('chmaba-theme');var d=t?t==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;if(d){document.documentElement.classList.add('dark');}}catch(e){}})();",
+          }}
+        />
         <script
           dangerouslySetInnerHTML={{
             __html:
@@ -134,6 +143,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 in an httpOnly cookie and reading it here would make every marketing
                 route dynamic; it renders the signed-out buttons or the account menu. */}
             <div className="landing-header-actions">
+              <ThemeToggle />
               <HeaderAccount />
             </div>
           </nav>

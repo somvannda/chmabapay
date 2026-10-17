@@ -34,21 +34,28 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#f7f7fa",
-  // Paired with `color-scheme: only light` in globals.css. This emits the meta tag,
-  // which the browser sees before the stylesheet loads. `only light` is load-bearing:
-  // plain `light` merely declares a scheme and Chromium's auto-dark still ran, and it
-  // repaints at paint time — which is how the violet primary button and the account
-  // menu rendered olive green on Chrome while Firefox drew them correctly. The
-  // console has no dark theme by design.
-  colorScheme: "only light",
+  // `light dark`: the console now ships the Chmaba `.dark` token set and a toggle.
+  // The old `only light` was an opt-out from Chromium's automatic dark mode; with
+  // an explicit theme we declare support instead.
+  colorScheme: "light dark",
   width: "device-width",
   initialScale: 1,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
+    <html
+      lang="en"
+      className={`${inter.variable} ${jetbrains.variable}`}
+      suppressHydrationWarning
+    >
       <body>
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{var t=localStorage.getItem('chmaba-theme');var d=t?t==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;if(d){document.documentElement.classList.add('dark');}}catch(e){}})();",
+          }}
+        />
         <AdminShell>{children}</AdminShell>
       </body>
     </html>

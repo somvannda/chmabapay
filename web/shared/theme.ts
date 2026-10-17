@@ -2,17 +2,18 @@
 export type AccountType = "individual" | "business";
 
 export const brandColors = {
-  // — Core Chmaba shared (1:1 chmaba.com reverse-engineered) —
+  // — Core Chmaba shared (1:1 with Chmaba packages/ui/tokens.css) —
   brandViolet: "#6957F5",        // Primary CTAs, h1 accent flow, primary progress
+  brandHover:  "#887BF3",        // Chmaba's brand-hover (lighter, not the old #5A47E0)
   brandLime:   "#BFFA6A",        // Most-popular plan cards, approved badges
   brandInk:    "#17181C",        // Headings, logo wordmark, status PAID display
-  textBody:    "#747580",        // Paragraphs, placeholder
-  subtleText:  "#60616C",        // Light mode nav links, timestamps
+  textBody:    "#34353D",        // Chmaba ink-soft — paragraph body
+  subtleText:  "#92939D",        // Chmaba muted — secondary text/timestamps
   subtleTextDark: "#9A9AA4",     // Dark mode nav links
   white:       "#FFFFFF",
-  surfaceLight: "#FAFBFC",      // Body bg light
+  surfaceLight: "#F7F7FA",      // Chmaba page background
   surfaceCard:  "#FFFFFF",      // Card surface light
-  borderLight:  "#DEDEE7",      // Navbar/card borders (reverse-engineered chmaba.com divider)
+  borderLight:  "#DFDFE8",      // Chmaba line-strong (form fields)
   borderMuted:  "#CACAD6",      // Hovered secondary button border
   borderSoft:   "#F0F0F4",      // Inner QR card padding border
 
@@ -41,10 +42,10 @@ export const brandColors = {
   goldVerified:    "#C9A227",   // Enterprise tier accent
 
   // — Status colors (payment gateway industry standard) —
-  statusPaid:     "#10B981",
+  statusPaid:     "#4F9B3A",   // Chmaba success
   statusPending:  "#F59E0B",
   statusScanned:  "#3B82F6",
-  statusFailed:   "#EF4444",
+  statusFailed:   "#C2564B",   // Chmaba danger
   statusExpired:  "#6B7280",
 
   // — Bank brand swatches (destination chips L5 UX law)
@@ -60,17 +61,17 @@ export const brandColors = {
     BAKONG: "#00A3A1",
   },
 
-  // — Dark mode palette (reverse-engineered from chmaba.com dark)
+  // — Dark mode palette (Chmaba packages/ui/tokens.css `.dark`) —
   dark: {
-    bodyBg:       "#0B0B0E",
-    surfaceCard:  "#1E1E24",
-    headerBg:     "#09090B",
+    bodyBg:       "#15161A",
+    surfaceCard:  "#1A1B1F",
+    headerBg:     "#111114",
     textPrimary:  "#E4E4E8",
-    textSecondary:"#B2B2BA",
+    textSecondary:"#C4C5CD",
     navLink:      "#9A9AA4",
-    border:       "#2A2A33",
-    terminalBg:   "#05060A",    // Techy code blocks in dark mode
-    accentNeon:   "#22D3EE",    // Secondary outline glow (techy only)
+    border:       "#2A2B30",
+    terminalBg:   "#111114",
+    accentNeon:   "#22D3EE",
   },
 };
 
@@ -93,7 +94,7 @@ export const shadows = {
 };
 
 export const fonts = {
-  sans: `'Inter', 'Noto Sans Khmer', ui-sans-serif, system-ui, -apple-system, sans-serif`,
+  sans: `'Inter', 'Niradei', 'Noto Sans Khmer', ui-sans-serif, system-ui, -apple-system, sans-serif`,
   mono: `'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`,
 };
 

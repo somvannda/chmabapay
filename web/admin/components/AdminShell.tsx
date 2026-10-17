@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ToastProvider } from "./Toast";
+import { ThemeToggle } from "./ThemeToggle";
 import { apiFetch } from "@/lib/apiFetch";
 
 /* ------------------------------------------------------------------ *
@@ -352,6 +353,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
             </nav>
 
             <div className="cp-topbar-actions">
+              <ThemeToggle />
               <div className="cp-menu" ref={menuRef}>
                 <button
                   type="button"
