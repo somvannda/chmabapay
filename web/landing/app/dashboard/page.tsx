@@ -165,6 +165,42 @@ function planName(profile: Profile | null, subscription: Subscription | null): s
   return "Free";
 }
 
+function MetricCard({
+  label,
+  value,
+  caption,
+  tone = "violet",
+  icon,
+}: {
+  label: string;
+  value: React.ReactNode;
+  caption: React.ReactNode;
+  tone?: "violet" | "green" | "amber" | "blue";
+  icon: React.ReactNode;
+}) {
+  const tones: Record<string, string> = {
+    violet: "bg-[#f0efff] text-[#6957f5] dark:bg-[#2b2850]",
+    green: "bg-[#ecfdf5] text-[#4f9b3a] dark:bg-[#1f2f1c]",
+    amber: "bg-[#fffbeb] text-[#d97706] dark:bg-[#362c17]",
+    blue: "bg-[#eff6ff] text-[#1e40af] dark:bg-[#1d2a38]",
+  };
+  return (
+    <div className="dash-stat-card">
+      <div className="flex items-start justify-between gap-3">
+        <div className="dash-stat-label">{label}</div>
+        <span
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tones[tone]}`}
+          aria-hidden="true"
+        >
+          {icon}
+        </span>
+      </div>
+      <div className="dash-stat-value">{value}</div>
+      <div className="dash-stat-trend">{caption}</div>
+    </div>
+  );
+}
+
 export default function DashboardOverviewPage() {
   const { profile, loading } = useSession();
 
@@ -419,49 +455,69 @@ export default function DashboardOverviewPage() {
       )}
 
       <section aria-label="Metrics" className="dash-metrics">
-        <div className="dash-stat-card dash-stat-accent">
-          <div className="dash-stat-label">Paid today</div>
-          <div className="dash-stat-value">
-            {figuresReady ? formatSummaryMoney(summaryToday, todayCents) : "—"}
-          </div>
-          <div className="dash-stat-trend">
-            {todayCount} payment{todayCount === 1 ? "" : "s"} today
-          </div>
-        </div>
-        <div className="dash-stat-card">
-          <div className="dash-stat-label">Settled</div>
-          <div className="dash-stat-value">
-            {figuresReady ? formatSummaryMoney(summaryAll, allTimeCents) : "—"}
-          </div>
-          <div className="dash-stat-trend">
-            {refundedCount > 0
+        <MetricCard
+          label="Paid today"
+          tone="green"
+          icon={
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v10M9.5 9.5c0-1 1.1-1.8 2.5-1.8s2.5.8 2.5 1.8-1.1 1.6-2.5 1.9-2.5.9-2.5 1.9 1.1 1.8 2.5 1.8 2.5-.8 2.5-1.8" />
+            </svg>
+          }
+          value={figuresReady ? formatSummaryMoney(summaryToday, todayCents) : "—"}
+          caption={<>{todayCount} payment{todayCount === 1 ? "" : "s"} today</>}
+        />
+        <MetricCard
+          label="Settled"
+          tone="violet"
+          icon={
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          }
+          value={figuresReady ? formatSummaryMoney(summaryAll, allTimeCents) : "—"}
+          caption={
+            refundedCount > 0
               ? `all time · ${refundedCount} refunded (${formatByCurrency(summaryAll?.total_matching_reversed_by_currency, refundedCents)})`
-              : "all time · no refunds"}
-          </div>
-        </div>
-        <div className="dash-stat-card">
-          <div className="dash-stat-label">Avg. payment</div>
-          <div className="dash-stat-value">
-            {figuresReady ? formatDollars(avgCents) : "—"}
-          </div>
-          <div className="dash-stat-trend">{allTimeCount} total paid</div>
-        </div>
-        <div className="dash-stat-card">
-          <div className="dash-stat-label">Active stores</div>
-          <div className="dash-stat-value">
-            {dataReady && storesError === null ? String(activeStores) : "—"}
-          </div>
-          <div className="dash-stat-trend">
+              : "all time · no refunds"
+          }
+        />
+        <MetricCard
+          label="Avg. payment"
+          tone="amber"
+          icon={
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 19V5M4 19h16M8 15l3-4 3 2 4-5" />
+            </svg>
+          }
+          value={figuresReady ? formatDollars(avgCents) : "—"}
+          caption={`${allTimeCount} total paid`}
+        />
+        <MetricCard
+          label="Active stores"
+          tone="blue"
+          icon={
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 9h16l-1-4H5L4 9Z" />
+              <path d="M5 9v10h14V9" />
+              <path d="M9 19v-5h6v5" />
+            </svg>
+          }
+          value={dataReady && storesError === null ? String(activeStores) : "—"}
+          caption={
             <Link className="dash-link-btn" href="/dashboard/stores">
               Manage stores
             </Link>
-          </div>
-        </div>
+          }
+        />
       </section>
 
       <section aria-label="Stores and activity" className="dash-panels">
         <div className="dash-panel">
-          <div className="dash-panel-title">Stores</div>
+          <div>
+            <div className="dash-panel-title">Stores</div>
+            <div className="dash-page-subtitle">Each store has its own payment link.</div>
+          </div>
           {storesLoading ? (
             <div className="dash-empty">Loading stores…</div>
           ) : storesError ? (
@@ -525,7 +581,10 @@ export default function DashboardOverviewPage() {
         </div>
 
         <div className="dash-panel">
-          <div className="dash-panel-title">Recent activity</div>
+          <div>
+            <div className="dash-panel-title">Recent activity</div>
+            <div className="dash-page-subtitle">Latest payments across your stores.</div>
+          </div>
           {paymentsLoading ? (
             <div className="dash-empty">Loading activity…</div>
           ) : paymentsError ? (
