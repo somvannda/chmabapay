@@ -8,5 +8,8 @@ export { ModalProvider, useModal } from "./components/ModalSystem";
 export { KHQR } from "./components/KHQR";
 export type { KHQRData } from "./components/KHQR";
 
+export { ChmabaLogo, ChmabaHeader, ChmabaFooter } from "./chrome";
+export type { NavItem, CategoryItem } from "./chrome";
+
 export * from "./theme";
 export * from "./ux-laws";
