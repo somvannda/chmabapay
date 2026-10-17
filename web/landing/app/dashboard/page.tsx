@@ -757,29 +757,36 @@ export default function DashboardOverviewPage() {
               </div>
             </div>
           ) : (
-            <div className="dash-store-grid">
+            <div className="flex flex-col">
               {storesList.map((store) => (
                 <Link
                   key={String(store.id)}
                   href={`/dashboard/${store.id}`}
-                  className="dash-panel dash-store-card"
+                  className="group flex items-center justify-between gap-3 border-b border-[#f0f0f4] py-3 last:border-0 dark:border-[#2a2b30]"
                 >
-                  <div className="dash-store-card-head">
-                    <div className="dash-panel-title">
-                      {store.name || `Store #${String(store.id).slice(0, 8)}`}
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#f0efff] text-[11px] font-extrabold text-[#6957f5] dark:bg-[#2b2850] dark:text-[#b3a7ff]">
+                      {(store.name || "S").slice(0, 2).toUpperCase()}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-bold text-[#202128] dark:text-[#e4e4e8]">
+                        {store.name || `Store #${String(store.id).slice(0, 8)}`}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-[#92939d]">
+                        Created {formatDate(store.created_at)}
+                      </p>
                     </div>
-                    <span
-                      className={storePillClassForStatus(store.status || "unknown")}
-                    >
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <span className={storePillClassForStatus(store.status || "unknown")}>
                       {(store.status || "unknown").toLowerCase()}
                     </span>
-                  </div>
-                  <div className="dash-store-card-meta">
-                    <div>
-                      <span className="dash-store-card-meta-label">Created:</span>{" "}
-                      {formatDate(store.created_at)}
-                    </div>
-                    <div className="dash-store-card-cta">View store →</div>
+                    <span
+                      className="text-[#c2c2c9] transition group-hover:translate-x-0.5 group-hover:text-[#6957f5]"
+                      aria-hidden="true"
+                    >
+                      ›
+                    </span>
                   </div>
                 </Link>
               ))}
@@ -816,29 +823,32 @@ export default function DashboardOverviewPage() {
               </div>
             </div>
           ) : (
-            <div className="dash-activity-list">
+            <div>
+              <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-[#f0f0f3] pb-2 text-[10px] font-bold uppercase tracking-wide text-[#a1a2ab] dark:border-[#2a2b30]">
+                <span>Status</span>
+                <span>Reference</span>
+                <span className="text-right">Amount</span>
+              </div>
               {recentPayments.map((p) => (
                 <Link
                   key={String(p.id)}
                   href={`/dashboard/payments/${p.id}`}
-                  className="dash-activity-row"
+                  className="grid grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-[#f2f2f5] py-3 last:border-0 hover:bg-[#faf9ff] dark:border-[#2a2b30] dark:hover:bg-[#202127]"
                 >
-                  <div className="dash-activity-left">
-                    <span className={pillClassForStatus(p.status || "pending")}>
-                      {(p.status || "pending").toLowerCase()}
+                  <span className={pillClassForStatus(p.status || "pending")}>
+                    {(p.status || "pending").toLowerCase()}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] font-semibold text-[#202128] dark:text-[#e4e4e8]">
+                      {p.reference_id || `#${String(p.id).slice(0, 8)}`}
                     </span>
-                    <div className="dash-activity-meta">
-                      <div className="dash-activity-ref">
-                        {p.reference_id || `#${String(p.id).slice(0, 8)}`}
-                      </div>
-                      <div className="dash-activity-time">{timeAgo(p.created_at)}</div>
-                    </div>
-                  </div>
-                  <div className="dash-activity-right">
-                    <div className="dash-activity-amount">
-                      {formatDollars(amountCents(p))}
-                    </div>
-                  </div>
+                    <span className="mt-0.5 block text-[11px] text-[#92939d]">
+                      {timeAgo(p.created_at)}
+                    </span>
+                  </span>
+                  <span className="text-right text-[13px] font-bold tabular-nums text-[#202128] dark:text-[#e4e4e8]">
+                    {formatDollars(amountCents(p))}
+                  </span>
                 </Link>
               ))}
             </div>
