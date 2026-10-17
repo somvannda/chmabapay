@@ -15,7 +15,13 @@ import { useEffect, useRef, useState } from "react";
 const NAV_LINK =
   "transition hover:text-[#17181c] dark:text-[#9a9aa4] dark:hover:text-[#e4e4e8]";
 
-export function ChmabaLogo({ light = false }: { light?: boolean }) {
+export function ChmabaLogo({
+  light = false,
+  suffix,
+}: {
+  light?: boolean;
+  suffix?: string;
+}) {
   const chip = light ? "bg-[#c4f27c]" : "bg-[#17181c] dark:bg-[#c4f27c]";
   const ring = light ? "border-[#17181c]" : "border-white dark:border-[#17181c]";
   const word = light ? "text-white" : "text-[#17181c] dark:text-white";
@@ -27,7 +33,12 @@ export function ChmabaLogo({ light = false }: { light?: boolean }) {
         <span className={`absolute h-3 w-3 rounded-full border-[2.5px] ${ring}`} />
         <span className={`absolute -right-0.5 top-1.5 h-3 w-3 rounded-full border-[2.5px] ${ring}`} />
       </div>
-      <span className={`text-[19px] font-extrabold tracking-[-.04em] ${word}`}>chmaba</span>
+      <span className={`text-[19px] font-extrabold tracking-[-.04em] ${word}`}>
+        chmaba
+        {suffix ? (
+          <span className="text-[#6957f5] dark:text-[#b3a7ff]">{suffix}</span>
+        ) : null}
+      </span>
     </div>
   );
 }
@@ -146,6 +157,7 @@ export function ChmabaHeader({
   actions = null,
   signIn,
   cta,
+  logoSuffix,
 }: {
   homeHref?: string;
   onHomeClick?: () => void;
@@ -155,6 +167,7 @@ export function ChmabaHeader({
   actions?: React.ReactNode;
   signIn?: { label: string; href?: string; onClick?: () => void } | null;
   cta?: { label: string; href?: string; onClick?: () => void } | null;
+  logoSuffix?: string;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const box = useRef<HTMLElement | null>(null);
@@ -180,7 +193,7 @@ export function ChmabaHeader({
     >
       <div className="mx-auto flex h-[76px] max-w-[1240px] items-center justify-between gap-4 px-5 lg:px-8">
         <a href={homeHref} aria-label="Chmaba home" className="transition hover:opacity-80" onClick={onHomeClick}>
-          <ChmabaLogo />
+          <ChmabaLogo suffix={logoSuffix} />
         </a>
         <nav className="hidden items-center gap-8 text-sm font-medium text-[#6f707a] md:flex">
           {nav.map((item) =>
@@ -333,17 +346,19 @@ export function ChmabaFooter({
   onHomeClick,
   links = [],
   note,
+  logoSuffix,
 }: {
   homeHref?: string;
   onHomeClick?: () => void;
   links?: { label: string; href: string; onClick?: () => void; external?: boolean; strong?: boolean }[];
   note?: React.ReactNode;
+  logoSuffix?: string;
 }) {
   return (
     <footer className="border-t border-[#eaeaef] px-5 py-7 lg:px-8 dark:border-[#2a2b30]">
       <div className="mx-auto flex max-w-[1240px] flex-col gap-4 text-xs text-[#92939d] sm:flex-row sm:items-center sm:justify-between">
         <a href={homeHref} aria-label="Chmaba home" className="transition hover:opacity-80" onClick={onHomeClick}>
-          <ChmabaLogo />
+          <ChmabaLogo suffix={logoSuffix} />
         </a>
         <span>{note || `© ${new Date().getFullYear()} Chmaba Technologies. Built with love for better days.`}</span>
         <div className="flex gap-5">

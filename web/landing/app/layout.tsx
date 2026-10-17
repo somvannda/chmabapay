@@ -114,6 +114,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             `.chmaba-site-chrome` so the dashboard can hide it. */}
         <div className="chmaba-site-chrome">
           <ChmabaHeader
+            logoSuffix="Pay"
             nav={[
               { label: "Product", href: "/#product" },
               { label: "How it works", href: "/#how-it-works" },
@@ -134,6 +135,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         <div className="chmaba-site-chrome chmaba-site-foot">
           <ChmabaFooter
+            logoSuffix="Pay"
             links={[
               { label: "Pricing", href: "/#plans" },
               { label: "API Docs", href: "/api/docs" },
