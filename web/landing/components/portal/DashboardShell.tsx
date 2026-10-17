@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { BillingNotice, type BillingNoticePayload } from "./BillingNotice";
 import { ToastProvider } from "./Toast";
+import { ThemeToggle } from "@shared/ui";
 
 /* ------------------------------------------------------------------ *
  * Nav model
@@ -381,6 +382,7 @@ export function DashboardShell({
             </nav>
 
             <div className="cp-topbar-actions">
+              <ThemeToggle />
               <a className="cp-toplink" href="/api/docs">
                 API docs
               </a>
