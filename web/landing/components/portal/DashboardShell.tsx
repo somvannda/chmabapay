@@ -263,7 +263,7 @@ export function DashboardShell({
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-[252px] flex-col bg-[#17181c] px-3.5 py-5 text-white lg:flex">
         <div className="px-3">
           <Link href="/dashboard" aria-label="ChmabaPay dashboard">
-            <ChmabaLogo light />
+            <ChmabaLogo light suffix="Pay" />
           </Link>
         </div>
 
