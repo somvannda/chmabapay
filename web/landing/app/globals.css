@@ -6181,3 +6181,113 @@ body.dash-hide-landing-chrome > .chmaba-site-chrome { display: none !important; 
   background: #111217;
   color: var(--lime);
 }
+
+/* ==================================================================
+   Chmaba control alignment — forms, buttons, badges, tables, tabs.
+   Values copied from Chmaba/apps/web/src/components/ui.jsx and the
+   POS screens so every portal control matches the Chmaba design.
+   ================================================================== */
+
+/* Inputs / selects / textareas */
+.dash-input,
+.dash-select,
+.dash-textarea {
+  height: 44px;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #dfdfe8;
+  background: #ffffff;
+  padding: 0 14px;
+  font-size: 14px;
+  color: #22232a;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.dash-textarea { height: auto; min-height: 88px; padding: 10px 14px; line-height: 1.5; }
+.dash-input::placeholder,
+.dash-textarea::placeholder { color: #aaabb4; }
+.dash-input:focus,
+.dash-select:focus,
+.dash-textarea:focus {
+  border-color: #887bf3;
+  box-shadow: 0 0 0 4px rgba(105, 87, 245, 0.1);
+}
+.dark .dash-input,
+.dark .dash-select,
+.dark .dash-textarea { background: #1f2025; border-color: #363740; color: #e4e4e8; }
+
+/* Buttons */
+.dash-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+}
+.dash-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+.dash-btn-sm { height: 36px; padding: 0 12px; border-radius: 10px; font-size: 12px; }
+.dash-btn-primary { background: #6957f5; color: #ffffff; box-shadow: 0 7px 16px rgba(105, 87, 245, 0.2); }
+.dash-btn-primary:hover { background: #5845e7; }
+.dash-btn-secondary { background: #ffffff; color: #282930; border-color: #dedee7; }
+.dash-btn-secondary:hover { border-color: #bdbbc9; background: #fafafd; }
+.dash-btn-danger { background: #fff0ee; color: #d0574b; }
+.dash-btn-danger:hover { background: #ffe5e2; }
+.dark .dash-btn-secondary { background: #1f2025; color: #e4e4e8; border-color: #363740; }
+.dark .dash-btn-secondary:hover { background: #26272e; border-color: #3f4047; }
+.dark .dash-btn-danger { background: #39211f; color: #e6b0aa; }
+
+/* Badges */
+.dash-badge { border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; }
+.dash-badge-muted { background: #f1f1f5; color: #686974; }
+.dash-badge-violet { background: #f0efff; color: #6555df; }
+.dark .dash-badge-muted { background: #2a2b30; color: #9a9aa4; }
+.dark .dash-badge-violet { background: #2b2850; color: #b3a7ff; }
+
+/* Tables */
+.dash-table thead th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #92939d;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e9e9ef;
+  text-align: left;
+}
+.dash-table tbody td { padding: 14px 16px; font-size: 13px; border-bottom: 1px solid #f0f0f4; }
+.dark .dash-table thead th { color: #9a9aa4; border-color: #2a2b30; }
+.dark .dash-table tbody td { border-color: #2a2b30; }
+.dark .dash-table tbody tr:hover { background: #202127; }
+
+/* Tabs / segmented control */
+.dash-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: #f1f1f5;
+  border: 1px solid #e9e9ef;
+}
+.dash-tab {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #696a74;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.dash-tab-active { background: #ffffff; color: #17181c; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06); }
+.dark .dash-tabs { background: #202127; border-color: #2a2b30; }
+.dark .dash-tab { color: #9a9aa4; }
+.dark .dash-tab-active { background: #2a2b32; color: #e4e4e8; }
