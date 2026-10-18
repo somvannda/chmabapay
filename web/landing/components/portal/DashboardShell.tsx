@@ -212,6 +212,8 @@ export type DashboardShellProps = {
   children: React.ReactNode;
 };
 
+const nf = new Intl.NumberFormat("en-US");
+
 export function DashboardShell({
   profile,
   planName,
@@ -325,14 +327,21 @@ export function DashboardShell({
                 </div>
                 {safeLimit > 0 && (
                   <>
-                    <progress
-                      className="mt-2 h-1 w-full"
-                      max={100}
-                      value={pct}
+                    <div
+                      className="mt-2 h-1 w-full overflow-hidden rounded-full bg-[#2a2b32]"
+                      role="progressbar"
+                      aria-valuenow={pct}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
                       aria-label="Monthly payment quota used"
-                    />
+                    >
+                      <div
+                        className={`h-full rounded-full ${nearLimit ? "bg-[#e0a23c]" : "bg-[#c4f27c]"}`}
+                        style={{ width: pct > 0 ? `${Math.max(pct, 3)}%` : "0%" }}
+                      />
+                    </div>
                     <div className="mt-1.5 text-[9px] text-[#85868e]">
-                      {used} / {limit} payments
+                      {nf.format(used)} / {nf.format(limit)} payments
                       {resetsLabel ? ` · resets ${resetsLabel}` : ""}
                     </div>
                   </>
