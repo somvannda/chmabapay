@@ -58,10 +58,24 @@ async def _store_with(account, currency: str, *, owner: str = "Sokha") -> models
 
 def test_money_to_str_drops_decimals_for_khr():
     # 5,000 riel is stored as 500000 minor units, the same ×100 scale as USD.
-    assert money_to_str(500000, "KHR") == "5000"
-    assert money_to_str(500000, "USD") == "5000.00"
+    assert money_to_str(500000, "KHR") == "5,000"
+    assert money_to_str(500000, "USD") == "5,000.00"
     # The default stays USD so every existing caller is unchanged.
-    assert money_to_str(500000) == "5000.00"
+    assert money_to_str(500000) == "5,000.00"
+
+
+def test_money_to_str_groups_thousands_unless_asked_not_to():
+    # Below a thousand nothing changes, which is what makes the separator safe
+    # to add at all.
+    assert money_to_str(1) == "0.01"
+    assert money_to_str(99999) == "999.99"
+    # Grouped is the human form: the portal cards, the invoice totals and the
+    # hosted checkout page all render this.
+    assert money_to_str(472829) == "4,728.29"
+    # Ungrouped is the machine form the CSV export writes, so a spreadsheet
+    # still reads the cell as a number rather than as text.
+    assert money_to_str(472829, grouping=False) == "4728.29"
+    assert money_to_str(500000, "KHR", grouping=False) == "5000"
 
 
 async def test_store_created_in_khr_keeps_and_reports_khr():
@@ -177,8 +191,9 @@ async def test_reports_summary_is_per_currency(client):
     assert by_currency["USD"]["cents"] == 1000
     assert by_currency["USD"]["formatted"] == "10.00"
     assert by_currency["KHR"]["cents"] == 500000
-    # KHR carries no fractional unit.
-    assert by_currency["KHR"]["formatted"] == "5000"
+    # KHR carries no fractional unit, and the summary is a display field, so it
+    # carries the thousands separator the portal renders.
+    assert by_currency["KHR"]["formatted"] == "5,000"
 
 
 async def _make_admin(email: str = "admin-dc@chmaba.test") -> models.Account:

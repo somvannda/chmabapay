@@ -87,7 +87,9 @@ def payment_out(
     return schemas.PaymentOut(
         id=payment.public_id,
         status=payment.status,
-        amount=money_to_str(payment.amount_cents, payment.currency),
+        # Ungrouped: a client parses this (`parseFloat`, `float`), and "5,000" stops
+        # at the comma. Grouped is for the `*_formatted` fields a person reads.
+        amount=money_to_str(payment.amount_cents, payment.currency, grouping=False),
         currency=payment.currency,
         reference_id=payment.reference_id,
         metadata=payment.metadata_,
@@ -386,7 +388,7 @@ async def reverse_payment(
         target_id=payment.id,
         details={
             "store": store.public_id,
-            "amount": money_to_str(payment.amount_cents, payment.currency),
+            "amount": money_to_str(payment.amount_cents, payment.currency, grouping=False),
             "reason": (body.reason or "").strip() or None,
         },
     )
@@ -438,7 +440,7 @@ async def list_payments(
         schemas.PaymentListed(
             id=payment.public_id,
             status=payment.status,
-            amount=money_to_str(payment.amount_cents, payment.currency),
+            amount=money_to_str(payment.amount_cents, payment.currency, grouping=False),
             currency=payment.currency,
             reference_id=payment.reference_id,
             store=target_store.public_id,

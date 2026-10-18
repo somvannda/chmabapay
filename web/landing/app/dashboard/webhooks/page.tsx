@@ -863,15 +863,10 @@ export default function DashboardWebhooksPage() {
               Listen for payment events in real time
             </div>
           </div>
-        </div>
-
-        {actionError && (
-          <div className="dash-form-alert dash-form-alert-error">{actionError}</div>
-        )}
-
-        {!loading && sortedEndpoints.length > 0 && (
-          <div className="dash-toolbar">
-            <div />
+          {/* Offered from the header, so it is reachable before the first
+              endpoint exists and after — not only in the empty state, and not
+              on a separate toolbar row that spent a whole line on one button. */}
+          <div className="dash-toolbar-filters">
             <button
               type="button"
               className="dash-btn dash-btn-primary"
@@ -880,6 +875,10 @@ export default function DashboardWebhooksPage() {
               + Add endpoint
             </button>
           </div>
+        </div>
+
+        {actionError && (
+          <div className="dash-form-alert dash-form-alert-error">{actionError}</div>
         )}
 
         {loading ? (
@@ -916,95 +915,101 @@ export default function DashboardWebhooksPage() {
             </div>
           </div>
         ) : (
-          <table className="dash-table">
-            <thead>
-              <tr>
-                <th>URL</th>
-                <th>Events</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedEndpoints.map((ep) => {
-                const isActive = ep.status === "active";
-                const rowBusy = busyId === String(ep.id);
-                return (
-                  <tr key={String(ep.id)}>
-                    <td>
-                      <code>{ep.url}</code>
-                    </td>
-                    <td>
-                      <span className="dash-badge dash-badge-muted">
-                        {eventsDisplay(ep.events)}
-                      </span>
-                    </td>
-                    <td>
-                      <span
-                        className={
-                          isActive
-                            ? "dash-pill dash-pill-paid"
-                            : "dash-pill dash-pill-pending"
-                        }
-                      >
-                        {isActive ? "active" : "disabled"}
-                      </span>
-                    </td>
-                    <td>{formatDate(ep.created_at)}</td>
-                    <td>
-                      <div className="dash-toolbar-filters">
-                        <button
-                          type="button"
-                          className="dash-btn dash-btn-secondary dash-btn-sm"
-                          onClick={() => setEditing(ep)}
+          <div className="dash-table-wrap">
+            <table className="dash-table dash-table-wide">
+              <thead>
+                <tr>
+                  <th>URL</th>
+                  <th>Events</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedEndpoints.map((ep) => {
+                  const isActive = ep.status === "active";
+                  const rowBusy = busyId === String(ep.id);
+                  return (
+                    <tr key={String(ep.id)}>
+                      <td>
+                        <code>{ep.url}</code>
+                      </td>
+                      <td>
+                        <span className="dash-badge dash-badge-muted">
+                          {eventsDisplay(ep.events)}
+                        </span>
+                      </td>
+                      <td>
+                        <span
+                          className={
+                            isActive
+                              ? "dash-pill dash-pill-paid"
+                              : "dash-pill dash-pill-pending"
+                          }
                         >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="dash-btn dash-btn-secondary dash-btn-sm"
-                          onClick={() => setTesting(ep)}
-                        >
-                          Send test
-                        </button>
-                        <button
-                          type="button"
-                          className="dash-btn dash-btn-secondary dash-btn-sm"
-                          onClick={() => setViewingDeliveries(ep)}
-                        >
-                          Deliveries
-                        </button>
-                        <button
-                          type="button"
-                          className="dash-btn dash-btn-secondary dash-btn-sm"
-                          onClick={() => setPendingAction({ kind: "rotate", endpoint: ep })}
-                          disabled={rowBusy}
-                        >
-                          {rowBusy ? "…" : "Rotate secret"}
-                        </button>
-                        <button
-                          type="button"
-                          className="dash-btn dash-btn-secondary dash-btn-sm"
-                          onClick={() => handleToggleEnabled(ep)}
-                        >
-                          {isActive ? "Disable" : "Enable"}
-                        </button>
-                        <button
-                          type="button"
-                          className="dash-btn dash-btn-danger dash-btn-sm"
-                          onClick={() => setPendingAction({ kind: "delete", endpoint: ep })}
-                          disabled={rowBusy}
-                        >
-                          {rowBusy ? "…" : "Delete"}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                          {isActive ? "active" : "disabled"}
+                        </span>
+                      </td>
+                      <td>{formatDate(ep.created_at)}</td>
+                      <td>
+                        <div className="dash-row-actions">
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-secondary dash-btn-sm"
+                            onClick={() => setEditing(ep)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-secondary dash-btn-sm"
+                            onClick={() => setTesting(ep)}
+                          >
+                            Send test
+                          </button>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-secondary dash-btn-sm"
+                            onClick={() => setViewingDeliveries(ep)}
+                          >
+                            Deliveries
+                          </button>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-secondary dash-btn-sm"
+                            onClick={() =>
+                              setPendingAction({ kind: "rotate", endpoint: ep })
+                            }
+                            disabled={rowBusy}
+                          >
+                            {rowBusy ? "…" : "Rotate secret"}
+                          </button>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-secondary dash-btn-sm"
+                            onClick={() => handleToggleEnabled(ep)}
+                          >
+                            {isActive ? "Disable" : "Enable"}
+                          </button>
+                          <button
+                            type="button"
+                            className="dash-btn dash-btn-danger dash-btn-sm"
+                            onClick={() =>
+                              setPendingAction({ kind: "delete", endpoint: ep })
+                            }
+                            disabled={rowBusy}
+                          >
+                            {rowBusy ? "…" : "Delete"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

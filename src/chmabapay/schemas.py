@@ -269,7 +269,9 @@ def normalize_currency(currency: str | None, default: str = "USD") -> str:
     return currency.strip().upper() or default
 
 
-def money_to_str(amount_cents: int, currency: str = "USD") -> str:
+def money_to_str(
+    amount_cents: int, currency: str = "USD", *, grouping: bool = True
+) -> str:
     """Format a minor-unit amount for a human.
 
     **Money convention.** `amount_cents` is always a 1/100 minor unit for *both*
@@ -280,10 +282,16 @@ def money_to_str(amount_cents: int, currency: str = "USD") -> str:
 
     The only place the difference shows is presentation: USD is shown with two
     decimals, KHR without, because `៛5,000` is correct and `៛5,000.00` is not.
+
+    Thousands are grouped — `4,728.29`, not `4728.29` — because every amount here
+    is read by a person before it is read by a machine, and a seven-figure total is
+    not countable without separators. `grouping=False` is for the one caller that
+    is machine-readable instead: the CSV export, where `4,728.29` reaches a
+    spreadsheet as text rather than as the number 4728.29.
     """
     if normalize_currency(currency) == "KHR":
-        return f"{amount_cents / 100:.0f}"
-    return f"{amount_cents / 100:.2f}"
+        return f"{amount_cents / 100:,.0f}" if grouping else f"{amount_cents / 100:.0f}"
+    return f"{amount_cents / 100:,.2f}" if grouping else f"{amount_cents / 100:.2f}"
 
 
 

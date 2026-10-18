@@ -99,7 +99,10 @@ def _row_to_dict(
     return {
         "public_id": payment.public_id,
         "status": payment.status,
-        "amount": money_to_str(payment.amount_cents, payment.currency),
+        # Bare number, not grouped: this row feeds both the JSON API and the
+        # portal's own CSV export, and a quoted `4,728.29` reaches a spreadsheet as
+        # text. The `*_formatted` summary fields are the grouped, human form.
+        "amount": money_to_str(payment.amount_cents, payment.currency, grouping=False),
         "currency": payment.currency,
         "reference_id": payment.reference_id or "",
         "store_public_id": store_public_id,
