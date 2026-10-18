@@ -64,6 +64,14 @@ export default function DashboardStoresPage() {
   // amount that failed to load is left out rather than guessed at.
   const [owed, setOwed] = useState<string | null>(null);
   const [allowance, setAllowance] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
+
+  const filteredStores = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q
+      ? stores.filter((s) => (s.name || "").toLowerCase().includes(q))
+      : stores;
+  }, [stores, query]);
 
   const held = useMemo(
     () => stores.filter((s) => s.billing_suspended_at !== null && s.billing_suspended_at !== undefined),
@@ -260,7 +268,15 @@ export default function DashboardStoresPage() {
             Manage stores and payment destinations
           </div>
         </div>
-        <div>
+        <div className="dash-toolbar-filters">
+          <input
+            type="search"
+            className="dash-input"
+            placeholder="Search stores…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={{ minWidth: 200 }}
+          />
           <Link
             className="dash-btn dash-btn-primary"
             href="/dashboard/stores/new"
@@ -352,7 +368,7 @@ export default function DashboardStoresPage() {
               </tr>
             </thead>
             <tbody>
-              {stores.map((s) => {
+              {filteredStores.map((s) => {
                 // A held store keeps whatever `status` it had, so the flag is the only thing
                 // that tells the merchant why it stopped — `active` beside a store that cannot
                 // mint a code is the whole confusion this badge exists to remove.
