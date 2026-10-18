@@ -62,6 +62,13 @@ ENV APP=${APP}
 # visible to `RUN` in this stage, which is where `next build` evaluates `rewrites()`.
 ARG NEXT_PUBLIC_API_URL
 
+# The riel (KHR) switch the store forms read. Declared for the same reason as the API
+# URL above, and read by `next build` rather than at run time: it is used in client
+# components, and `NEXT_PUBLIC_*` is inlined into the bundle during the build.
+# Supplying it only at run time would leave the wizard exactly as it was built — which
+# is why flipping it is `up -d --build landing`, not a restart.
+ARG NEXT_PUBLIC_ENABLE_KHR
+
 RUN pnpm --filter "@chmabapay/${APP}" build
 
 # Non-root. The Next build writes nothing at runtime, so owning the tree is enough.
