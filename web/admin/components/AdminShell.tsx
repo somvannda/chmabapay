@@ -375,10 +375,12 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2">
             <ThemeToggle />
             <Badge tone="violet">SUPER ADMIN</Badge>
-            <div className="hidden h-8 w-8 items-center justify-center rounded-full bg-[#ded9fb] text-[10px] font-bold text-[#5144c7] sm:flex">
-              {initials}
-            </div>
-            <div className="relative" ref={menuRef}>
+            {/* The same component as the merchant portal's header menu — `cp-menu`
+                is defined in both stylesheets. The console used to draw its own
+                panel here, so the one control present on every page was the one
+                that looked like it came from a different product: no avatar in the
+                trigger, a different popover, a different item style. */}
+            <div className="cp-menu" ref={menuRef}>
               <button
                 type="button"
                 className="cp-menu-btn"
@@ -386,6 +388,9 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                 aria-expanded={menuOpen}
                 aria-haspopup="menu"
               >
+                <span className="cp-menu-avatar" aria-hidden="true">
+                  {initials}
+                </span>
                 <span className="cp-menu-name" title={email || displayName}>
                   {displayName}
                 </span>
@@ -396,19 +401,39 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
                 </span>
               </button>
               {menuOpen && (
-                <div
-                  className="absolute right-0 top-full z-40 mt-1.5 w-56 rounded-xl border border-[#e9e9ef] bg-white p-1.5 shadow-[0_18px_40px_rgba(28,31,42,.12)] dark:border-[#2a2b30] dark:bg-[#17181c]"
-                  role="menu"
-                >
-                  <div className="px-2 py-1.5">
-                    <div className="text-[13px] font-bold text-[#202128] dark:text-[#e4e4e8]" title={displayName}>
+                <div className="cp-menu-pop" role="menu">
+                  <div className="cp-menu-head">
+                    <div className="cp-menu-head-name" title={displayName}>
                       {displayName}
                     </div>
-                    {email && <div className="text-[11px] text-[#898a95]">{email}</div>}
+                    {email && <div className="cp-menu-head-email">{email}</div>}
                   </div>
+                  <Link
+                    className="cp-menu-item"
+                    href="/"
+                    role="menuitem"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    Platform overview
+                  </Link>
+                  <Link
+                    className="cp-menu-item"
+                    href="/settings"
+                    role="menuitem"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    Console settings
+                  </Link>
+                  <a
+                    className="cp-menu-item"
+                    href="https://pay.chmaba.com/dashboard"
+                    role="menuitem"
+                  >
+                    Merchant portal
+                  </a>
                   <button
                     type="button"
-                    className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-[13px] font-semibold text-[#c2564b] transition hover:bg-[#fff0ee] dark:hover:bg-[#39211f]"
+                    className="cp-menu-item cp-menu-item-danger"
                     role="menuitem"
                     onClick={() => void signOut()}
                     disabled={signoutLoading}
