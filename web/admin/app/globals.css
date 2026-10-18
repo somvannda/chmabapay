@@ -56,7 +56,9 @@
      Plans, Payments and Deliveries); `appearance: none` below covers the rest. */
   accent-color: var(--violet);
 
-  --font-inter: "Inter", "Niradei", sans-serif;
+  /* `--font-inter` is set on <html> by the root layout's `next/font` load. Do not
+     shadow it with a literal `"Inter"` here: that name is never loaded, so the
+     browser would fall back to system-ui (Segoe UI) instead of Inter. */
   --font-mono: "JetBrains Mono", monospace;
   --surface: rgb(var(--color-page));
   --surface-card: rgb(var(--color-surface));
@@ -162,7 +164,7 @@ html {
 
 body {
   margin: 0;
-  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-inter), "Niradei", "Noto Sans Khmer", ui-sans-serif, system-ui, -apple-system, sans-serif;
   background: var(--surface);
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
@@ -177,7 +179,7 @@ body {
 
 .font-sans,
 .landing-english {
-  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-inter), "Niradei", "Noto Sans Khmer", ui-sans-serif, system-ui, -apple-system, sans-serif;
 }
 
 .nav-cta-primary:hover,
@@ -1568,7 +1570,7 @@ body {
     radial-gradient(1200px 600px at -10% -10%, rgba(105, 87, 245, 0.10), transparent 60%),
     linear-gradient(180deg, #fafafc 0%, #f5f5fa 100%);
   color: #0f172a;
-  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-inter), "Niradei", "Noto Sans Khmer", ui-sans-serif, system-ui, -apple-system, sans-serif;
 }
 .dash-shell {
   display: grid;
@@ -2622,7 +2624,7 @@ body.dash-hide-landing-chrome > .landing-footer {
     radial-gradient(1200px 600px at -10% -10%, rgba(105, 87, 245, 0.10), transparent 60%),
     linear-gradient(180deg, #fafafc 0%, #f5f5fa 100%);
   color: #0f172a;
-  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-inter), "Niradei", "Noto Sans Khmer", ui-sans-serif, system-ui, -apple-system, sans-serif;
 }
 
 .dash-min-head {
@@ -2920,7 +2922,7 @@ body.dash-hide-landing-chrome > .landing-footer {
   background:
     radial-gradient(1200px 600px at -10% -10%, rgba(105, 87, 245, 0.06), transparent 60%),
     linear-gradient(180deg, #fafafc 0%, #f5f5fa 100%);
-  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-inter), "Niradei", "Noto Sans Khmer", ui-sans-serif, system-ui, -apple-system, sans-serif;
   color: #0f172a;
 }
 .dash-store-side {
@@ -3012,7 +3014,7 @@ body.dash-path-dashboard > .landing-footer {
   width: 100%;
   background: var(--surface);
   color: var(--ink);
-  font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: var(--font-inter), "Niradei", "Noto Sans Khmer", ui-sans-serif, system-ui, -apple-system, sans-serif;
   font-size: var(--fs-14);
   line-height: var(--lh-snug);
 }

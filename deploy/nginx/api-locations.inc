@@ -26,9 +26,11 @@ location = /openapi.json {
     proxy_pass http://chmabapay_api;
 }
 
-location = /health {
-    proxy_pass http://chmabapay_api;
-}
+# NOTE: `/health` is deliberately NOT here. It means different things on the two
+# vhosts — the API's liveness probe on the website, the console's status page on
+# the admin host — so each server block defines its own. A shared `location =
+# /health` here is what made `admin-pay.chmaba.com/health` return the API's raw
+# `{"status":"ok"}` JSON instead of the console page.
 
 # --------------------------------------------------------------------------- #
 # The dev rail, refused explicitly

@@ -94,8 +94,13 @@ export const shadows = {
 };
 
 export const fonts = {
-  sans: `'Inter', 'Niradei', 'Noto Sans Khmer', ui-sans-serif, system-ui, -apple-system, sans-serif`,
-  mono: `'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`,
+  // `var(--font-inter)` / `var(--font-mono)` are the families `next/font` actually
+  // loads (it generates a hashed name and exposes it under these variables). Naming
+  // `'Inter'` literally here does NOT match that load, so the browser falls through
+  // to `system-ui` — which is why the portal rendered in Segoe UI while the Chmaba
+  // POS (which loads Inter under the real name `Inter`) looked different.
+  sans: `var(--font-inter), 'Niradei', 'Noto Sans Khmer', ui-sans-serif, system-ui, -apple-system, sans-serif`,
+  mono: `var(--font-mono), 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`,
 };
 
 // —————————————————————————————————————————————————————————
