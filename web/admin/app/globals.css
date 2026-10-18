@@ -4758,3 +4758,10 @@ body.dash-path-dashboard > .landing-footer {
 .dark .landing-mobile-toggle-bar { background: #202127; }
 .dark .cp-user-avatar,
 .dark .cp-menu-avatar { background: #2a2b32; }
+
+/* Wide console tables (Payments, Deliveries) scroll horizontally instead of
+   wrapping cells into stacked lines, which read as a misaligned table. */
+.dash-table-wrap { width: 100%; overflow-x: auto; }
+.dash-table-wrap .dash-table { min-width: 100%; }
+.dash-table-wrap .dash-table th,
+.dash-table-wrap .dash-table td { white-space: nowrap; }

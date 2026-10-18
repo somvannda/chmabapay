@@ -304,6 +304,7 @@ export default function AdminPaymentsPage() {
             </div>
           </div>
         ) : (
+          <div className="dash-table-wrap">
           <table className="dash-table">
             <thead>
               <tr>
@@ -348,6 +349,7 @@ export default function AdminPaymentsPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
