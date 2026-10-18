@@ -159,7 +159,7 @@ function priceParts(cents: number): { amount: string; period: string } {
   if (!cents) return { amount: "$0", period: "/mo" };
   const dollars = cents / 100;
   return {
-    amount: `$${dollars % 1 === 0 ? dollars.toFixed(0) : dollars.toFixed(2)}`,
+    amount: `$${dollars.toLocaleString("en-US", { minimumFractionDigits: dollars % 1 === 0 ? 0 : 2, maximumFractionDigits: dollars % 1 === 0 ? 0 : 2 })}`,
     period: "/mo",
   };
 }

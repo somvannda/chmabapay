@@ -341,7 +341,7 @@ export function DashboardShell({
                       />
                     </div>
                     <div className="mt-1.5 text-[9px] text-[#85868e]">
-                      {nf.format(used)} / {nf.format(limit)} payments
+                      {nf.format(used)} / {nf.format(limit)} payments this month
                       {resetsLabel ? ` · resets ${resetsLabel}` : ""}
                     </div>
                   </>

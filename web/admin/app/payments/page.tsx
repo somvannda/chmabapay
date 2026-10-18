@@ -58,7 +58,7 @@ function formatDateTime(iso: string | null | undefined): string {
 
 function formatAmount(cents: number, currency: string): string {
   const symbol = (currency || "USD").toUpperCase() === "USD" ? "$" : "";
-  return `${symbol}${(cents / 100).toFixed(2)}`;
+  return `${symbol}${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function paymentPill(status: string | null | undefined): {

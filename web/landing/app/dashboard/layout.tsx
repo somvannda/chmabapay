@@ -98,11 +98,11 @@ export default function DashboardLayout({
           setPlanName(`${plan.name} plan`);
           setPlanCode(plan.code);
           setLimit(planObj?.base_payments_included ?? 100);
-          const resetsIso =
-            sub.subscription?.next_billing_at ||
-            sub.next_billing_at ||
-            firstOfNextMonthIso();
-          setResetsLabel(formatDateShort(resetsIso));
+          // The quota counts paid payments per *calendar month* (the count is read
+          // from the start of this month), so it resets on the 1st. The label used
+          // to show the plan's billing renewal date instead, which read as if the
+          // counter reset then — a different number from what the count honours.
+          setResetsLabel(formatDateShort(firstOfNextMonthIso()));
         }
       } catch {
       }

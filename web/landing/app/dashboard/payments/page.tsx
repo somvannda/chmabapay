@@ -41,7 +41,7 @@ function formatAmount(str: string | null | undefined): string {
   if (!str) return "$0.00";
   const n = parseFloat(str);
   if (Number.isNaN(n)) return str;
-  return `$${n.toFixed(2)}`;
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function pillClassForStatus(status: string): string {

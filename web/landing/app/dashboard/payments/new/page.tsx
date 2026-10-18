@@ -69,7 +69,7 @@ export default function DashboardPaymentsNewPage() {
   const parsedAmount = parseFloat(amount);
   const previewAmount =
     amount && !Number.isNaN(parsedAmount) && parsedAmount > 0
-      ? `$${parsedAmount.toFixed(2)}`
+      ? `$${parsedAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       : "$0.00";
 
   const amountValid =
