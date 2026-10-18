@@ -91,6 +91,10 @@ export default function AdminHealthPage() {
   const ages = workers?.heartbeat_ages ?? null;
   const depth = workers?.queue_depth ?? null;
   const queues = payload?.expected_queues ?? [];
+  const dbOk = payload?.database === "ok";
+  const staleQueues = workers?.watched ? (workers.stale_queues ?? []) : [];
+  const workersOk = !workers?.watched || staleQueues.length === 0;
+  const healthy = Boolean(payload) && dbOk && workersOk;
 
   return (
     <>
@@ -118,6 +122,38 @@ export default function AdminHealthPage() {
           </button>
         </div>
       </div>
+
+      {payload && (
+        <div className="dash-panel">
+          <div className="flex flex-wrap items-center gap-3">
+            <span
+              className={`h-2.5 w-2.5 shrink-0 rounded-full ${healthy ? "bg-[#76bc4b]" : "bg-[#c2564b]"}`}
+              aria-hidden="true"
+            />
+            <div>
+              <div className="dash-panel-title">
+                {healthy ? "All systems operational" : "Attention needed"}
+              </div>
+              <div className="dash-page-subtitle">
+                Checked at {formatCheckedAt(checkedAt)}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+              {!dbOk && (
+                <span className="dash-pill dash-pill-failed">database {payload.database}</span>
+              )}
+              {staleQueues.length > 0 && (
+                <span className="dash-pill dash-pill-failed">
+                  {staleQueues.length} queue{staleQueues.length === 1 ? "" : "s"} not draining
+                </span>
+              )}
+              {payload.dev_gateway && (
+                <span className="dash-pill dash-pill-pending">dev gateway on</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {errorMsg && (
         <div className="dash-warn">
