@@ -148,7 +148,7 @@ function formatDate(iso: string | null | undefined): string {
 
 function formatCents(cents: number | null | undefined): string {
   if (cents === null || cents === undefined) return "—";
-  return `$${(cents / 100).toFixed(2)}`;
+  return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function formatLimit(value: number | null | undefined): string {

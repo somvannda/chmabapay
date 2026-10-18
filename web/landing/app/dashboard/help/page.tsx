@@ -33,7 +33,7 @@ const nf = new Intl.NumberFormat("en-US");
 
 function priceLabel(cents: number): string {
   const dollars = cents / 100;
-  return `$${dollars % 1 === 0 ? dollars.toFixed(0) : dollars.toFixed(2)}/mo`;
+  return `$${dollars.toLocaleString("en-US", { minimumFractionDigits: dollars % 1 === 0 ? 0 : 2, maximumFractionDigits: dollars % 1 === 0 ? 0 : 2 })}/mo`;
 }
 
 /** The same wording the Billing page uses for the store cap. */
