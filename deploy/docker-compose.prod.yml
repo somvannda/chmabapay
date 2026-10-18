@@ -179,6 +179,17 @@ x-api-env: &api-env
   BAKONG_API_TOKEN: ${BAKONG_API_TOKEN:-}
   BAKONG_DEVELOPER_EMAIL: ${BAKONG_DEVELOPER_EMAIL:-}
 
+  # Whether a merchant may create a store that settles in riel. Listed here because
+  # this block is the *only* way a variable reaches the API: the service takes no
+  # `env_file`, so a value set in deploy/.env but absent from this list is read by
+  # compose and then dropped, and the application quietly keeps its own default.
+  #
+  # Off means `POST /stores` answers 400 `khr_currency_disabled`. On is necessary but
+  # not sufficient — the destination still has to be a link whose currency ABA reports
+  # as KHR (`payway_link_currency_mismatch`, `payway_link_currency_unverified` are the
+  # other two guards) and a KHR amount that is not whole riel is still refused.
+  ENABLE_KHR_CURRENCY: ${ENABLE_KHR_CURRENCY:-false}
+
   # Platform-admin bootstrap: the first sign-in from one of these addresses is
   # promoted. The HQ store that billing self-pay charges against is created from it,
   # and without an HQ PayWay link a self-pay invoice cannot produce a QR.
@@ -285,11 +296,20 @@ services:
         # dialled the `127.0.0.1:8000` fallback and answered 500 `ECONNREFUSED` for
         # every rewritten path.
         NEXT_PUBLIC_API_URL: http://api:8000
+        # Same class of trap, one step further: this one is read in a *client*
+        # component (`NEXT_PUBLIC_*`), which `next build` inlines into the bundle. A
+        # container restart therefore leaves the store wizard exactly as it was built,
+        # so flipping it needs `up -d --build landing`.
+        NEXT_PUBLIC_ENABLE_KHR: ${NEXT_PUBLIC_ENABLE_KHR:-false}
     restart: unless-stopped
     logging: *logging
     <<: *limits
     environment:
       NEXT_PUBLIC_API_URL: http://api:8000
+      # Kept in step with the build arg above. The value the bundle uses is the one
+      # baked at build time; this is here so `docker compose config` shows the
+      # resolved value rather than leaving it looking unset.
+      NEXT_PUBLIC_ENABLE_KHR: ${NEXT_PUBLIC_ENABLE_KHR:-false}
     depends_on:
       api:
         condition: service_healthy
