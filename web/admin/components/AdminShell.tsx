@@ -446,7 +446,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="mx-auto max-w-[1200px] p-5 lg:p-8">
+        <main className="admin-main mx-auto max-w-[1200px] p-5 lg:p-8">
           <ToastProvider>{children}</ToastProvider>
         </main>
       </div>
