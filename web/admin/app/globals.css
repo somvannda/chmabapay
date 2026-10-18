@@ -4769,3 +4769,25 @@ body.dash-path-dashboard > .landing-footer {
 .dash-table-wrap .dash-table { min-width: 100%; }
 .dash-table-wrap .dash-table th,
 .dash-table-wrap .dash-table td { white-space: nowrap; }
+
+/* ==================================================================
+   Card rhythm — the POS MetricCard scale, applied to the two card
+   families the console actually uses.
+
+   The POS card is `p-4 sm:p-5` (20px) with 8px from the label to the
+   figure and 12px from the figure to the footer. The attention cards
+   were still on 12px/16px with a 4px stack, so three of them sat next
+   to 20px metric cards and read as a tighter, different component.
+   ================================================================== */
+.dash-attention-item {
+  padding: var(--sp-5);
+  gap: var(--sp-2);
+}
+
+/* 8px between label and figure, then the footer pinned to the card's
+   bottom. Without that last part a short card in an equal-height row —
+   "0 / Pending past expiry" beside "25 / Stopped watching" — floats its
+   link halfway up the card and the row reads as broken spacing. */
+.dash-stat-card { gap: var(--sp-2); }
+.dash-stat-card .dash-stat-trend { margin-top: auto; }
+.dash-attention-item .dash-link-btn { margin-top: auto; align-self: flex-start; }
