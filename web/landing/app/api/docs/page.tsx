@@ -1,5 +1,6 @@
 import { resolveSiteUrl } from "@/lib/siteUrl";
 import CodeBlock from "./CodeBlock";
+import QuickStartTabs from "./QuickStartTabs";
 
 // The guide. The exhaustive endpoint, convention, rate-limit and error tables live at
 // `/api/docs/reference`; what stays here is the path to a first payment and the security
@@ -154,18 +155,7 @@ function QuickStartPanels({ baseUrl }: { baseUrl: string }) {
           <span className="docs-qs-chip">No SDK required</span>
         </div>
       </div>
-      <div className="docs-quick-steps">
-        {quickStartPanels(baseUrl).map((panel) => (
-          <CodeBlock
-            key={panel.title}
-            code={panel.code}
-            lang={panel.lang}
-            title={panel.title}
-            langTag
-            className="docs-quick-step"
-          />
-        ))}
-      </div>
+      <QuickStartTabs panels={quickStartPanels(baseUrl)} />
     </section>
   );
 }

@@ -2467,16 +2467,58 @@ body {
   font-weight: 700;
 }
 
-/* Each step is one card that owns its own header: the title sits in the code panel's
-   chrome instead of beside it. No rail and no numbers — the order is the order of the
-   page, and the marker a reader needs is the title, not an index they have to hold in
-   their head while scrolling to the snippet that belongs to it. */
-.docs-quick-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+/* The six steps as tabs: one snippet visible at a time, under a wrapping pill row,
+   instead of six stacked panels pushing the section a screen and a half down. Every
+   panel stays in the DOM (inactive ones `hidden`), so the code is still there for a
+   reader who tabs to it and for anything reading the markup. */
+.docs-qs-tabs {
   margin: 44px 0 0;
   max-width: 880px;
+}
+
+.docs-qs-tablist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.docs-qs-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-card);
+  color: var(--ink);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.docs-qs-tab:hover {
+  border-color: var(--violet);
+  color: var(--violet);
+}
+
+.docs-qs-tab.is-active {
+  border-color: transparent;
+  background: linear-gradient(135deg, #6957f5 0%, #8b7bff 100%);
+  color: #ffffff;
+}
+
+.docs-qs-tab-index {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.6;
+}
+
+.docs-qs-tab.is-active .docs-qs-tab-index {
+  opacity: 0.85;
 }
 
 .docs-quick-step {
@@ -2530,7 +2572,9 @@ body {
 .docs-quick-step code.bash,
 .docs-quick-step code.javascript {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  color: #e2e4e8;
+  /* No colour of its own: it inherits `.docs-code-pre`'s `var(--ink)`, which is dark on
+     the light panel and light on the dark one. The hardcoded `#e2e4e8` it used to carry
+     was light-on-white in light mode. */
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -5965,14 +6009,26 @@ body.dash-path-dashboard > .landing-footer {
 .dark .docs-endpoint-card { background-color: #1a1b1f; }
 .dark .docs-endpoint-head { border-bottom-color: #25262c; }
 .dark .docs-path { background-color: #15161a; }
-.dark .docs-code-copy { background-color: #1a1b1f; }
+.dark .docs-code-copy { background-color: #1a1b1f; border-color: #2a2b30; }
 .dark .docs-ref-card { border-color: #2a2b30; }
 .dark .docs-ref-card { background-color: #1a1b1f; }
 .dark .docs-ref-table td { border-top-color: #25262c; }
 .dark .docs-ref-status { background-color: #202127; }
 .dark .docs-qs-chip { background-color: #1a1b1f; }
 .dark .docs-quick-step { background-color: #1a1b1f; }
-.dark .docs-quick-step .docs-code-head { background-color: #111114; }
+.dark .docs-quick-step .docs-code-head { background: #111114; }
+/* Hand-added: the generated sheet covered only the Quick-start panel, so every other
+   code panel (Conventions, Limits, the "Request headers" boxes) kept its light
+   background in dark mode — light text on a near-white block. Same mapping the
+   generator would have produced for `#fbfbfd` / `#f5f6fa`. */
+.dark .docs-code-block { background-color: #1a1b1f; border-color: #2a2b30; }
+.dark .docs-code-head { background-color: #111114; border-bottom-color: #25262c; }
+.dark .docs-code-copy:hover { border-color: #3a3b42; }
+/* Surfaces the sheet also missed: the signature "card", the inline code chip, and the
+   5xx status pill — its light-red fill is a stray pale box on a dark page. */
+.dark .docs-signature-panel { background-color: #1a1b1f; }
+.dark .docs-ref-inline { background-color: #202127; }
+.dark .docs-ref-status-server { background-color: #39211f; color: #e6b0aa; }
 .dark .dash-side { background-color: #1a1b1f; }
 .dark .dash-side { border-right-color: #2a2b30; }
 .dark .dash-logo { border-bottom-color: #3a3650; }
@@ -6145,7 +6201,6 @@ body.dash-path-dashboard > .landing-footer {
    ------------------------------------------------------------------ */
 .dark .dash-plan-card,
 .dark .cp-toast,
-.dark .landing-mobile-toggle-bar { background: #202127; }
 .dark .cp-user-avatar,
 .dark .cp-menu-avatar { background: #2a2b32; }
 
