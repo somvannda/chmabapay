@@ -44,10 +44,12 @@
      whatever accent the user chose in Windows. */
   accent-color: var(--violet);
 
-  /* `--font-inter` is set on <html> by the root layout's `next/font` load. Do not
-     shadow it with a literal `"Inter"` here: that name is never loaded, so the
-     browser would fall back to system-ui (Segoe UI) instead of Inter. */
-  --font-mono: "JetBrains Mono", monospace;
+  /* `--font-inter` and `--font-mono` are set on <html> by the root layout's
+     `next/font` load, which exposes the *real* family names it registered
+     (`__inter_xxx`, `__jetbrains_xxx`). Declaring either one here with a literal
+     name shadows that: `"Inter"` / `"JetBrains Mono"` are never loaded under those
+     names, so the browser silently fell through to system-ui / browser-default
+     mono. Both are therefore deliberately absent. */
   --surface: rgb(var(--color-page));
   --surface-card: rgb(var(--color-surface));
   --ink: rgb(var(--color-ink));
@@ -6369,3 +6371,55 @@ body.dash-hide-landing-chrome > .chmaba-site-chrome { display: none !important; 
 .dark .dash-pill-scanned { background: #2b2850; color: #b3a7ff; }
 .dark .dash-pill-superseded { background: #1d2a38; color: #a9c4ff; }
 .dark .dash-pill-pending { background: #2a2b30; color: #9a9aa4; }
+
+/* ==================================================================
+   Portal refinements — page-head actions, table scrolling, row
+   actions. Declared last so they win over the blocks above.
+   ================================================================== */
+
+/* The head's action cluster belongs on ONE line, centred against the title.
+   `.dash-input` is `width: 100%`, and inside this flex row that let a search
+   box claim the whole row and push its button onto the next line — the
+   stacked, misaligned pair that read as a broken page header. */
+.dash-page-head { align-items: center; }
+.dash-page-head .dash-toolbar-filters {
+  flex-wrap: nowrap;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+/* A filter is not a form field that fills a column: it gets a width. */
+.dash-search { width: 240px; max-width: 100%; flex: 0 0 auto; }
+
+/* Wide tables scroll rather than crushing their last column — which is how a
+   six-button action cell ended up wrapped over two ragged rows. */
+.dash-table-wrap { overflow-x: auto; }
+.dash-table-wide { min-width: 920px; }
+
+/* Row actions: one line. What the table cannot fit, the wrapper scrolls. */
+.dash-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+/* Side-by-side panels hug their own content instead of stretching the shorter
+   one into a mostly-empty column. */
+.dash-panels { align-items: start; }
+
+/* A filter that matched nothing is a state, not a blank table. */
+.dash-no-match {
+  padding: var(--sp-6);
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-14);
+}
+
+@media (max-width: 720px) {
+  .dash-page-head { align-items: flex-start; }
+  .dash-page-head .dash-toolbar-filters { flex-wrap: wrap; }
+  .dash-search { width: 100%; }
+}

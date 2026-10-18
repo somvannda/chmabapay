@@ -28,7 +28,10 @@ router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
 
 def _money_str(cents: int) -> str:
-    return f"${cents / 100:.2f}"
+    # Grouped for the same reason `money_to_str` is: plan fees and invoice totals
+    # are read off the billing page, and `$1,200.00` is legible where `$1200.00`
+    # is not.
+    return f"${cents / 100:,.2f}"
 
 
 class PlanOut(BaseModel):
