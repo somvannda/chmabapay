@@ -441,6 +441,15 @@ export default function DashboardReportsPage() {
           <div className="dash-info">
             Every store with its id, name, status, city and created date.
           </div>
+          {/* The store list is already fetched for the filter above, so the count
+              is free — and it is the one number that says whether an export of
+              "every store" is one row or four hundred. */}
+          {stores.length > 0 && (
+            <div className="dash-hint">
+              {nf.format(stores.length)} store
+              {stores.length === 1 ? "" : "s"} in this workspace.
+            </div>
+          )}
           <div>
             <button
               type="button"

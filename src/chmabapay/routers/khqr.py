@@ -91,7 +91,7 @@ def _normalize_link(link: str) -> tuple[str, str]:
 
 
 def _money_to_str(cents: int) -> str:
-    return f"{cents / 100:.2f}"
+    return f"{cents / 100:,.2f}"
 
 
 def _tags_dump(qr: str) -> dict[str, Any]:

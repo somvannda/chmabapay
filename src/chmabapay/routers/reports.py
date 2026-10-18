@@ -182,6 +182,13 @@ async def export_payments_csv(
         for row in rows:
             payment, store_pub, store_nm, store_external = row
             d = _row_to_dict(payment, store_pub, store_nm, store_external)
+            # `_row_to_dict` groups thousands for the JSON the portal renders
+            # (`4,728.29`). A spreadsheet importing this column needs the bare
+            # number, because a quoted `"4,728.29"` arrives as text and sums to
+            # nothing — so the one machine-readable surface writes it ungrouped.
+            d["amount"] = money_to_str(
+                payment.amount_cents, payment.currency, grouping=False
+            )
             writer.writerow([d[k] for k in CSV_HEADER])
             yield buf.getvalue()
             buf.seek(0)

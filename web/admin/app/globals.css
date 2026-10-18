@@ -56,10 +56,12 @@
      Plans, Payments and Deliveries); `appearance: none` below covers the rest. */
   accent-color: var(--violet);
 
-  /* `--font-inter` is set on <html> by the root layout's `next/font` load. Do not
-     shadow it with a literal `"Inter"` here: that name is never loaded, so the
-     browser would fall back to system-ui (Segoe UI) instead of Inter. */
-  --font-mono: "JetBrains Mono", monospace;
+  /* `--font-inter` and `--font-mono` are set on <html> by the root layout's
+     `next/font` load, which exposes the *real* family names it registered
+     (`__inter_xxx`, `__jetbrains_xxx`). Declaring either one here with a literal
+     name shadows that: `"Inter"` / `"JetBrains Mono"` are never loaded under those
+     names, so the browser silently fell through to system-ui / browser-default
+     mono. Both are therefore deliberately absent. */
   --surface: rgb(var(--color-page));
   --surface-card: rgb(var(--color-surface));
   --ink: rgb(var(--color-ink));

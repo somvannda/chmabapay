@@ -271,11 +271,10 @@ export default function DashboardStoresPage() {
         <div className="dash-toolbar-filters">
           <input
             type="search"
-            className="dash-input"
+            className="dash-input dash-search"
             placeholder="Search stores…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            style={{ minWidth: 200 }}
           />
           <Link
             className="dash-btn dash-btn-primary"
@@ -368,6 +367,15 @@ export default function DashboardStoresPage() {
               </tr>
             </thead>
             <tbody>
+              {/* A filter that matched nothing used to render an empty table with
+                  no context — indistinguishable from "no stores". Say which. */}
+              {query.trim() !== "" && filteredStores.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="dash-no-match">
+                    No store matches &ldquo;{query.trim()}&rdquo;.
+                  </td>
+                </tr>
+              )}
               {filteredStores.map((s) => {
                 // A held store keeps whatever `status` it had, so the flag is the only thing
                 // that tells the merchant why it stopped — `active` beside a store that cannot
@@ -402,7 +410,7 @@ export default function DashboardStoresPage() {
                     </td>
                     <td>{formatDate(s.created_at)}</td>
                     <td>
-                      <div className="dash-toolbar-filters">
+                      <div className="dash-row-actions">
                         <Link
                           className="dash-btn dash-btn-secondary dash-btn-sm"
                           href={`/dashboard/${s.id}`}
