@@ -365,14 +365,24 @@ export default function DashboardReportsPage() {
           ) : (
             <section aria-label="Matching totals" className="dash-metrics">
               <div className="dash-stat-card">
-                <div className="dash-stat-label">Payments matched</div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="dash-stat-label">Payments matched</div>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#f0efff] text-[#6957f5] dark:bg-[#2b2850] dark:text-[#b3a7ff]" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+                  </span>
+                </div>
                 <div className="dash-stat-value">
                   {totals ? nf.format(totals.total_matching_rows) : "—"}
                 </div>
                 <div className="dash-stat-trend">with these filters</div>
               </div>
               <div className="dash-stat-card dash-stat-accent">
-                <div className="dash-stat-label">Paid</div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="dash-stat-label">Paid</div>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#edf9e4] text-[#4f8b32] dark:bg-[#1f2f1c] dark:text-[#a7d7b0]" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                  </span>
+                </div>
                 <div className="dash-stat-value">
                   {totals ? formatPaidTotal(totals) : "—"}
                 </div>
@@ -385,7 +395,12 @@ export default function DashboardReportsPage() {
                 </div>
               </div>
               <div className="dash-stat-card">
-                <div className="dash-stat-label">Refunded</div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="dash-stat-label">Refunded</div>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#fff0ee] text-[#c2564b] dark:bg-[#39211f] dark:text-[#e6b0aa]" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4" /></svg>
+                  </span>
+                </div>
                 <div className="dash-stat-value">
                   {totals
                     ? formatByCurrency(
