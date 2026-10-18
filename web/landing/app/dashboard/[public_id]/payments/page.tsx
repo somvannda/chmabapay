@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { readApiError } from "@/components/portal/apiError";
+import { formatMoney } from "@shared/money";
 
 type StoreOption = {
   id: string;
@@ -36,13 +37,6 @@ function formatDate(iso: string | null | undefined): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function formatAmount(str: string | null | undefined): string {
-  if (!str) return "$0.00";
-  const n = parseFloat(str);
-  if (Number.isNaN(n)) return str;
-  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function pillClassForStatus(status: string): string {
@@ -294,7 +288,7 @@ export default function StorePaymentsPage({
                     </Link>
                   </td>
                   <td>
-                    <strong>{formatAmount(p.amount)}</strong>
+                    <strong>{formatMoney(p.amount, p.currency)}</strong>
                   </td>
                   <td>{p.reference_id || "-"}</td>
                   <td>
