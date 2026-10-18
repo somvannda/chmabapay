@@ -4791,3 +4791,52 @@ body.dash-path-dashboard > .landing-footer {
 .dash-stat-card { gap: var(--sp-2); }
 .dash-stat-card .dash-stat-trend { margin-top: auto; }
 .dash-attention-item .dash-link-btn { margin-top: auto; align-self: flex-start; }
+
+/* ==================================================================
+   One gutter per surface, not two.
+
+   A table panel paid its own 24px padding and *then* let a wider table
+   overflow it, so the header band and the horizontal scrollbar floated
+   inside the card while the last columns sat clipped under the padding.
+   The table now spans the card and the cells carry the gutter; anything
+   else in that panel keeps the panel's own gutter.
+   ================================================================== */
+.dash-panel:has(> .dash-table-wrap),
+.dash-panel:has(> table.dash-table) {
+  padding-left: 0;
+  padding-right: 0;
+}
+.dash-panel:has(> .dash-table-wrap) > :not(.dash-table-wrap),
+.dash-panel:has(> table.dash-table) > :not(table.dash-table) {
+  margin-left: var(--sp-6);
+  margin-right: var(--sp-6);
+}
+
+/* First and last cell line up with that same gutter, instead of the table's
+   ordinary 16px cell padding, so the table reads as part of the card. */
+.dash-table > thead > tr > th:first-child,
+.dash-table > tbody > tr > td:first-child { padding-left: var(--sp-6); }
+.dash-table > thead > tr > th:last-child,
+.dash-table > tbody > tr > td:last-child { padding-right: var(--sp-6); }
+
+/* A thin bar instead of the platform scrollbar sitting inside the card. */
+.dash-table-wrap { scrollbar-width: thin; }
+
+/* Metric cards move onto the same 20px rhythm as panels: they were on 16px,
+   so a card row under a panel read as a tighter block than the panel above. */
+.dash-metrics { gap: var(--sp-5); }
+
+/* The pager is the table's footer, not another toolbar. It sits one gutter
+   below the card and adds no trailing margin of its own. */
+.dash-panel + .dash-toolbar {
+  margin-top: var(--sp-5);
+  margin-bottom: 0;
+}
+/* …and its count is a caption, not a notice: the `.dash-info` chip made the
+   page number look like a message the page was telling you. */
+.dash-panel + .dash-toolbar > .dash-info {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+}
