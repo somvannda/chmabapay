@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { formatMoney } from "@shared/money";
+
 type StoreOption = {
   id: string;
   name: string;
@@ -43,13 +45,6 @@ function formatDate(iso: string | null | undefined): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function formatAmount(str: string | null | undefined): string {
-  if (!str) return "$0.00";
-  const n = parseFloat(str);
-  if (Number.isNaN(n)) return str;
-  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function pillClassForStatus(status: string): string {
@@ -190,7 +185,7 @@ export default function DashboardPaymentDetailPage({
   async function handleRefund() {
     if (!payment) return;
     const note = window.prompt(
-      `Record a refund of ${formatAmount(payment.amount)} for this payment?\n\n` +
+      `Record a refund of ${formatMoney(payment.amount, payment.currency)} for this payment?\n\n` +
         "This does not move money. Send the refund back to the customer from your " +
         "own ABA or bank account — ChmabaPay never holds your funds and cannot " +
         "return them.\n\n" +
@@ -339,7 +334,7 @@ export default function DashboardPaymentDetailPage({
                   {qrSrc ? (
                     <>
                       Customer scans this QR with their Bakong or ABA mobile app
-                      to pay <strong>{formatAmount(payment.amount)}</strong>.
+                      to pay <strong>{formatMoney(payment.amount, payment.currency)}</strong>.
                     </>
                   ) : isReversed ? (
                     <>
@@ -415,7 +410,7 @@ export default function DashboardPaymentDetailPage({
                     </td>
                     <td>
                       <div className="dash-stat-value">
-                        {formatAmount(payment.amount)}
+                        {formatMoney(payment.amount, payment.currency)}
                       </div>
                     </td>
                   </tr>
