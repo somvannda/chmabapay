@@ -198,19 +198,26 @@ export default function DashboardPaymentsPage() {
         </div>
       </div>
 
+      <div className="dash-tabs" role="tablist" aria-label="Payment status">
+        {STATUS_OPTIONS.map((opt) => (
+          <button
+            key={opt.value || "all"}
+            type="button"
+            role="tab"
+            aria-selected={statusFilter === opt.value}
+            onClick={() => {
+              setStatusFilter(opt.value);
+              setOffset(0);
+            }}
+            className={`dash-tab${statusFilter === opt.value ? " dash-tab-active" : ""}`}
+          >
+            {opt.value === "" ? "All" : opt.label}
+          </button>
+        ))}
+      </div>
+
       <div className="dash-toolbar">
         <div className="dash-toolbar-filters">
-          <select
-            className="dash-select"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            {STATUS_OPTIONS.map((opt) => (
-              <option key={opt.value || "all"} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
           <select
             className="dash-select"
             value={storeFilter}
