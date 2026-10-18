@@ -117,8 +117,12 @@ async def mint_qr(
                 detail="currency_not_supported_by_hosted_checkout",
             )
         try:
+            # The bare number: `money_to_str` groups thousands for display, and
+            # "5,000" is not an amount ABA PayWay can parse. Grouping is for the
+            # surfaces a person reads; the rail is a machine.
             checkout = await create_hosted_checkout(
-                link.raw_link, money_to_str(amount_cents, resolved_currency)
+                link.raw_link,
+                money_to_str(amount_cents, resolved_currency, grouping=False),
             )
         except PayWayHostedError as exc:
             # Better a clear 502 than a QR nobody can pay.

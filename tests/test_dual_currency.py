@@ -191,8 +191,9 @@ async def test_reports_summary_is_per_currency(client):
     assert by_currency["USD"]["cents"] == 1000
     assert by_currency["USD"]["formatted"] == "10.00"
     assert by_currency["KHR"]["cents"] == 500000
-    # KHR carries no fractional unit.
-    assert by_currency["KHR"]["formatted"] == "5000"
+    # KHR carries no fractional unit, and the summary is a display field, so it
+    # carries the thousands separator the portal renders.
+    assert by_currency["KHR"]["formatted"] == "5,000"
 
 
 async def _make_admin(email: str = "admin-dc@chmaba.test") -> models.Account:

@@ -99,7 +99,10 @@ def _row_to_dict(
     return {
         "public_id": payment.public_id,
         "status": payment.status,
-        "amount": money_to_str(payment.amount_cents, payment.currency),
+        # Bare number, not grouped: this row feeds both the JSON API and the
+        # portal's own CSV export, and a quoted `4,728.29` reaches a spreadsheet as
+        # text. The `*_formatted` summary fields are the grouped, human form.
+        "amount": money_to_str(payment.amount_cents, payment.currency, grouping=False),
         "currency": payment.currency,
         "reference_id": payment.reference_id or "",
         "store_public_id": store_public_id,
@@ -182,13 +185,6 @@ async def export_payments_csv(
         for row in rows:
             payment, store_pub, store_nm, store_external = row
             d = _row_to_dict(payment, store_pub, store_nm, store_external)
-            # `_row_to_dict` groups thousands for the JSON the portal renders
-            # (`4,728.29`). A spreadsheet importing this column needs the bare
-            # number, because a quoted `"4,728.29"` arrives as text and sums to
-            # nothing — so the one machine-readable surface writes it ungrouped.
-            d["amount"] = money_to_str(
-                payment.amount_cents, payment.currency, grouping=False
-            )
             writer.writerow([d[k] for k in CSV_HEADER])
             yield buf.getvalue()
             buf.seek(0)
