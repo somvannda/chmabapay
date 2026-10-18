@@ -3963,9 +3963,15 @@ body.dash-path-dashboard > .landing-footer {
 
 /* One consistent vertical rhythm between stacked page blocks.
    The second selector covers pages that wrap their blocks in a
-   plain (unclassed) div, so the rhythm still applies. */
-.cp-main > * + * { margin-top: var(--sp-5); }
-.cp-main > div:not([class]) > * + * { margin-top: var(--sp-5); }
+   plain (unclassed) div, so the rhythm still applies.
+   `.admin-main` is the platform console's `<main>`: it keeps its own Tailwind
+   padding (p-5 / lg:p-8) but needs this same rhythm, or every stacked panel —
+   consecutive `.dash-panel`s on Health, a `.dash-metrics` row after the
+   attention panel on Overview — touches the one above it. */
+.cp-main > * + *,
+.admin-main > * + * { margin-top: var(--sp-5); }
+.cp-main > div:not([class]) > * + *,
+.admin-main > div:not([class]) > * + * { margin-top: var(--sp-5); }
 
 /* ---------- Billing: plan cards (same anatomy as .landing-plan-card) ---------- */
 .bill-current {
