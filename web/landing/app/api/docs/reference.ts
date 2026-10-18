@@ -417,10 +417,6 @@ export type Convention = {
 
 export const conventions: Convention[] = [
   {
-    title: "Authentication",
-    body: "One credential per request: an API key (`Authorization: Bearer ck_live_…`) authenticates every store on the account. Keys are created in the dashboard, shown once, stored hashed, and revoked rather than edited. The dashboard's own surface — key management, billing, the account profile — is session-authenticated and is not part of this API.",
-  },
-  {
     title: "Idempotency",
     body: "`POST /api/v1/payments` accepts an `idempotency_key` in the body. Retrying with the same value returns the original payment instead of minting a second one, which is what makes a network retry safe. Use your own order id. The header form is not read — it must be in the body.",
     code: `curl -X POST "$CHMABA_API/api/v1/payments" \\
@@ -441,9 +437,5 @@ export const conventions: Convention[] = [
   {
     title: "Versioning",
     body: "The API is versioned in the path — every route is under `/api/v1`. Additive changes (a new field, a new endpoint, a new error code) ship within `v1`; a breaking change would arrive as `/v2` alongside it rather than replacing it.",
-  },
-  {
-    title: "Errors",
-    body: "A refusal answers with an HTTP status and a JSON body whose `detail` is a stable machine token — `quota_exceeded`, `store_disabled` — so a client can branch on it. Brand it, do not parse it out of prose. Request-validation failures are the exception: they answer with FastAPI's array shape and no stable code.",
   },
 ];

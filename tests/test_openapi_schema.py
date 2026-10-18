@@ -21,7 +21,13 @@ from typing import Any
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DOCS_PAGE = REPO_ROOT / "web" / "landing" / "app" / "api" / "docs" / "page.tsx"
+# The guide and the reference are two routes of the same published manual. The endpoint
+# rows moved from `page.tsx` to `reference/page.tsx` when the page was split, so both are
+# read: the assertions follow the content, not a single file.
+DOCS_PAGES = (
+    REPO_ROOT / "web" / "landing" / "app" / "api" / "docs" / "page.tsx",
+    REPO_ROOT / "web" / "landing" / "app" / "api" / "docs" / "reference" / "page.tsx",
+)
 API_DOC = REPO_ROOT / "docs" / "api.md"
 
 # Routers whose every route sits behind a credential. Router-level
@@ -144,22 +150,25 @@ def _normalize_path(path: str) -> str:
 
 
 def _docs_page_text() -> str:
-    """The published docs page, or a skip.
+    """The published docs pages, or a skip.
 
-    The docs page is a frontend file and the API image contains no `web/`, so a
-    test that reads it fails inside the container for a reason that has nothing to
-    do with the API. A full checkout — CI, or a local run that mounts the frontend
-    — has the file and the assertions below really run. Skipping is the honest
-    answer for an API-only checkout, and the message names the mount so the
-    difference is visible rather than silent.
+    The guide (`page.tsx`) and the reference (`reference/page.tsx`) are read together:
+    the endpoint rows live in the reference now, so reading one file alone would see no
+    endpoints and wrongly conclude the surface was undocumented. They are frontend files
+    and the API image contains no `web/`, so a test that reads them fails inside the
+    container for a reason that has nothing to do with the API. A full checkout — CI, or
+    a local run that mounts the frontend — has the files and the assertions below really
+    run. Skipping is the honest answer for an API-only checkout, and the message names
+    the mount so the difference is visible rather than silent.
     """
-    if not DOCS_PAGE.exists():
+    present = [page for page in DOCS_PAGES if page.exists()]
+    if not present:
         pytest.skip(
-            "docs page not in this checkout; to run this assertion mount the "
+            "docs pages not in this checkout; to run this assertion mount the "
             "frontend, e.g. -v <repo>/web:/app/web:ro "
-            f"(looked in {DOCS_PAGE})"
+            f"(looked in {', '.join(str(page) for page in DOCS_PAGES)})"
         )
-    return DOCS_PAGE.read_text(encoding="utf-8")
+    return "\n".join(page.read_text(encoding="utf-8") for page in present)
 
 
 def _documented_operations() -> set[tuple[str, str]]:
