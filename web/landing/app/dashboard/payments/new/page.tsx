@@ -5,13 +5,42 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { readApiErrorInfo } from "@/components/portal/apiError";
+import { formatMoney } from "@shared/money";
 
 type StoreOption = {
   id: string;
   name: string;
   status?: string;
+  // One destination per currency. `link` is the primary, kept for payloads that predate
+  // the second link.
+  link?: { currency?: string | null } | null;
+  links?: { currency?: string | null }[] | null;
   [k: string]: unknown;
 };
+
+/**
+ * The currencies a store can be charged in, primary first.
+ *
+ * A store holds at most one link per currency, and the API treats USD as the default when
+ * the store has one — so the same order here means the form opens on the currency the API
+ * would have used if `currency` were omitted.
+ */
+function currenciesOf(store: StoreOption | undefined): ("USD" | "KHR")[] {
+  const found: ("USD" | "KHR")[] = [];
+  const remember = (value: unknown) => {
+    const currency = String(value ?? "").toUpperCase();
+    if (
+      (currency === "USD" || currency === "KHR") &&
+      !found.includes(currency)
+    ) {
+      found.push(currency);
+    }
+  };
+  for (const link of store?.links ?? []) remember(link?.currency);
+  if (found.length === 0) remember(store?.link?.currency);
+  found.sort((a, b) => (a === "USD" ? -1 : b === "USD" ? 1 : 0));
+  return found.length > 0 ? found : ["USD"];
+}
 
 export default function DashboardPaymentsNewPage() {
   const router = useRouter();
@@ -21,6 +50,9 @@ export default function DashboardPaymentsNewPage() {
   const [amount, setAmount] = useState("");
   const [referenceId, setReferenceId] = useState("");
   const [storePublicId, setStorePublicId] = useState("");
+  // The currency the payment is charged in. Meaningful only when the chosen store holds a
+  // link in each currency; otherwise the store decides.
+  const [currency, setCurrency] = useState<"USD" | "KHR">("USD");
   const [merchant, setMerchant] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState("");
   // "auto" omits the field entirely, which is what lets the API decide: ABA issues the
@@ -66,17 +98,31 @@ export default function DashboardPaymentsNewPage() {
     };
   }, []);
 
+  const selectedStore =
+    stores.find((s) => s.id === storePublicId) ??
+    (stores.length === 1 ? stores[0] : undefined);
+  const storeCurrencies = currenciesOf(selectedStore);
+  const multiCurrency = storeCurrencies.length > 1;
+  // Derived rather than stored: a store that cannot be charged in the chosen currency falls
+  // back to the one it can, without an effect that would fight the user's own selection.
+  const effectiveCurrency = storeCurrencies.includes(currency)
+    ? currency
+    : storeCurrencies[0];
+
   const parsedAmount = parseFloat(amount);
   const previewAmount =
     amount && !Number.isNaN(parsedAmount) && parsedAmount > 0
-      ? `$${parsedAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      : "$0.00";
+      ? formatMoney(parsedAmount, effectiveCurrency)
+      : formatMoney(0, effectiveCurrency);
 
   const amountValid =
     amount.trim() !== "" &&
     !Number.isNaN(parsedAmount) &&
     parsedAmount > 0 &&
-    Math.round(parsedAmount * 100) / 100 === parsedAmount;
+    (effectiveCurrency === "KHR"
+      ? // The riel has no subunit — ABA mints whole riel, so 5000 is valid and 5000.50 is not.
+        Number.isInteger(parsedAmount)
+      : Math.round(parsedAmount * 100) / 100 === parsedAmount);
 
   const activeStores = stores.filter(
     (s) => {
@@ -123,6 +169,9 @@ export default function DashboardPaymentsNewPage() {
       const metadata = buildMetadata();
       if (metadata) body.metadata = metadata;
       if (storePublicId) body.store = storePublicId;
+      // Only when the store can take both: otherwise the store's own link decides, and
+      // sending a currency would be asserting something the form did not ask.
+      if (multiCurrency) body.currency = effectiveCurrency;
       // The same three fields the API documents. Left untouched they are omitted rather
       // than sent as null, so the request is what the API's own defaults describe.
       if (merchant.trim()) body.merchant = merchant.trim();
@@ -193,16 +242,18 @@ export default function DashboardPaymentsNewPage() {
               id="pay-amount"
               className="dash-input"
               type="number"
-              step="0.01"
-              min="0.01"
-              placeholder="e.g. 25.00"
+              step={effectiveCurrency === "KHR" ? "1" : "0.01"}
+              min={effectiveCurrency === "KHR" ? "1" : "0.01"}
+              placeholder={effectiveCurrency === "KHR" ? "e.g. 5000" : "e.g. 25.00"}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               required
             />
             {amount && !amountValid && (
               <div className="dash-field-error">
-                Enter a valid positive amount with up to 2 decimals.
+                {effectiveCurrency === "KHR"
+                  ? "Riel has no subunit — enter a whole number, e.g. 5000."
+                  : "Enter a valid positive amount with up to 2 decimals."}
               </div>
             )}
           </div>
@@ -244,13 +295,13 @@ export default function DashboardPaymentsNewPage() {
               ) : null}
               {activeStores.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.name}
+                  {s.name} — {currenciesOf(s).join(" + ")}
                 </option>
               ))}
               {activeStores.length === 0 && stores.length > 0
                 ? stores.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.name}
+                      {s.name} — {currenciesOf(s).join(" + ")}
                     </option>
                   ))
                 : null}
@@ -265,6 +316,33 @@ export default function DashboardPaymentsNewPage() {
             )}
           </div>
         </div>
+
+        {multiCurrency ? (
+          <div className="dash-field">
+            <label htmlFor="pay-currency">Currency</label>
+            <select
+              id="pay-currency"
+              className="dash-select"
+              value={effectiveCurrency}
+              onChange={(e) => setCurrency(e.target.value as "USD" | "KHR")}
+            >
+              {storeCurrencies.map((option) => (
+                <option key={option} value={option}>
+                  {option === "KHR" ? "KHR — Cambodian Riel" : "USD — US Dollar"}
+                </option>
+              ))}
+            </select>
+            <div className="dash-hint">
+              Charged through this store&apos;s {effectiveCurrency} ABA PayWay link. A store
+              holds one link per currency, so both are offered only when both are set up.
+            </div>
+          </div>
+        ) : (
+          <div className="dash-hint">
+            This store settles in {effectiveCurrency}. To charge in the other currency, add
+            its link in the store&apos;s settings — one store can hold both.
+          </div>
+        )}
 
         <div className="dash-form-row">
           <div className="dash-field">
