@@ -187,7 +187,8 @@ Response `201 Created` (or `200` on idempotent replay):
 }
 ```
 
-Amounts serialized as decimal strings. `qr_string` is the raw EMVCo/KHQR payload to hand to any
+Amounts serialized as decimal strings, and the currency decides the shape: whole riel for `KHR`
+(`"5000"`, never `"5000.00"`) and two decimals for `USD` (`"1.50"`). `qr_string` is the raw EMVCo/KHQR payload to hand to any
 QR library (render at ECC H so the centre medallion survives). Generated server-side only.
 
 ## GET /api/v1/payments/:id and GET /api/v1/payments
@@ -313,6 +314,10 @@ Body:
   }
 }
 ```
+
+`amount` is the same bare decimal the REST API returns — one figure for one payment whichever
+way you read it. Its shape follows the currency: whole riel for `KHR` (`"5000"`, never
+`"5000.00"`), two decimals for `USD`.
 
 ### Reporting contract
 
