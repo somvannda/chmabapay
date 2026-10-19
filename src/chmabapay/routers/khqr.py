@@ -90,10 +90,6 @@ def _normalize_link(link: str) -> tuple[str, str]:
     return slug, f"{PAYWAY_BASE}/{slug}"
 
 
-def _money_to_str(cents: int) -> str:
-    return f"{cents / 100:,.2f}"
-
-
 def _tags_dump(qr: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for tag, value in parse_tlv(qr):
@@ -178,7 +174,7 @@ async def khqr_from_link(
         currency_iso = "840"
 
     now_epoch = int(datetime.now(UTC).timestamp())
-    amount_str = _format_amount(amount_cents)
+    amount_str = _format_amount(amount_cents, currency)
     expires_epoch = now_epoch + ttl
     term_id = f"{now_epoch % 1000000000:09d}"
 
@@ -270,7 +266,7 @@ async def khqr_from_link(
         external_ref=reference_id,
         bill_number=bill_number,
         reference_id=body.reference_id,
-        amount=_money_to_str(amount_cents),
+        amount=schemas.money_to_str(amount_cents, currency, grouping=False),
         amount_cents=amount_cents,
         currency=currency,
         merchant_name=effective_name,

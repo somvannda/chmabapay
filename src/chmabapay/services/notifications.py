@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 
 from .. import models
 from ..config import get_settings
+from ..schemas import money_to_str, normalize_currency
 from . import telegram
 
 log = logging.getLogger(__name__)
@@ -68,10 +69,18 @@ def _flat(text: str) -> str:
     return text.replace("\n", " | ")
 
 
-def money(cents: int | None) -> str:
-    """`$9.99`. Public because a notice carries a formatted amount beside its cents, and two
-    formatters for one currency is one formatter too many."""
-    return f"${(cents or 0) / 100:,.2f}"
+def money(cents: int | None, currency: str = "USD") -> str:
+    """`$9.99` / `៛5,000` — one formatter, and it knows the currency.
+
+    The currency decides both the symbol and whether a fractional part exists: the riel has
+    no subunit, so `៛5,000` is the figure. Sending `$1,000.00 KHR` for a thousand riel was
+    neither currency's amount, which is exactly the kind of figure an operator reconciles
+    against the wrong ledger.
+    """
+    return (
+        ("៛" if normalize_currency(currency) == "KHR" else "$")
+        + money_to_str(cents or 0, currency)
+    )
 
 
 def format_payment_paid(
@@ -88,7 +97,9 @@ def format_payment_paid(
     """
     lines = [
         "✅ Payment settled" if invoice is None else "✅ Plan fee settled",
-        f"Amount: {money(payment.amount_cents)} {payment.currency}",
+        # The symbol is the currency — `money` knows it. A trailing code would read
+        # "៛1,000 KHR".
+        f"Amount: {money(payment.amount_cents, payment.currency)}",
         f"Store: {store.name}",
     ]
     if payment.reference_id:

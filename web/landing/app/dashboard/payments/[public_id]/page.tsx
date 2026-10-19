@@ -143,6 +143,34 @@ export default function DashboardPaymentDetailPage({
     };
   }, [publicId]);
 
+  // A payment settles in the background — the poller confirms it with ABA — so without this
+  // the page sat on "pending" until the merchant reloaded it. Re-read while it can still
+  // change, and stop the moment it reaches a terminal state.
+  const paymentIsLive =
+    payment?.status === "pending" || payment?.status === "scanned";
+  useEffect(() => {
+    if (!paymentIsLive) return;
+    let alive = true;
+    const id = setInterval(() => {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/v1/payments/${publicId}`, {
+            credentials: "include",
+          });
+          if (!res.ok || !alive) return;
+          const data = (await res.json()) as Payment;
+          if (alive) setPayment(data);
+        } catch {
+          // A transient failure is not worth a banner: the next tick tries again.
+        }
+      })();
+    }, 5000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [paymentIsLive, publicId]);
+
   async function handleRefresh() {
     setLoading(true);
     setError(null);

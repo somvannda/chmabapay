@@ -21,6 +21,17 @@ router = APIRouter(tags=["checkout"])
 
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{3,8}$")
 
+
+def _amount_display(cents: int, currency: str) -> str:
+    """`$1,000.00` / `៛1,000` — the figure the payer reads, in the payer's own currency.
+
+    The symbol is the currency, and the riel has no subunit so it is never written with
+    decimals. This page used to render the raw number with no symbol at all, and always
+    with two decimals, so a riel amount read `1000.00` beside the word KHR.
+    """
+    symbol = "៛" if schemas.normalize_currency(currency) == "KHR" else "$"
+    return f"{symbol}{schemas.money_to_str(cents, currency)}"
+
 _STYLE = """
 :root{--red:#d92b2b;--ink:#1f2430;--muted:#6b7280;--ok:#16a34a;--warn:#d97706}
 *{box-sizing:border-box;margin:0}
@@ -186,7 +197,7 @@ def _checkout_html(
 <body><div class="card">
 <div class="head">{logo}{merchant}</div>
 <div class="body">
-{meta}<div class="amount">{money_to_str(payment.amount_cents)} <small>{payment.currency}</small></div>
+{meta}<div class="amount">{_amount_display(payment.amount_cents, payment.currency)} <small>{payment.currency}</small></div>
 {qr}<div class="panel {_panel_class(payment.status)}" id="panel">…</div>
 <div id="countdown"></div>
 </div><div class="foot">{base_url}</div>
