@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from . import models
 from .config import get_settings
 from .db import session_factory
+from .schemas import money_to_str
 from .security import sign_payload
 
 EVENT_HEADER = "X-ChmabaPay-Event"
@@ -86,7 +87,12 @@ def build_event_payload(event_id: str, event_type: str, payment, store) -> dict:
             "payment": {
                 "id": payment.public_id,
                 "status": payment.status,
-                "amount": f"{payment.amount_cents / 100:.2f}",
+                # The same bare decimal the REST API sends, so a webhook handler and a
+                # polling integration see one figure for one payment. Whole riel for KHR,
+                # two decimals for USD.
+                "amount": money_to_str(
+                    payment.amount_cents, payment.currency, grouping=False
+                ),
                 "currency": payment.currency,
                 "reference_id": payment.reference_id,
                 "metadata": payment.metadata_,
