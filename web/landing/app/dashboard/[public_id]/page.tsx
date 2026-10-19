@@ -325,6 +325,22 @@ export default function StoreOverviewPage({
               Per-store metrics and recent activity, scoped to this ChmabaPay
               store.
             </div>
+            {/* Store-scoped, so the new-payment form does not ask which store — this page
+                already is that store. */}
+            <div className="dash-toolbar-filters">
+              <Link
+                className="dash-btn dash-btn-primary"
+                href={`/dashboard/${publicId}/payments/new`}
+              >
+                + New payment
+              </Link>
+              <Link
+                className="dash-btn dash-btn-secondary"
+                href={`/dashboard/${publicId}/payments`}
+              >
+                View payments
+              </Link>
+            </div>
           </div>
           <div className="dash-hero-right">
             <div className="dash-plan-card">
