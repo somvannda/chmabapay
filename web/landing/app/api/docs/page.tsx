@@ -41,7 +41,9 @@ export CHMABA_API="${baseUrl}"`,
       "merchant_name": "Demo Store"
     }
   }'
-# The store becomes "active". ABA PayWay is the only supported destination.`,
+# The store becomes "active". ABA PayWay is the only supported destination, and a
+# link settles in one currency — for a store that takes dollars and riel, send
+# "links": [...] with one entry per currency instead of a single "link".`,
     },
     {
       title: "Create a payment",
@@ -51,6 +53,7 @@ export CHMABA_API="${baseUrl}"`,
   -H "Content-Type: application/json" \\
   -d '{
     "amount": 5.50,
+    "currency": "USD",
     "reference_id": "ticket_42",
     "idempotency_key": "ticket_42",
     "store": "st_your_store_id",
@@ -60,6 +63,8 @@ export CHMABA_API="${baseUrl}"`,
 #        "qr_string": "000201...", "checkout_url": ".../pay/kQ7mZx2VaRt9LpBnWc4YsH1u",
 #        "expires_at": "..." }
 # Payment ids carry no prefix — only stores are st_… — so do not strip one.
+# currency picks which of the store's links mints the code; omit it for the store's
+# default (the USD link when it has one). A KHR amount is whole riel: 5000, not 5000.50.
 # idempotency_key goes in the BODY — retry with the same value to get the
 # same payment back instead of minting a second one.`,
     },

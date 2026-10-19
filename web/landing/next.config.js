@@ -19,7 +19,11 @@ const nextConfig = {
   async redirects() {
     return [
       {
-        source: "/dashboard/:public_id/payments/:pay_id",
+        // `(?!new$)` keeps this off `/dashboard/{store}/payments/new`, which is a real
+        // page: the router runs redirects before it resolves a page, so without the
+        // exclusion that route was rewritten to the account-level form and the store it
+        // was scoped to was lost.
+        source: "/dashboard/:public_id/payments/:pay_id((?!new$).+)",
         destination: "/dashboard/payments/:pay_id",
         permanent: false,
       },

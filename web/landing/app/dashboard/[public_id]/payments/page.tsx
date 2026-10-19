@@ -257,7 +257,7 @@ export default function StorePaymentsPage({
               <div className="dash-empty-cta-row">
                 <Link
                   className="dash-btn dash-btn-primary dash-btn-sm"
-                  href="/dashboard/payments/new"
+                  href={`/dashboard/${publicId}/payments/new`}
                 >
                   + Create payment
                 </Link>
