@@ -685,9 +685,10 @@ async def update_store(
         )
     if payload.link is not None:
         await _carry_forward_currency(session, store, payload.link)
-        verification = await resolve_link(payload.link)
+    for link_payload in _links_from(payload):
+        verification = await resolve_link(link_payload)
         await attach_link_to_store(
-            session, store, payload.link, verification=verification
+            session, store, link_payload, verification=verification
         )
         if verification == models.LINK_VERIFIED and store.status == models.STORE_DRAFT:
             store.status = models.STORE_ACTIVE
@@ -697,7 +698,11 @@ async def update_store(
             action="store.link_set",
             target_type="Store",
             target_id=store.id,
-            details={**_link_details(payload.link), "verification": verification},
+            details={
+                **_link_details(link_payload),
+                "currency": normalize_currency(link_payload.currency),
+                "verification": verification,
+            },
         )
     await session.commit()
     await session.refresh(store)

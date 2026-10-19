@@ -23,7 +23,9 @@ in the second section below.
 | GET | `/pay/:id` | **Public** hosted checkout page (no auth) |
 | GET | `/pay/:id/qr.svg` | **Public** QR image; `410` once the code is dead |
 | GET | `/api/v1/khqr/render.svg` | KHQR SVG renderer (no auth), `ecc`/`scale` params |
+| POST | `/api/v1/stores` | Create a store, with one destination (`link`) or one per currency (`links`) |
 | PUT | `/api/v1/stores/:id` | Update a store (alias of `PATCH /api/v1/stores/:id`) |
+| PUT | `/api/v1/stores/:id/link` | Attach or replace the destination for one currency |
 | POST | `/api/v1/transactions/token/renew` | Request a fresh short-lived Bakong JWT |
 
 ## Two surfaces, and why they are separate
@@ -59,6 +61,77 @@ ledger group (decision D-3). The platform-admin routes (`/api/v1/admin/*`) and t
 (`/_dev/*`, mounted only when `ENABLE_DEV_GATEWAY=true`) are internal and are not part of any
 public surface.
 
+## Store destinations: one link per currency
+
+A store's money goes to an **ABA PayWay share link**, and a link settles in exactly one
+currency. ABA fixes that when the link is created — the currency is in the link's own payload,
+and a `currency` field in a mint request is ignored, with the code still coming back in the
+link's currency. So a store that accepts both dollars and riel holds **two links**, one per
+currency, and a payment's `currency` decides which one is used.
+
+One destination, as before:
+
+```json
+{
+  "name": "Phnom Penh Cafe",
+  "city": "Phnom Penh",
+  "link": {
+    "raw_link": "https://link.payway.com.kh/ABAPAYpe518710Y",
+    "merchant_account_id": "ABAPAYpe518710Y",
+    "currency": "USD"
+  }
+}
+```
+
+Both, for a store that takes dollars and riel:
+
+```json
+{
+  "name": "Phnom Penh Cafe",
+  "city": "Phnom Penh",
+  "links": [
+    { "raw_link": "https://link.payway.com.kh/ABAPAYpe518710Y",
+      "merchant_account_id": "ABAPAYpe518710Y", "currency": "USD" },
+    { "raw_link": "https://link.payway.com.kh/ABAPAYm1548517c",
+      "merchant_account_id": "ABAPAYm1548517c", "currency": "KHR" }
+  ]
+}
+```
+
+Rules, all enforced server-side and all fail-closed:
+
+* `link` and `links` are alternatives — sending both is `400 link_and_links`.
+* At most one link per currency and at most two links — `400 duplicate_link_currency`,
+  `400 too_many_links`.
+* Each link's `currency` must match what ABA PayWay reports for that link:
+  `400 payway_link_currency_mismatch`, or `400 payway_link_currency_unverified` when ABA will
+  not report a currency and the value is not `USD`. KHR additionally needs the deployment to
+  have it switched on: `400 khr_currency_disabled`.
+* A link ABA does not recognise is `400 payway_link_not_found`; a value that is not a PayWay
+  link at all is `400 payway_link_invalid`.
+
+Reads return both, with `link` kept as the primary destination:
+
+```json
+{
+  "id": "st_…",
+  "name": "Phnom Penh Cafe",
+  "link":  { "currency": "USD", "raw_link": "https://link.payway.com.kh/ABAPAYpe518710Y", "verification": "verified", "status": "active" },
+  "links": [
+    { "currency": "USD", "raw_link": "https://link.payway.com.kh/ABAPAYpe518710Y", "verification": "verified", "status": "active" },
+    { "currency": "KHR", "raw_link": "https://link.payway.com.kh/ABAPAYm1548517c", "verification": "verified", "status": "active" }
+  ]
+}
+```
+
+`link` is the primary destination — the USD link when the store has one — so an integration
+that only reads `link` behaves exactly as it did before riel existed. Read `links` when you
+need to know every currency the store can be charged in.
+
+`PUT /api/v1/stores/:id/link` writes the link for the currency it names and leaves the other
+alone. A store that holds both must name the currency — `400 link_currency_required` — rather
+than have the API guess which payout destination to replace.
+
 ## POST /api/v1/payments
 
 Request body:
@@ -71,20 +144,25 @@ Request body:
 `store=<store public id>` (account-scoped keys) or `merchant=<store external_id>`. `hosted_qr`
 defaults to on and is what makes ABA issue a payable code; `hosted_qr=false` builds the code
 offline and is refused with `400 offline_qr_requires_a_confirmation_source` unless the
-deployment can confirm it. `amount` is a decimal in the store link's currency (`USD` or `KHR`),
-not necessarily USD. A `KHR` store takes whole-riel amounts only — a fractional value is refused
-with `400 khr_amount_must_be_whole` (the riel has no subunit). An optional `currency` field may
-override the store's currency, but an ABA PayWay link settles in one currency, so a different
-value is refused with `400 currency_mismatch`.
+deployment can confirm it. `amount` is a decimal in the currency of the link the payment uses
+(`USD` or `KHR`), not necessarily USD. A `KHR` payment takes whole-riel amounts only — a
+fractional value is refused with `400 khr_amount_must_be_whole` (the riel has no subunit).
+
+The optional `currency` field picks **which of the store's links** mints the payment. A store
+may hold one link per currency (see [Store destinations](#store-destinations)), so
+`currency: "KHR"` uses its riel link and `currency: "USD"` its dollar link. Omit it to use the
+store's default, which is the dollar link when the store has one — an integration that never
+sends `currency` behaves exactly as it always has. A currency the store has no link for is
+`400 currency_not_configured`; nothing is substituted for it.
 
 Idempotency is the **body field** `idempotency_key` only — the `Idempotency-Key` header is not
 read. Retry with the same value to get the same payment back.
 
 Validation: `amount ≥ 0.01`, ≤ link max, ≤ 2 decimals — `amount_too_low` / `amount_too_high`
 (`400` from the service, `422` from the request schema) and `invalid_amount` (`422`).
-A currency the destination cannot honour is refused: `currency_mismatch` (differs from the
-link), `currency_not_supported_by_hosted_checkout` (the hosted rail), and
-`khr_amount_must_be_whole` (a fractional riel amount).
+A currency the store has no destination for is refused: `currency_not_configured`, along with
+`currency_not_supported_by_hosted_checkout` (the hosted rail) and `khr_amount_must_be_whole`
+(a fractional riel amount).
 Missing/invalid key → `401 unauthorized`; suspended account → `403 account_suspended`;
 account frozen for an unpaid plan invoice → `403 account_restricted`. Quota exhausted →
 `402 quota_exceeded`. No link / disabled → `400 payment_link_disabled` / `400 store_disabled`;
@@ -306,7 +384,9 @@ Codes returned in `detail` (verified against `src/`):
 | `whitelabel_not_enabled` | 403 | Branding fields sent without the entitlement |
 | `invalid_amount` / `amount_too_low` / `amount_too_high` | 422 (or 400 from the service) | Amount rejected |
 | `khr_amount_must_be_whole` | 400 | A `KHR` amount was not a whole number of riel (the riel has no subunit) |
-| `currency_mismatch` | 400 | The requested `currency` differs from the store link's own |
+| `currency_not_configured` | 400 | The requested `currency` has no link in this store. A store may hold one link per currency; this one does not hold that currency |
+| `link_currency_required` | 400 | The store holds a link for each currency, so a link update must name the currency it replaces |
+| `link_and_links` / `duplicate_link_currency` / `too_many_links` | 400 | Malformed `link` / `links` on store create or update |
 | `currency_not_supported_by_hosted_checkout` | 400 | A hosted (ABA-issued) code settles only in the link's currency |
 | `khr_currency_disabled` | 400 | A store was set to `KHR` but the deployment has KHR switched off (`ENABLE_KHR_CURRENCY`) |
 | `payway_link_currency_mismatch` | 400 | The store's currency differs from what ABA PayWay reports for the link |

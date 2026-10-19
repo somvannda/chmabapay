@@ -19,12 +19,14 @@ export default function DashboardStoresNewPage() {
   const [city, setCity] = useState("");
   const [cityTouched, setCityTouched] = useState(false);
   const [externalId, setExternalId] = useState("");
-  const [paywayLink, setPaywayLink] = useState("");
-  const [paywayMerchantName, setPaywayMerchantName] = useState("");
-  // The currency this store settles in. ABA PayWay links are single-currency, so
-  // this is stored on the destination itself — a USD link cannot be asked for riel.
-  const [currency, setCurrency] = useState<"USD" | "KHR">("USD");
-  // Whether KHR is offered at all. Gated behind the same decision as the API's
+  const [usdLink, setUsdLink] = useState("");
+  const [usdMerchantName, setUsdMerchantName] = useState("");
+  const [khrLink, setKhrLink] = useState("");
+  const [khrMerchantName, setKhrMerchantName] = useState("");
+  // One destination per currency. ABA fixes a link's currency when the link is created
+  // and ignores any attempt to ask it for another, so a store that takes both dollars
+  // and riel holds one of each — that is why these are two fields, not a choice.
+  // Whether riel is offered at all is gated behind the same decision as the API's
   // `ENABLE_KHR_CURRENCY`; the backend refuses KHR when it is off regardless.
   const khrEnabled = process.env.NEXT_PUBLIC_ENABLE_KHR === "true";
 
@@ -45,24 +47,39 @@ export default function DashboardStoresNewPage() {
   // slug and not on the length of whatever was pasted. The server still has the
   // final word: it asks PayWay whether the link exists, which no local check can.
   function isFormValid(): boolean {
-    return (
-      Boolean(name.trim()) &&
-      city.trim() !== "" &&
-      paywaySlug(paywayLink).length >= 4
-    );
+    const usdOk = paywaySlug(usdLink).length >= 4;
+    const khrOk = paywaySlug(khrLink).length >= 4;
+    if (!name.trim() || city.trim() === "") return false;
+    // At least one destination, and any destination that was typed has to be complete —
+    // a half-typed second link must not be silently dropped from the request.
+    if (!usdOk && !khrOk) return false;
+    return khrLink.trim() === "" || khrOk;
   }
 
   function buildBody(): Record<string, unknown> {
-    const link = paywayLink.trim();
+    const links: Record<string, unknown>[] = [];
+    if (usdLink.trim()) {
+      links.push({
+        raw_link: usdLink.trim(),
+        merchant_account_id: paywaySlug(usdLink),
+        merchant_name: usdMerchantName.trim() || name.trim(),
+        currency: "USD",
+      });
+    }
+    if (khrEnabled && khrLink.trim()) {
+      links.push({
+        raw_link: khrLink.trim(),
+        merchant_account_id: paywaySlug(khrLink),
+        merchant_name: khrMerchantName.trim() || name.trim(),
+        currency: "KHR",
+      });
+    }
     const body: Record<string, unknown> = {
       name: name.trim(),
       city: city.trim(),
-      link: {
-        raw_link: link,
-        merchant_account_id: paywaySlug(link),
-        merchant_name: paywayMerchantName.trim() || name.trim(),
-        currency,
-      },
+      // One destination keeps the original shape; two go as `links`. The API accepts
+      // either, so an integration written against `link` is unaffected.
+      ...(links.length === 1 ? { link: links[0] } : { links }),
     };
     if (externalId.trim()) body.external_id = externalId.trim();
     return body;
@@ -193,56 +210,79 @@ export default function DashboardStoresNewPage() {
           </div>
         </div>
 
-        <div className="dash-field">
-          <label htmlFor="payway-link">ABA PayWay link</label>
-          <input
-            id="payway-link"
-            className="dash-input"
-            type="url"
-            placeholder="https://link.payway.com.kh/ABAPAYpe518710Y"
-            value={paywayLink}
-            onChange={(e) => setPaywayLink(e.target.value)}
-            required
-          />
-          <div className="dash-hint">
-            ABA PayWay is the only supported payment destination.
+        <div className="dash-form-row">
+          <div className="dash-field">
+            <label htmlFor="payway-link-usd">USD link</label>
+            <input
+              id="payway-link-usd"
+              className="dash-input"
+              type="url"
+              placeholder="https://link.payway.com.kh/ABAPAY…"
+              value={usdLink}
+              onChange={(e) => setUsdLink(e.target.value)}
+            />
           </div>
-          {linkError && <div className="dash-field-error">{linkError}</div>}
-        </div>
-
-        <div className="dash-field">
-          <label htmlFor="store-currency">Currency</label>
-          <select
-            id="store-currency"
-            className="dash-input dash-select"
-            value={currency}
-            onChange={(e) => setCurrency(e.target.value as "USD" | "KHR")}
-          >
-            <option value="USD">USD — US Dollar</option>
-            {khrEnabled ? (
-              <option value="KHR">KHR — Cambodian Riel</option>
-            ) : null}
-          </select>
-          <div className="dash-hint">
-            The currency your ABA PayWay link settles in. Payments for this store
-            are created in it.
+          <div className="dash-field">
+            <label htmlFor="payway-merchant-usd">
+              USD merchant name{" "}
+              <span className="dash-badge dash-badge-muted">optional</span>
+            </label>
+            <input
+              id="payway-merchant-usd"
+              className="dash-input"
+              type="text"
+              placeholder="Shown to the payer in their bank app"
+              value={usdMerchantName}
+              onChange={(e) => setUsdMerchantName(e.target.value)}
+            />
           </div>
         </div>
-
-        <div className="dash-field">
-          <label htmlFor="payway-merchant-name">
-            Merchant name{" "}
-            <span className="dash-badge dash-badge-muted">optional</span>
-          </label>
-          <input
-            id="payway-merchant-name"
-            className="dash-input"
-            type="text"
-            placeholder="Shown to the payer in their bank app"
-            value={paywayMerchantName}
-            onChange={(e) => setPaywayMerchantName(e.target.value)}
-          />
+        <div className="dash-hint">
+          The dollar link. ABA fixes a link&rsquo;s currency when the link is created,
+          so a store that takes both currencies holds one link of each. Leave this blank
+          if the store only accepts riel.
         </div>
+
+        {khrEnabled && (
+          <>
+            <div className="dash-form-row">
+              <div className="dash-field">
+                <label htmlFor="payway-link-khr">
+                  KHR link{" "}
+                  <span className="dash-badge dash-badge-muted">optional</span>
+                </label>
+                <input
+                  id="payway-link-khr"
+                  className="dash-input"
+                  type="url"
+                  placeholder="https://link.payway.com.kh/ABAPAY…"
+                  value={khrLink}
+                  onChange={(e) => setKhrLink(e.target.value)}
+                />
+              </div>
+              <div className="dash-field">
+                <label htmlFor="payway-merchant-khr">
+                  KHR merchant name{" "}
+                  <span className="dash-badge dash-badge-muted">optional</span>
+                </label>
+                <input
+                  id="payway-merchant-khr"
+                  className="dash-input"
+                  type="text"
+                  placeholder="Shown to the payer in their bank app"
+                  value={khrMerchantName}
+                  onChange={(e) => setKhrMerchantName(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="dash-hint">
+              The riel link, for a store that accepts riel. Leave it blank if the store
+              only takes dollars — you can add it later in the store&rsquo;s settings.
+            </div>
+          </>
+        )}
+
+        {linkError && <div className="dash-field-error">{linkError}</div>}
 
         <div className="dash-toolbar">
           <Link
