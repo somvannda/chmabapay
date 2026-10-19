@@ -198,11 +198,26 @@ class Store(Base):
 
 
 class PaymentLink(Base):
+    """A store's settlement destination: one ABA PayWay share link per currency.
+
+    A link is single-currency. ABA embeds the currency in the link's own payload and
+    ignores every attempt to ask it for another (verified against the live endpoint:
+    a `currency` field is dropped and the QR still comes back in the link's currency),
+    so a store that accepts both dollars and riel holds **two links**, one per currency,
+    and the payment's requested currency decides which one mints the QR.
+
+    `store_id` used to be unique, which made that impossible — one store could only ever
+    settle in one currency.
+    """
+
     __tablename__ = "payment_links"
+    __table_args__ = (
+        UniqueConstraint("store_id", "currency", name="uq_store_link_currency"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     store_id: Mapped[int] = mapped_column(
-        ForeignKey("stores.id"), nullable=False, unique=True, index=True
+        ForeignKey("stores.id"), nullable=False, index=True
     )
     link_type: Mapped[str] = mapped_column(String(24), default=LINK_ABA_PAYWAY)
     raw_link: Mapped[str] = mapped_column(Text, nullable=False)

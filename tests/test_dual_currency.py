@@ -56,6 +56,90 @@ async def _store_with(account, currency: str, *, owner: str = "Sokha") -> models
         )
 
 
+async def _store_with_both(account, *, owner: str = "Both") -> models.Store:
+    """One store, two destinations — a dollar link and a riel one."""
+    async with session_factory() as session:
+        return await store_svc.create_store(
+            session,
+            account,
+            StoreCreate(
+                name=f"{owner} Both",
+                links=[
+                    LinkCreate(
+                        raw_link=f"https://link.payway.com.kh/{owner.lower()}-usd",
+                        merchant_account_id=f"{owner.lower()}-usd",
+                        merchant_name=owner,
+                        currency="USD",
+                    ),
+                    LinkCreate(
+                        raw_link=f"https://link.payway.com.kh/{owner.lower()}-khr",
+                        merchant_account_id=f"{owner.lower()}-khr",
+                        merchant_name=owner,
+                        currency="KHR",
+                    ),
+                ],
+            ),
+        )
+
+
+async def test_one_store_with_two_links_mints_either_currency(client):
+    """One store, both destinations: `currency` chooses which link mints the QR.
+
+    This is the point of the second link. A merchant keeps one store — one plan slot,
+    one reporting surface — and takes dollars or riel by naming the currency. Omitting
+    it uses the store's default, which is the dollar link whenever the store has one,
+    so an integration that never sends `currency` behaves exactly as it did before.
+    """
+    merchant = await make_account(email="both@chmaba.test", name="Both Merchant")
+    store = await _store_with_both(merchant)
+    raw_key, _key = await make_key(merchant)
+    auth = {"Authorization": f"Bearer {raw_key}"}
+
+    # Omitted currency → the store's default destination (USD).
+    res = await client.post(
+        "/api/v1/payments",
+        json={
+            "amount": 5,
+            "reference_id": "both-default",
+            "store": store.public_id,
+            "hosted_qr": False,
+        },
+        headers=auth,
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["currency"] == "USD"
+    assert dict(parse_tlv(body["qr_string"])).get("53") == "840"
+
+    # Asked for riel → the KHR link, same store.
+    res = await client.post(
+        "/api/v1/payments",
+        json={
+            "amount": 5000,
+            "currency": "KHR",
+            "reference_id": "both-khr",
+            "store": store.public_id,
+            "hosted_qr": False,
+        },
+        headers=auth,
+    )
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["currency"] == "KHR"
+    # `amount` is the machine-readable string the API has always sent — ungrouped, so a
+    # client can parse it. Grouping is the portal's job (`@shared/money`).
+    assert body["amount"] == "5000"
+    assert dict(parse_tlv(body["qr_string"])).get("53") == "116"
+
+    # The read model reports both destinations, and `link` stays the dollar one so an
+    # integrator that only reads `link` sees no change when riel is added.
+    res = await client.get(f"/api/v1/stores/{store.public_id}", headers=auth)
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert sorted(link["currency"] for link in payload["links"]) == ["KHR", "USD"]
+    assert payload["link"]["currency"] == "USD"
+
+
 def test_money_to_str_drops_decimals_for_khr():
     # 5,000 riel is stored as 500000 minor units, the same ×100 scale as USD.
     assert money_to_str(500000, "KHR") == "5,000"
@@ -113,7 +197,13 @@ async def test_payment_inherits_the_stores_khr_currency(client):
     assert tags.get("53") == "116"
 
 
-async def test_khr_request_on_a_usd_payway_link_is_refused(client):
+async def test_khr_request_on_a_usd_only_store_is_refused(client):
+    """A store holding only a dollar link has nothing to mint riel from.
+
+    The refusal names the missing link rather than a "mismatch": a store may hold both
+    currencies now, and this one simply does not hold KHR. Minting the dollar QR anyway
+    would charge the payer in a currency the caller did not ask for.
+    """
     merchant = await make_account(email="usd@chmaba.test", name="USD Merchant")
     store = await make_store(merchant, owner="Usd")
     raw_key, _key = await make_key(merchant)
@@ -130,7 +220,7 @@ async def test_khr_request_on_a_usd_payway_link_is_refused(client):
         headers={"Authorization": f"Bearer {raw_key}"},
     )
     assert res.status_code == 400, res.text
-    assert "currency_mismatch" in res.text
+    assert "currency_not_configured" in res.text
 
 
 async def test_explicit_usd_on_a_usd_store_is_accepted(client):

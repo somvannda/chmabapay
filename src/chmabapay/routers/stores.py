@@ -41,8 +41,8 @@ class StoreListResponse(BaseModel):
 
 
 async def _with_link(session: AsyncSession, store: models.Store) -> schemas.StoreOut:
-    link = await svc.load_link(session, store.id)
-    return schemas.StoreOut.from_model(store, link)
+    links = await svc.load_links(session, store.id)
+    return schemas.StoreOut.from_model(store, links)
 
 
 async def _enforce_max_stores(session: AsyncSession, account: models.Account) -> None:
