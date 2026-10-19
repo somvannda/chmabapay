@@ -140,6 +140,68 @@ async def test_one_store_with_two_links_mints_either_currency(client):
     assert payload["link"]["currency"] == "USD"
 
 
+async def test_a_riel_link_can_be_added_to_an_existing_dollar_store(client):
+    """The journey a real merchant takes: one store already settling in dollars.
+
+    They add the KHR link in that store's settings. It must not become a second store
+    (another plan slot, split reporting) and must not disturb the dollar destination —
+    the same store simply gains a second way to be paid.
+    """
+    merchant = await make_account(email="add-khr@chmaba.test", name="Add KHR")
+    store = await _store_with(merchant, "USD", owner="Adding")
+    raw_key, _key = await make_key(merchant)
+    auth = {"Authorization": f"Bearer {raw_key}"}
+
+    res = await client.patch(
+        f"/api/v1/stores/{store.public_id}",
+        json={
+            # Both are sent, as the settings form does, so a rejection would apply
+            # neither rather than leaving the store half-configured.
+            "links": [
+                {
+                    "raw_link": "https://link.payway.com.kh/adding-usd",
+                    "merchant_account_id": "adding-usd",
+                    "merchant_name": "Adding",
+                    "currency": "USD",
+                },
+                {
+                    "raw_link": "https://link.payway.com.kh/adding-khr",
+                    "merchant_account_id": "adding-khr",
+                    "merchant_name": "Adding",
+                    "currency": "KHR",
+                },
+            ]
+        },
+        headers=auth,
+    )
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert sorted(link["currency"] for link in payload["links"]) == ["KHR", "USD"]
+    # The dollar link is still what a `link`-only client sees.
+    assert payload["link"]["currency"] == "USD"
+
+    # And the same store now mints riel.
+    res = await client.post(
+        "/api/v1/payments",
+        json={
+            "amount": 2500,
+            "currency": "KHR",
+            "reference_id": "added-khr",
+            "store": store.public_id,
+            "hosted_qr": False,
+        },
+        headers=auth,
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["currency"] == "KHR"
+    assert dict(parse_tlv(res.json()["qr_string"])).get("53") == "116"
+
+    # Still one store, not two.
+    res = await client.get("/api/v1/stores", headers=auth)
+    assert res.status_code == 200, res.text
+    assert len(res.json()["data"]) == 1
+
+
 def test_money_to_str_drops_decimals_for_khr():
     # 5,000 riel is stored as 500000 minor units, the same ×100 scale as USD.
     assert money_to_str(500000, "KHR") == "5,000"
