@@ -160,10 +160,13 @@ class StorePatch(BaseModel):
     logo_image_url: str | None = None
     whitelabel_css: str | None = None
     link: LinkCreate | None = None
+    # Both destinations in one call, so the settings form cannot half-save: two links
+    # sent together are written together, and a rejection leaves neither applied.
+    links: list[LinkCreate] | None = None
 
     def apply_to(self, store: Any) -> None:
         for field_name, value in self.model_dump(
-            exclude_unset=True, exclude={"link"}
+            exclude_unset=True, exclude={"link", "links"}
         ).items():
             setattr(store, field_name, value)
 

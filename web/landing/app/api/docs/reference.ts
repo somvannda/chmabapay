@@ -116,6 +116,30 @@ export const errorGroups: ErrorGroup[] = [
       },
       {
         status: 400,
+        code: "link_currency_required",
+        meaning:
+          "The store holds a link for each currency, so a link update has to say which one it replaces. Send `currency` with the link; the API will not guess which payout destination to overwrite.",
+      },
+      {
+        status: 400,
+        code: "link_and_links",
+        meaning:
+          "`link` and `links` are alternatives. Send one destination as `link`, or both as `links` — never both at once.",
+      },
+      {
+        status: 400,
+        code: "duplicate_link_currency",
+        meaning:
+          "Two links in the same currency were sent. A store holds at most one link per currency.",
+      },
+      {
+        status: 400,
+        code: "too_many_links",
+        meaning:
+          "More links than currencies were sent. A store holds at most two — one USD, one KHR.",
+      },
+      {
+        status: 400,
         code: "telegram_chat_id_not_set",
         meaning: "The store has no Telegram chat configured to send a test to.",
       },
@@ -199,9 +223,9 @@ export const errorGroups: ErrorGroup[] = [
       },
       {
         status: 400,
-        code: "currency_mismatch",
+        code: "currency_not_configured",
         meaning:
-          "The `currency` on the request differs from the currency the store's ABA PayWay link settles in. Create the payment without `currency` to use the store's own.",
+          "The requested `currency` has no link in this store. A store may hold one link per currency, and this one does not hold that currency. Add it with `PUT /api/v1/stores/{public_id}/link`, or omit `currency` to use the store's default destination.",
       },
       {
         status: 400,

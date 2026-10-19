@@ -17,6 +17,7 @@ type StoreLink = {
   raw_link?: string | null;
   merchant_account_id?: string | null;
   merchant_name?: string | null;
+  currency?: string | null;
   [k: string]: unknown;
 };
 
@@ -32,6 +33,9 @@ type StoreSettings = {
   logo_image_url?: string | null;
   whitelabel_css?: string | null;
   link?: StoreLink | null;
+  // One destination per currency. `link` is still sent as the primary one, so a store
+  // read through an older client is unaffected.
+  links?: StoreLink[] | null;
   telegram_chat_id?: string | null;
   [k: string]: unknown;
 };
@@ -71,12 +75,15 @@ export default function StoreSettingsPage({
   const [storeSuccess, setStoreSuccess] = useState<string | null>(null);
   const [storeError, setStoreError] = useState<string | null>(null);
 
-  const [paywayLink, setPaywayLink] = useState("");
-  const [paywayMerchantName, setPaywayMerchantName] = useState("");
-  // The destination's currency, chosen on the store's PayWay link.
-  const [currency, setCurrency] = useState<"USD" | "KHR">("USD");
+  // One destination per currency. ABA fixes a link's currency when the link is created,
+  // so a store that takes dollars and riel holds one link of each.
+  const [usdLink, setUsdLink] = useState("");
+  const [usdMerchantName, setUsdMerchantName] = useState("");
+  const [khrLink, setKhrLink] = useState("");
+  const [khrMerchantName, setKhrMerchantName] = useState("");
   // Mirrors the API's `ENABLE_KHR_CURRENCY`; the backend refuses KHR when it is off.
-  // An already-KHR store still shows its value even if the option is hidden.
+  // An already-KHR store still shows its link even if the field is not offered for new
+  // stores, so nobody loses sight of a destination that exists.
   const khrEnabled = process.env.NEXT_PUBLIC_ENABLE_KHR === "true";
   const [paywayUnsupported, setPaywayUnsupported] = useState(false);
   const [plSaving, setPlSaving] = useState(false);
@@ -119,18 +126,21 @@ export default function StoreSettingsPage({
           setFailureRedirect(data.redirect_failure_url || "");
           setLogoImageUrl(data.logo_image_url || "");
           setWhitelabelCss(data.whitelabel_css || "");
-          const link = data.link ?? null;
-          const legacyUnsupported = link?.link_type === "bakong_id";
+          const links = data.links ?? (data.link ? [data.link] : []);
+          const legacyUnsupported = links.some(
+            (candidate) => candidate?.link_type === "bakong_id",
+          );
           setPaywayUnsupported(legacyUnsupported);
-          setPaywayLink(legacyUnsupported ? "" : link?.raw_link || "");
-          setPaywayMerchantName(
-            legacyUnsupported ? "" : link?.merchant_name || "",
-          );
-          setCurrency(
-            (link?.currency as string | undefined)?.toUpperCase() === "KHR"
-              ? "KHR"
-              : "USD",
-          );
+          const linkFor = (wanted: "USD" | "KHR") =>
+            links.find(
+              (candidate) => (candidate?.currency || "").toUpperCase() === wanted,
+            ) ?? null;
+          const usd = linkFor("USD");
+          const khr = linkFor("KHR");
+          setUsdLink(legacyUnsupported ? "" : usd?.raw_link || "");
+          setUsdMerchantName(legacyUnsupported ? "" : usd?.merchant_name || "");
+          setKhrLink(legacyUnsupported ? "" : khr?.raw_link || "");
+          setKhrMerchantName(legacyUnsupported ? "" : khr?.merchant_name || "");
           setTelegramChatId(data.telegram_chat_id || "");
         }
       } catch (e) {
@@ -220,14 +230,32 @@ export default function StoreSettingsPage({
       setPlSuccess(null);
       setActionError(null);
       try {
-        const body: Record<string, unknown> = {
-          link: {
-            raw_link: paywayLink.trim(),
-            merchant_account_id: paywaySlug(paywayLink),
-            merchant_name: paywayMerchantName.trim() || name.trim(),
-            currency,
-          },
-        };
+        const links: Record<string, unknown>[] = [];
+        if (usdLink.trim()) {
+          links.push({
+            raw_link: usdLink.trim(),
+            merchant_account_id: paywaySlug(usdLink),
+            merchant_name: usdMerchantName.trim() || name.trim(),
+            currency: "USD",
+          });
+        }
+        if (khrLink.trim()) {
+          links.push({
+            raw_link: khrLink.trim(),
+            merchant_account_id: paywaySlug(khrLink),
+            merchant_name: khrMerchantName.trim() || name.trim(),
+            currency: "KHR",
+          });
+        }
+        if (links.length === 0) {
+          setPlError("Paste at least one ABA PayWay link.");
+          setPlSaving(false);
+          return;
+        }
+        // Both destinations in one PATCH when there are two, so a rejection writes
+        // neither rather than leaving the store half-configured.
+        const body: Record<string, unknown> =
+          links.length === 1 ? { link: links[0] } : { links };
         const res = await fetch(`/api/v1/stores/${publicId}`, {
           method: "PATCH",
           credentials: "include",
@@ -246,7 +274,7 @@ export default function StoreSettingsPage({
         setPlSaving(false);
       }
     },
-    [paywayLink, paywayMerchantName, name, currency, publicId],
+    [usdLink, usdMerchantName, khrLink, khrMerchantName, name, publicId],
   );
 
   const handleTelegramSave = useCallback(
@@ -576,54 +604,76 @@ export default function StoreSettingsPage({
                 </div>
               )}
 
-              <div className="dash-field">
-                <label htmlFor="ss-payway-link">ABA PayWay link</label>
-                <input
-                  id="ss-payway-link"
-                  type="url"
-                  className="dash-input"
-                  value={paywayLink}
-                  onChange={(e) => setPaywayLink(e.target.value)}
-                  placeholder="https://link.payway.com.kh/ABAPAYpe518710Y"
-                />
-                <div className="dash-hint">
-                  Paste your ABA PayWay share link. ABA PayWay is the only
-                  supported payment destination.
+              <div className="dash-form-row">
+                <div className="dash-field">
+                  <label htmlFor="ss-payway-link-usd">USD link</label>
+                  <input
+                    id="ss-payway-link-usd"
+                    type="url"
+                    className="dash-input"
+                    value={usdLink}
+                    onChange={(e) => setUsdLink(e.target.value)}
+                    placeholder="https://link.payway.com.kh/ABAPAY…"
+                  />
+                </div>
+                <div className="dash-field">
+                  <label htmlFor="ss-payway-merchant-usd">
+                    USD merchant name{" "}
+                    <span className="dash-badge dash-badge-muted">optional</span>
+                  </label>
+                  <input
+                    id="ss-payway-merchant-usd"
+                    type="text"
+                    className="dash-input"
+                    value={usdMerchantName}
+                    onChange={(e) => setUsdMerchantName(e.target.value)}
+                    placeholder="Shown to the payer in their bank app"
+                  />
                 </div>
               </div>
 
-              <div className="dash-field">
-                <label htmlFor="ss-payway-merchant-name">
-                  Merchant name{" "}
-                  <span className="dash-badge dash-badge-muted">optional</span>
-                </label>
-                <input
-                  id="ss-payway-merchant-name"
-                  type="text"
-                  className="dash-input"
-                  value={paywayMerchantName}
-                  onChange={(e) => setPaywayMerchantName(e.target.value)}
-                  placeholder="Shown to the payer in their bank app"
-                />
-              </div>
+              {(khrEnabled || khrLink) && (
+                <>
+                  <div className="dash-form-row">
+                    <div className="dash-field">
+                      <label htmlFor="ss-payway-link-khr">
+                        KHR link{" "}
+                        <span className="dash-badge dash-badge-muted">optional</span>
+                      </label>
+                      <input
+                        id="ss-payway-link-khr"
+                        type="url"
+                        className="dash-input"
+                        value={khrLink}
+                        onChange={(e) => setKhrLink(e.target.value)}
+                        placeholder="https://link.payway.com.kh/ABAPAY…"
+                      />
+                    </div>
+                    <div className="dash-field">
+                      <label htmlFor="ss-payway-merchant-khr">
+                        KHR merchant name{" "}
+                        <span className="dash-badge dash-badge-muted">optional</span>
+                      </label>
+                      <input
+                        id="ss-payway-merchant-khr"
+                        type="text"
+                        className="dash-input"
+                        value={khrMerchantName}
+                        onChange={(e) => setKhrMerchantName(e.target.value)}
+                        placeholder="Shown to the payer in their bank app"
+                      />
+                    </div>
+                  </div>
+                  <div className="dash-hint">
+                    A riel link, so this store can be charged in riel as well as
+                    dollars. ABA fixes a link&rsquo;s currency when the link is created.
+                  </div>
+                </>
+              )}
 
-              <div className="dash-field">
-                <label htmlFor="ss-payway-currency">Currency</label>
-                <select
-                  id="ss-payway-currency"
-                  className="dash-input dash-select"
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value as "USD" | "KHR")}
-                >
-                  <option value="USD">USD — US Dollar</option>
-                  {khrEnabled || currency === "KHR" ? (
-                    <option value="KHR">KHR — Cambodian Riel</option>
-                  ) : null}
-                </select>
-                <div className="dash-hint">
-                  The currency this ABA PayWay link settles in. Payments for this
-                  store are created in it.
-                </div>
+              <div className="dash-hint">
+                ABA PayWay is the only supported payment destination. Payments are
+                created in the currency of the link they use.
               </div>
 
               <div>
