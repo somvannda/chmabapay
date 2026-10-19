@@ -68,17 +68,46 @@ async def load_store_by_public(
     return store
 
 
-async def load_active_link(session: AsyncSession, store_id: int) -> models.PaymentLink:
-    res = await session.execute(
-        select(models.PaymentLink).where(
-            models.PaymentLink.store_id == store_id,
-            models.PaymentLink.status == "active",
-        )
+async def load_active_link(
+    session: AsyncSession, store_id: int, currency: str | None = None
+) -> models.PaymentLink:
+    """The store's active link for a currency, or its primary one when none is named.
+
+    A store may hold one link per currency, so "the link" is only well defined once a
+    currency is chosen. With none named the primary is used — USD when the store has it,
+    otherwise the only link it has — which is exactly what a single-link store did before
+    the second currency existed.
+    """
+    stmt = select(models.PaymentLink).where(
+        models.PaymentLink.store_id == store_id,
+        models.PaymentLink.status == "active",
     )
-    link = res.scalar_one_or_none()
-    if link is None:
+    if currency:
+        wanted = normalize_currency(currency)
+        link = (
+            await session.execute(
+                stmt.where(models.PaymentLink.currency == wanted)
+            )
+        ).scalar_one_or_none()
+        if link is None:
+            # Named rather than falling back: minting the other currency's QR would
+            # charge the payer in a currency the caller did not ask for.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"currency_not_configured: this store has no {wanted} payment "
+                    "link. Add one, or omit `currency` to use the store's default."
+                ),
+            )
+        return link
+
+    links = list((await session.execute(stmt.order_by(models.PaymentLink.id))).scalars().all())
+    if not links:
         raise HTTPException(status_code=400, detail="payment_link_disabled")
-    return link
+    for link in links:
+        if normalize_currency(link.currency) == "USD":
+            return link
+    return links[0]
 
 
 async def mint_qr(
@@ -176,35 +205,6 @@ def _refuse_unusable_store(store: models.Store) -> None:
         raise HTTPException(status_code=400, detail="store_billing_suspended")
 
 
-def _resolve_payment_currency(
-    link: models.PaymentLink, requested: str | None
-) -> str:
-    """The currency a payment is created in, or a refusal.
-
-    Omitted means the destination's own currency. A caller may ask for a different
-    one only when the destination is not an ABA PayWay link — a PayWay link settles
-    in exactly one currency and ABA issues the QR for it, so honouring a different
-    request would hand out a code the payer's wallet refuses. Refused explicitly
-    rather than silently downgraded to the link's currency, which would misreport
-    what the customer is being charged.
-    """
-    link_currency = normalize_currency(link.currency)
-    if not requested:
-        return link_currency
-    wanted = normalize_currency(requested)
-    if wanted == link_currency:
-        return wanted
-    if is_payway_link(link):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"currency_mismatch: this store's ABA PayWay link settles in "
-                f"{link_currency}, so a {wanted} payment cannot be created for it."
-            ),
-        )
-    return wanted
-
-
 async def create_payment(
     session: AsyncSession,
     *,
@@ -217,8 +217,11 @@ async def create_payment(
     hosted_qr: bool | None = None,
 ) -> tuple[models.Payment, bool]:
     _refuse_unusable_store(store)
-    link = await load_active_link(session, store.id)
-    resolved_currency = _resolve_payment_currency(link, currency)
+    link = await load_active_link(session, store.id, currency)
+    # The link settles in exactly one currency and ABA issues the QR in it, so the
+    # link's currency *is* the payment's currency. Choosing the link above is what
+    # makes a requested currency meaningful; there is nothing left to reconcile.
+    resolved_currency = normalize_currency(link.currency)
 
     # The riel has no subunit, so a fractional KHR amount has no valid KHQR Tag 54
     # value. Refused rather than rounded: rounding a charge silently changes what

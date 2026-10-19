@@ -49,7 +49,12 @@ class StoreCreate(BaseModel):
     brand_color: str | None = Field(default=None, max_length=16)
     logo_image_url: str | None = None
     whitelabel_css: str | None = None
+    # One destination, as before. Kept so every existing integration keeps working.
     link: LinkCreate | None = None
+    # Both destinations at once: one link per currency, for a store that accepts dollars
+    # and riel. `link` and `links` may not both be sent — that would be two answers to
+    # the same question — and no currency may appear twice.
+    links: list[LinkCreate] | None = None
 
 
 class LinkOut(BaseModel):
@@ -98,11 +103,29 @@ class StoreOut(BaseModel):
     # an operator disabled stays disabled. Surfaced so the billing page can offer the
     # merchant the slot chooser — which stores of the fifty stay live.
     billing_suspended_at: datetime | None
+    # The destination this store settles through. `link` stays the single link it always
+    # was — the primary one, USD when the store has it — so an integrator that reads it
+    # keeps working. `links` is the full set, one per currency, for a store that settles
+    # in both.
     link: LinkOut | None
+    links: list[LinkOut] = Field(default_factory=list)
     created_at: datetime
 
     @classmethod
-    def from_model(cls, store: Any, link: Any | None) -> StoreOut:
+    def from_model(cls, store: Any, links: Any) -> StoreOut:
+        # One link or a list of them: the console and a few callers still hand over the
+        # single destination they already loaded, and every one of them means the same
+        # thing by it.
+        if links is None:
+            ordered: list[Any] = []
+        elif isinstance(links, (list, tuple)):
+            ordered = list(links)
+        else:
+            ordered = [links]
+        primary = next(
+            (link for link in ordered if str(link.currency or "").upper() == "USD"),
+            ordered[0] if ordered else None,
+        )
         return cls(
             id=store.public_id,
             db_id=store.id,
@@ -119,7 +142,8 @@ class StoreOut(BaseModel):
             whitelabel_css=store.whitelabel_css,
             is_internal=store.is_internal,
             billing_suspended_at=store.billing_suspended_at,
-            link=LinkOut.from_model(link) if link else None,
+            link=LinkOut.from_model(primary) if primary else None,
+            links=[LinkOut.from_model(link) for link in ordered],
             created_at=store.created_at,
         )
 

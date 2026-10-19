@@ -34,6 +34,42 @@ def _link_details(payload: LinkIn | LinkCreate) -> dict:
     }
 
 
+MAX_LINKS = 2  # the two currencies ABA can settle in
+
+
+def _links_from(payload: StoreCreate | StorePatch) -> list[LinkCreate]:
+    """The destinations a create/update named, with the ambiguous cases refused.
+
+    `link` and `links` are two spellings of the same intent, so sending both is a
+    contradiction rather than a merge. Two links in one currency is the other
+    contradiction: the schema allows one row per (store, currency), and a request that
+    would violate that should fail with a sentence rather than a database error.
+    """
+    single = getattr(payload, "link", None)
+    many = getattr(payload, "links", None)
+    if single is not None and many:
+        raise HTTPException(
+            status_code=400,
+            detail="link_and_links: send `link` or `links`, not both.",
+        )
+    candidates = list(many) if many else ([single] if single is not None else [])
+    if len(candidates) > MAX_LINKS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"too_many_links: a store holds at most {MAX_LINKS}, one per currency.",
+        )
+    seen: set[str] = set()
+    for candidate in candidates:
+        currency = normalize_currency(candidate.currency)
+        if currency in seen:
+            raise HTTPException(
+                status_code=400,
+                detail=f"duplicate_link_currency: two links were sent for {currency}.",
+            )
+        seen.add(currency)
+    return candidates
+
+
 # A store's destination must be an ABA PayWay share link or the slug of one. This is
 # the cheap half of the check — a value that is not a PayWay link at all (a Bakong
 # account id, an arbitrary URL) is refused here without spending an outbound call.
@@ -218,10 +254,10 @@ async def create_store(session: AsyncSession, account: models.Account, payload: 
         details={"name": store.name, "external_id": store.external_id},
     )
 
-    if payload.link is not None:
-        verification = await resolve_link(payload.link)
+    for link_payload in _links_from(payload):
+        verification = await resolve_link(link_payload)
         await attach_link_to_store(
-            session, store, payload.link, verification=verification
+            session, store, link_payload, verification=verification
         )
         # Only a link PayWay confirmed promotes the store to active. An unverified
         # one is stored — so the merchant is not blocked, and can retry — but the
@@ -235,7 +271,11 @@ async def create_store(session: AsyncSession, account: models.Account, payload: 
             action="store.link_set",
             target_type="Store",
             target_id=store.id,
-            details={**_link_details(payload.link), "verification": verification},
+            details={
+                **_link_details(link_payload),
+                "currency": normalize_currency(link_payload.currency),
+                "verification": verification,
+            },
         )
 
     await session.commit()
@@ -258,9 +298,21 @@ async def _carry_forward_currency(
     """
     if "currency" in getattr(payload, "model_fields_set", set()):
         return
-    existing = await load_link(session, store.id)
-    if existing is not None and existing.currency:
-        payload.currency = existing.currency
+    existing = await load_links(session, store.id)
+    if len(existing) == 1 and existing[0].currency:
+        # Unambiguous: the store has one destination, so a link update is about that one.
+        payload.currency = existing[0].currency
+        return
+    if len(existing) > 1:
+        # Two destinations and no currency named. Guessing would replace the wrong payout
+        # destination, which is the one mistake in this module that sends money elsewhere.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "link_currency_required: this store has a link for each currency, so "
+                "`currency` must say which one is being replaced."
+            ),
+        )
 
 
 async def attach_link(
@@ -313,8 +365,12 @@ async def attach_link_to_store(
     writes, an explicit `LINK_VERIFIED` for the operator console's own link, which
     is checked for shape there rather than probed.
     """
+    currency = normalize_currency(getattr(payload, "currency", None))
     res = await session.execute(
-        select(models.PaymentLink).where(models.PaymentLink.store_id == store.id)
+        select(models.PaymentLink).where(
+            models.PaymentLink.store_id == store.id,
+            models.PaymentLink.currency == currency,
+        )
     )
     link = res.scalar_one_or_none()
     values = dict(
@@ -325,8 +381,9 @@ async def attach_link_to_store(
         # The link's own currency, chosen when the store was set up. This used to be
         # hardcoded to USD, which meant the API accepted a KHR store and then stored
         # it as USD — silently. ABA settles a PayWay link in one currency, so the
-        # link is where that fact belongs.
-        currency=normalize_currency(getattr(payload, "currency", None)),
+        # link is where that fact belongs, and a store that takes both holds one link
+        # per currency rather than a link that claims to be two things.
+        currency=currency,
         verification=verification,
         status="active",
     )
@@ -647,8 +704,39 @@ async def update_store(
     return store
 
 
-async def load_link(session: AsyncSession, store_id: int) -> models.PaymentLink | None:
+def primary_link(links: list[models.PaymentLink]) -> models.PaymentLink | None:
+    """The store's default destination: USD when it has one, else the one it has.
+
+    Deterministic on purpose, and stable as a second link is added — a store that has
+    always taken dollars keeps reporting its dollar link as `link` when riel is
+    configured beside it, so an integrator that only reads `link` sees no change.
+    """
+    for link in links:
+        if normalize_currency(link.currency) == "USD":
+            return link
+    return links[0] if links else None
+
+
+async def load_links(session: AsyncSession, store_id: int) -> list[models.PaymentLink]:
+    """Every destination the store holds, oldest first — at most one per currency."""
     res = await session.execute(
-        select(models.PaymentLink).where(models.PaymentLink.store_id == store_id)
+        select(models.PaymentLink)
+        .where(models.PaymentLink.store_id == store_id)
+        .order_by(models.PaymentLink.id)
+    )
+    return list(res.scalars().all())
+
+
+async def load_link(
+    session: AsyncSession, store_id: int, currency: str | None = None
+) -> models.PaymentLink | None:
+    """The store's link for a currency, or its primary one when none is named."""
+    if currency is None:
+        return primary_link(await load_links(session, store_id))
+    res = await session.execute(
+        select(models.PaymentLink).where(
+            models.PaymentLink.store_id == store_id,
+            models.PaymentLink.currency == normalize_currency(currency),
+        )
     )
     return res.scalar_one_or_none()
