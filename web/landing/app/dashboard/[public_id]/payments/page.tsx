@@ -223,7 +223,7 @@ export default function StorePaymentsPage({
         <div className="dash-toolbar-filters">
           <Link
             className="dash-btn dash-btn-primary"
-            href="/dashboard/payments/new"
+            href={`/dashboard/${publicId}/payments/new`}
           >
             + Create payment
           </Link>
