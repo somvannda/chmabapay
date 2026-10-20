@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useToast } from "@/components/Toast";
 import { readApiError } from "@/lib/apiError";
 import { apiFetch } from "@/lib/apiFetch";
+import { formatMoneyCents } from "@shared/money";
 
 type PaymentDelivery = {
   id: number;
@@ -76,8 +77,9 @@ function formatDateTime(iso: string | null | undefined): string {
 }
 
 function formatAmount(cents: number, currency: string): string {
-  const symbol = (currency || "USD").toUpperCase() === "USD" ? "$" : "";
-  return `${symbol}${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${(currency || "USD").toUpperCase()}`;
+  // Same rule as the merchant portal: the symbol is the currency, and riel has no subunit.
+  // The trailing code went with it — `៛1,000 KHR` says the same thing twice.
+  return formatMoneyCents(cents, currency);
 }
 
 function paymentPill(status: string | null | undefined): {
