@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { readApiError } from "@/lib/apiError";
 import { apiFetch } from "@/lib/apiFetch";
+import { formatMoneyCents } from "@shared/money";
 
 type AdminPaymentRow = {
   id: string;
@@ -57,8 +58,10 @@ function formatDateTime(iso: string | null | undefined): string {
 }
 
 function formatAmount(cents: number, currency: string): string {
-  const symbol = (currency || "USD").toUpperCase() === "USD" ? "$" : "";
-  return `${symbol}${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // The currency decides the symbol and whether the figure has decimals: riel is written
+  // `៛1,000`, never `1,000.00`. This used to drop the symbol for anything but USD, so a
+  // riel row read as a dollar amount that had lost its sign.
+  return formatMoneyCents(cents, currency);
 }
 
 function paymentPill(status: string | null | undefined): {
