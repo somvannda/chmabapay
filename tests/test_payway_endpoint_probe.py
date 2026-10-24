@@ -164,6 +164,30 @@ async def test_a_403_that_hides_a_move_is_reported_as_one() -> None:
     assert "PAYWAY_PROXY_URL" not in condition.detail
 
 
+async def test_an_empty_configured_base_uses_the_built_in_one() -> None:
+    """`PAYWAY_HOSTED_API_BASE=` in compose is empty, not "probe nothing".
+
+    The first production run of this probe hit exactly that: the empty value
+    overrode the default, the probe URL had no scheme, and every tick reported a
+    move against a base it had never actually checked.
+    """
+    base = payway_parser.hosted_api_base()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == base + STATUS_PATH
+        return httpx.Response(400, json={"message": "client_id is required"})
+
+    verdict = await check_payway_endpoint(configured_base="", client=_client(handler))
+
+    assert verdict.status == "ok"
+    assert verdict.configured.base_url == base
+
+
+def test_the_watcher_probe_resolves_an_empty_base_too() -> None:
+    """The alert path quotes `base_url`, so it must be the resolved one."""
+    assert PaywayEndpointProbe(base_url="").base_url == payway_parser.hosted_api_base()
+
+
 async def test_a_network_refusal_names_the_proxy_escape_hatch() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="<html>nginx</html>")

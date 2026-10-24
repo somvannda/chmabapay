@@ -37,6 +37,7 @@ from .payway_parser import (
     BROWSER_HEADERS,
     HOSTED_CHECK_PAYMENT_STATUS,
     PAYWAY_BASE,
+    hosted_api_base,
 )
 
 if TYPE_CHECKING:  # the import is deferred to avoid a cycle: alerts reaches this module
@@ -265,6 +266,12 @@ async def check_payway_endpoint(
     client: httpx.AsyncClient | None = None,
 ) -> EndpointVerdict:
     """Probe the configured base and, when it fails, the page's current one."""
+    # An empty setting is what `PAYWAY_HOSTED_API_BASE=` in a compose file produces,
+    # not an instruction to probe "": that URL has no scheme, so every check would
+    # report `unreachable` and then "moved" as soon as discovery found the base the
+    # code already defaults to — a false page every interval. Resolve at the
+    # boundary so no caller can hand this module an empty base.
+    configured_base = (configured_base or "").strip() or hosted_api_base()
     configured = await probe_endpoint(configured_base, timeout=timeout, client=client)
     if configured.healthy:
         return EndpointVerdict(status="ok", configured=configured)
@@ -387,7 +394,9 @@ class PaywayEndpointProbe:
         interval_seconds: float = DEFAULT_INTERVAL_SECONDS,
         timeout: float = PROBE_TIMEOUT_SECONDS,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        # Same guard as `check_payway_endpoint`: an empty env value means "use the
+        # built-in base", and `condition_for` must quote the base actually probed.
+        self.base_url = (base_url or "").strip().rstrip("/") or hosted_api_base()
         self.interval_seconds = interval_seconds
         self.timeout = timeout
         self._last_checked: float | None = None
@@ -422,13 +431,16 @@ def main() -> int:
     proxy and for finding the new base the moment an alert says ABA moved it.
     """
     settings = get_settings()
+    # Resolved, not the raw setting: an empty env value must print the base that is
+    # actually probed, or the CLI reports "moved" against nothing at all.
+    base = hosted_api_base()
 
     async def run() -> int:
         verdict = await check_payway_endpoint(
-            configured_base=settings.payway_hosted_api_base,
+            configured_base=base,
             timeout=settings.alert_payway_endpoint_timeout_seconds,
         )
-        print(f"configured: {settings.payway_hosted_api_base}")
+        print(f"configured: {base}")
         print(f"status: {verdict.status}")
         print(f"detail: {verdict.configured.detail}")
         if verdict.working:

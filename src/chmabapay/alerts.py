@@ -378,9 +378,13 @@ class AlertWatcher:
         probe = None
         if settings.alert_payway_endpoint_interval_seconds > 0:
             from .services.payway_endpoint_probe import PaywayEndpointProbe
+            from .services.payway_parser import hosted_api_base
 
             probe = PaywayEndpointProbe(
-                base_url=settings.payway_hosted_api_base,
+                # Resolved rather than the raw setting: `PAYWAY_HOSTED_API_BASE=`
+                # in a compose file yields an empty string, and "probe nothing"
+                # reports a move on every tick.
+                base_url=hosted_api_base(),
                 interval_seconds=settings.alert_payway_endpoint_interval_seconds,
                 timeout=settings.alert_payway_endpoint_timeout_seconds,
             )
