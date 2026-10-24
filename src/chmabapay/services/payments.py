@@ -154,6 +154,18 @@ async def mint_qr(
                 money_to_str(amount_cents, resolved_currency, grouping=False),
             )
         except PayWayHostedError as exc:
+            # The refusal used to live only in the 502 body, so an operator had to
+            # reproduce the failure to learn what ABA said. Log it where the alert
+            # feed and `docker logs` can read it — the host is the part that names
+            # a move, and the store is the part that says who is blocked.
+            logger.warning(
+                "payway_hosted_error store=%s link=%s currency=%s amount=%s: %s",
+                store.public_id,
+                link.id,
+                resolved_currency,
+                money_to_str(amount_cents, resolved_currency, grouping=False),
+                exc,
+            )
             # Better a clear 502 than a QR nobody can pay.
             raise HTTPException(status_code=502, detail=f"payway_hosted_error: {exc}") from exc
         qr_string = checkout.qr_string
