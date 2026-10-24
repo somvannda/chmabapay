@@ -136,6 +136,34 @@ async def test_a_redirect_names_the_new_base_without_crawling_the_page() -> None
     assert all(method == "POST" for method, _ in seen), "a redirect should not crawl the page"
 
 
+async def test_a_403_that_hides_a_move_is_reported_as_one() -> None:
+    """The 2026-10-24 shape: the old base 403s while the page names one that answers.
+
+    A move and a datacenter refusal look identical on the wire (both are nginx's
+    HTML 403), so the page bundle is the only thing that separates them. Reporting
+    this as "set PAYWAY_PROXY_URL" would send the operator down the wrong path.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if request.method == "POST" and url == CONFIGURED + STATUS_PATH:
+            return httpx.Response(403, text="<html>nginx</html>")
+        if request.method == "GET" and url == PAYWAY_BASE:
+            return httpx.Response(200, text=f"<html><script>{BUNDLE}</script></html>")
+        if request.method == "POST" and url == NEW_BASE + STATUS_PATH:
+            return httpx.Response(400, json={"message": "client_id is required"})
+        return httpx.Response(404)
+
+    verdict = await check_payway_endpoint(configured_base=CONFIGURED, client=_client(handler))
+
+    assert verdict.status == "moved"
+    assert verdict.working == NEW_BASE
+    condition = condition_for(verdict, configured_base=CONFIGURED)
+    assert condition is not None
+    assert NEW_BASE in condition.detail
+    assert "PAYWAY_PROXY_URL" not in condition.detail
+
+
 async def test_a_network_refusal_names_the_proxy_escape_hatch() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="<html>nginx</html>")

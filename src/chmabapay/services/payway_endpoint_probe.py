@@ -275,7 +275,13 @@ async def check_payway_endpoint(
         candidates.append(_base_of(configured.redirected_to))
 
     discovered: list[str] = []
-    if not candidates and configured.outcome in ("missing", "unreachable"):
+    # A move and a network refusal both arrive as a bare 403 — the 2026-10-24 move
+    # was exactly that. The page's own bundle is what tells them apart: if it names
+    # a base that answers, this is a move; if it names the configured base (or
+    # nothing), the refusal really is this host's egress and the proxy advice stands.
+    # Without `refused` here the monitor would have paged "set PAYWAY_PROXY_URL" for
+    # the one incident it was built for.
+    if not candidates and configured.outcome in ("missing", "unreachable", "refused"):
         discovered = await discover_hosted_api_bases(timeout=timeout, client=client)
         candidates.extend(discovered)
 
