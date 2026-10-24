@@ -171,6 +171,17 @@ class Settings(BaseSettings):
     # operator point it at an allowed egress without moving the whole application.
     # Unset means a direct connection, which is correct wherever ABA is reachable.
     payway_proxy_url: str | None = None
+    # ABA moves the hosted-checkout API without notice. On 2026-10-24 the old host
+    # (pwapp.ababank.com/api) began answering nginx's 403 and the link page's own
+    # build had moved to link.payway.com.kh/api. Both the mint and the status call
+    # read this base, so a move breaks QR generation *and* strands every issued
+    # session. Configurable so the fix is a restart rather than a code change.
+    payway_hosted_api_base: str = "https://link.payway.com.kh/api"
+    # The endpoint probe asks ABA whether that base still answers, and re-derives
+    # it from the PayWay page bundle when it does not. Every 30 minutes catches a
+    # move while it is still a one-line fix; 0 disables the check.
+    alert_payway_endpoint_interval_seconds: float = 1800.0
+    alert_payway_endpoint_timeout_seconds: float = 8.0
     alert_interval_seconds: float = 30.0
     # A healthy drain loop asks for work every ~0.05s, so anything near a minute
     # means the loop is gone rather than busy.
