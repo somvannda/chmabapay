@@ -132,9 +132,25 @@ def _refusal_message(step: str, status: int) -> str:
 # refusal, which the payload-level test ruled out by failing from a residential
 # connection too. Re-derive it from the page bundle (search for `API_BASE_PUBLIC_URL`)
 # if this ever 403s again rather than guessing another host.
+#
+# `services/payway_endpoint_probe.py` now watches this: it probes the base every
+# 30 minutes, re-derives it from the bundle when it fails, and pages the ops chat
+# with the replacement. `PAYWAY_HOSTED_API_BASE` overrides the constant, so the
+# next move is a restart rather than a release.
 HOSTED_API_BASE = "https://link.payway.com.kh/api"
 HOSTED_LIST_PAYMENT_OPTIONS = "/pw-app/v1/payment/gateway/list-payment-options"
 HOSTED_CHECK_PAYMENT_STATUS = "/pw-app/v1/payment-link/check-payment-status"
+
+
+def hosted_api_base() -> str:
+    """The base both hosted-checkout calls use, overridable without a code change.
+
+    The constant is the value measured on 2026-10-24. ``PAYWAY_HOSTED_API_BASE``
+    exists because ABA has now moved this base once: when the endpoint probe says
+    it moved again, the fix should be a restart, not a release.
+    """
+    override = (get_settings().payway_hosted_api_base or "").strip()
+    return (override or HOSTED_API_BASE).rstrip("/")
 
 # The page's own poll cadence (setInterval(..., 3e3) in _nuxt/2f784c0.js).
 HOSTED_POLL_INTERVAL_SECONDS = 3.0
@@ -260,7 +276,7 @@ async def create_hosted_checkout(
     }
     async with _client(timeout) as client:
         res = await client.post(
-            HOSTED_API_BASE + HOSTED_LIST_PAYMENT_OPTIONS,
+            hosted_api_base() + HOSTED_LIST_PAYMENT_OPTIONS,
             json=body,
             # The page's own XHR sends these; ABA's edge treats a bare POST to this
             # endpoint as not-from-the-page.
@@ -318,7 +334,7 @@ async def fetch_hosted_status(
     }
     async with _client(timeout) as client:
         res = await client.post(
-            HOSTED_API_BASE + HOSTED_CHECK_PAYMENT_STATUS,
+            hosted_api_base() + HOSTED_CHECK_PAYMENT_STATUS,
             json=body,
             headers={
                 "language": "en",

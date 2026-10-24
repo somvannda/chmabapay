@@ -166,6 +166,16 @@ x-api-env: &api-env
   # Routes only the ABA PayWay fetches through a proxy, for a host ABA refuses with
   # 403 while an ordinary connection gets 200. Empty means direct.
   PAYWAY_PROXY_URL: ${PAYWAY_PROXY_URL:-}
+  # The base both hosted-checkout calls post to. ABA moved it once without notice
+  # (2026-10-24), so it is a setting rather than only a constant: an operator can
+  # apply the probe's finding with `up -d api` instead of a release. Forwarded
+  # here explicitly because a variable absent from this list is read by compose
+  # and then dropped, leaving the application on its own default.
+  PAYWAY_HOSTED_API_BASE: ${PAYWAY_HOSTED_API_BASE:-}
+  # The probe's own clock. It posts an empty body to the status endpoint, so it
+  # never mints a payment or touches a session. 0 disables the check.
+  ALERT_PAYWAY_ENDPOINT_INTERVAL_SECONDS: ${ALERT_PAYWAY_ENDPOINT_INTERVAL_SECONDS:-1800}
+  ALERT_PAYWAY_ENDPOINT_TIMEOUT_SECONDS: ${ALERT_PAYWAY_ENDPOINT_TIMEOUT_SECONDS:-8}
   # Set a token or /metrics is served unauthenticated. It is not routed at the edge
   # (deploy/nginx/api-locations.inc has no location for it), so this is the second
   # line of defence rather than the only one.

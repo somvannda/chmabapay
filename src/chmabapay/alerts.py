@@ -24,6 +24,12 @@ how many webhook deliveries are failing — cannot: the sender is a sweep that s
 the queue counters never see a delivery fail. It reads the database instead, through
 a callable the watcher is given rather than imports, because this module is
 otherwise testable without a database.
+
+A fourth check arrives the same way: whether ABA's hosted-checkout API is still at
+the base the QR path posts to. That one cannot live here either — it needs HTTP and
+the PayWay page parser — so it is also passed in as a callable
+(`services/payway_endpoint_probe.py`), evaluated on this watcher's tick and clamped
+to its own much slower interval.
 """
 
 from __future__ import annotations
@@ -166,6 +172,11 @@ def format_elapsed(seconds: float) -> str:
 # (failed, total) deliveries over the window. Callable so the watcher does not have to
 # open a database session to be evaluated.
 DeliveryOutcomes = Callable[[float], Awaitable[tuple[int, int]]]
+
+# Conditions produced by a probe that has to reach the outside world (today: ABA's
+# hosted-checkout API). Same contract as `DeliveryOutcomes`: passed in, so this
+# module keeps no HTTP dependency and stays testable without a network.
+ExternalConditions = Callable[[], Awaitable[list["Condition"]]]
 
 
 async def webhook_delivery_outcomes(window_seconds: float) -> tuple[int, int]:
@@ -329,6 +340,7 @@ class AlertWatcher:
         stall_seconds: float,
         backlog_threshold: int,
         delivery_outcomes: DeliveryOutcomes | None = None,
+        external_conditions: ExternalConditions | None = None,
         failure_rate: float = 0.1,
         failure_window_seconds: float = 900.0,
         failure_min_sample: int = 20,
@@ -340,6 +352,7 @@ class AlertWatcher:
         self.stall_seconds = stall_seconds
         self.backlog_threshold = backlog_threshold
         self.delivery_outcomes = delivery_outcomes
+        self.external_conditions = external_conditions
         self.failure_rate = failure_rate
         self.failure_window_seconds = failure_window_seconds
         self.failure_min_sample = failure_min_sample
@@ -359,6 +372,18 @@ class AlertWatcher:
     @classmethod
     def from_settings(cls, *, transport, queues: list[str]) -> AlertWatcher:
         settings = get_settings()
+        # Imported here for the same reason `alerts` itself is imported inside
+        # `start_workers`: the probe imports this module for `Condition`, and the
+        # watcher is constructed while the worker package is loading.
+        probe = None
+        if settings.alert_payway_endpoint_interval_seconds > 0:
+            from .services.payway_endpoint_probe import PaywayEndpointProbe
+
+            probe = PaywayEndpointProbe(
+                base_url=settings.payway_hosted_api_base,
+                interval_seconds=settings.alert_payway_endpoint_interval_seconds,
+                timeout=settings.alert_payway_endpoint_timeout_seconds,
+            )
         return cls(
             transport=transport,
             queues=queues,
@@ -367,6 +392,7 @@ class AlertWatcher:
             stall_seconds=settings.alert_worker_stall_seconds,
             backlog_threshold=settings.alert_webhook_backlog,
             delivery_outcomes=webhook_delivery_outcomes,
+            external_conditions=probe.conditions if probe is not None else None,
             failure_rate=settings.alert_webhook_failure_rate,
             failure_window_seconds=settings.alert_webhook_failure_window_seconds,
             failure_min_sample=settings.alert_webhook_failure_min_sample,
@@ -458,6 +484,21 @@ class AlertWatcher:
                             impact="merchants' systems are missing payments",
                         )
                     )
+        if self.external_conditions is not None:
+            try:
+                conditions.extend(await self.external_conditions())
+            except Exception as exc:  # noqa: BLE001 - a check that cannot run is not a condition
+                # Same rule as the failure-rate measurement above: a probe that
+                # could not run is not evidence of recovery. Keep the conditions it
+                # was last firing so a network blip cannot send "RESOLVED" about an
+                # endpoint that is still missing.
+                log.warning("external condition probe failed: %s", exc)
+                fresh = {condition.key for condition in conditions}
+                conditions.extend(
+                    firing.condition
+                    for firing in self._firing.values()
+                    if firing.condition.key not in fresh
+                )
         return conditions
 
     async def check_once(self) -> list[Condition]:
