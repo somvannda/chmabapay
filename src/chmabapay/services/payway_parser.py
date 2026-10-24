@@ -123,7 +123,16 @@ def _refusal_message(step: str, status: int) -> str:
 # secret key — which is why this is reproducible from a server with no        #
 # browser session and no ABA merchant contract.                               #
 # --------------------------------------------------------------------------- #
-HOSTED_API_BASE = "https://pwapp.ababank.com/api"
+# The link page's own XHR base. ABA moved it on 2026-10-24: the old host
+# (pwapp.ababank.com/api) now answers every call with nginx's 403 Forbidden, while
+# the page's current build (`NUXT_ENV.API_BASE_PUBLIC_URL` in _nuxt/4e1323f.js)
+# points here and accepts the identical body and hash. Because both the mint and
+# the status call share this base, the move broke *every* hosted checkout with a
+# 502 `payway_hosted_error` and left existing sessions unpollable — not a host-IP
+# refusal, which the payload-level test ruled out by failing from a residential
+# connection too. Re-derive it from the page bundle (search for `API_BASE_PUBLIC_URL`)
+# if this ever 403s again rather than guessing another host.
+HOSTED_API_BASE = "https://link.payway.com.kh/api"
 HOSTED_LIST_PAYMENT_OPTIONS = "/pw-app/v1/payment/gateway/list-payment-options"
 HOSTED_CHECK_PAYMENT_STATUS = "/pw-app/v1/payment-link/check-payment-status"
 

@@ -2,7 +2,7 @@
 
 Status sources, in the order we trust them:
 
-  0. ABA's own hosted checkout (pwapp.ababank.com) — AUTHORITATIVE for payments
+  0. ABA's own hosted checkout (link.payway.com.kh/api) — AUTHORITATIVE for payments
      whose QR ABA issued. ABA creates the transaction, so ABA is the only party
      that can confirm it. The session handle (client_id/request_time/token) is
      stored on the payment at creation in gateway_status_raw.payway_hosted, and
