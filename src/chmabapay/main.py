@@ -37,6 +37,7 @@ from .routers import (
     keys,
     khqr,
     payments,
+    probe,
     public,
     reports,
     stores,
@@ -252,6 +253,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router_v1_alias)
     app.include_router(auth.router_user_google)
     app.include_router(payments.router)
+    app.include_router(probe.router)
     app.include_router(stores.router)
     app.include_router(checkout.router)
     app.include_router(transactions.router)

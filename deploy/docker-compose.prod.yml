@@ -207,6 +207,10 @@ x-api-env: &api-env
   CHMABAPAY_ADMIN_PASSWORD: ${CHMABAPAY_ADMIN_PASSWORD:-}
   CHMABAPAY_HQ_STORE_ID: ${CHMABAPAY_HQ_STORE_ID:-}
   CHMABAPAY_HQ_PAYWAY_LINK: ${CHMABAPAY_HQ_PAYWAY_LINK:-}
+  # Scoped bearer token for the internal hourly payment probe. When set, the
+  # monitor does not need a platform-admin API key. See
+  # docs/internal-payment-probe.md.
+  INTERNAL_PROBE_TOKEN: ${INTERNAL_PROBE_TOKEN:-}
 
   # The dunning clock. `lead` is how long before a period ends its renewal invoice is
   # raised; `grace` is how long after that invoice is due before enforcement freezes

@@ -17,6 +17,7 @@ from ..auth import AuthContext, get_current_auth_context
 from ..db import get_session
 from ..openapi import AUTH_ERRORS, AUTH_SECURITY
 from ..schemas import money_to_str
+from ..services import payments as payments_svc
 
 router = APIRouter(
     prefix="/api/v1/reports",
@@ -61,6 +62,9 @@ async def _build_filter_stmt(
 
     stmt = stmt.join(models.Store, models.Store.id == models.Payment.store_id)
     stmt = stmt.where(models.Store.account_id == account.id)
+    # Probe rows are operational noise, not sales. The merchant's own exports have
+    # to agree with the payments list about that.
+    stmt = payments_svc.without_synthetic_payments(stmt)
 
     if from_dt is not None:
         stmt = stmt.where(models.Payment.created_at >= from_dt)

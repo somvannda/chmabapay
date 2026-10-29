@@ -29,6 +29,10 @@ clamped to its own interval, `ALERT_PAYWAY_ENDPOINT_INTERVAL_SECONDS` (default 3
 minutes). The watcher ticks every 30 seconds; between probe runs it reuses the
 last verdict, so a move produces one alert edge, not one per tick.
 
+The separate hourly end-to-end check is `POST /api/v1/internal/payment-probe`: it
+mints a QR against the platform's internal store and writes no payment row. See
+`docs/internal-payment-probe.md`.
+
 The probe posts an **empty** body to the status endpoint. No payment is minted, no
 token is used, and no session is touched. A validation refusal is the proof it
 needs:
