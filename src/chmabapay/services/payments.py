@@ -8,7 +8,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models, observability, webhooks
@@ -27,6 +27,15 @@ logger = logging.getLogger(__name__)
 # end is answered with an empty page, not an error it cannot act on.
 _MAX_OFFSET = 1_000_000
 
+# Reserved for synthetic probes. A payment carrying this reference is an
+# operational check, not a sale: it is refused on a merchant store and hidden
+# from every merchant-facing list and report. The hourly monitor used to write
+# these into a real store, which put fake rows in that merchant's history and
+# fired a fake `payment.expired` webhook every hour. Use
+# `/api/v1/internal/payment-probe` instead; it mints a QR against the platform's
+# own store and never persists a Payment row.
+SYNTHETIC_REFERENCE_PREFIX = "health-smoke:"
+
 
 def _clamp_offset(offset: int) -> int:
     return max(0, min(offset, _MAX_OFFSET))
@@ -38,6 +47,63 @@ def gen_public_id(prefix: str = "") -> str:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def _is_synthetic(reference_id: str | None, metadata: dict | None) -> bool:
+    """Whether this payment is an operational probe rather than a sale.
+
+    Two spellings because the metadata flag is the honest one and the reference
+    prefix is what the old monitor already sends. Checking both is what lets the
+    guard stop the existing hourly job without waiting for it to be repointed.
+    """
+    if reference_id and reference_id.strip().lower().startswith(
+        SYNTHETIC_REFERENCE_PREFIX
+    ):
+        return True
+    return bool(metadata and metadata.get("synthetic") is True)
+
+
+def _refuse_synthetic_on_merchant_store(
+    store: models.Store,
+    reference_id: str | None,
+    metadata: dict | None,
+) -> None:
+    """Synthetic probes may only target the platform's own internal store.
+
+    A probe is not a sale. Letting one land in a merchant store writes a row that
+    merchant cannot explain, hides real volume in their history, and — because the
+    probe is never paid — emits a `payment.expired` webhook every hour as though a
+    customer had abandoned a sale.
+    """
+    if store.is_internal:
+        return
+    if _is_synthetic(reference_id, metadata):
+        logger.warning(
+            "refused synthetic payment on merchant store=%s reference=%r",
+            store.public_id,
+            reference_id,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="synthetic_payment_requires_internal_store",
+        )
+
+
+def without_synthetic_payments(stmt):
+    """Drop probe rows from a merchant-facing payment query.
+
+    `reference_id IS NULL` has to be spelled out: in SQL, `NULL NOT LIKE ...` is
+    NULL, not true, so a bare `not_like` would also hide every payment that has no
+    merchant reference.
+    """
+    return stmt.where(
+        or_(
+            models.Payment.reference_id.is_(None),
+            func.lower(models.Payment.reference_id).not_like(
+                f"{SYNTHETIC_REFERENCE_PREFIX}%"
+            ),
+        )
+    )
 
 
 def is_payway_link(link: models.PaymentLink) -> bool:
@@ -229,6 +295,7 @@ async def create_payment(
     hosted_qr: bool | None = None,
 ) -> tuple[models.Payment, bool]:
     _refuse_unusable_store(store)
+    _refuse_synthetic_on_merchant_store(store, reference_id, metadata)
     link = await load_active_link(session, store.id, currency)
     # The link settles in exactly one currency and ABA issues the QR in it, so the
     # link's currency *is* the payment's currency. Choosing the link above is what
@@ -295,6 +362,64 @@ async def create_payment(
     return payment, True
 
 
+async def probe_internal_qr(
+    session: AsyncSession,
+    *,
+    amount_cents: int = 10,
+    currency: str | None = None,
+    hosted_qr: bool = False,
+) -> tuple[models.Store, models.PaymentLink, int, str | None, datetime, bool]:
+    """Mint a QR against the platform's internal store without writing a payment.
+
+    This is the hourly synthetic check's landing point. It deliberately stops
+    before `create_payment`: there is no Payment row, no expiry sweep, no webhook
+    and no merchant history entry. The only side effect is the QR itself (and, when
+    `hosted_qr=True`, one ABA hosted-checkout session).
+
+    `hosted_qr=False` is the default so the hourly check exercises our own encoder
+    and the request/auth/store path without spending an ABA session every hour.
+    ABA's endpoint has its own half-hourly probe (`PaywayEndpointProbe`), which
+    covers the failure that matters there — a moved base URL.
+    """
+    resolution = await billing_svc.resolve_hq_store(session)
+    store = resolution.store
+    if store is None:
+        raise HTTPException(
+            status_code=503, detail="internal_probe_store_not_configured"
+        )
+    if not store.is_internal:
+        raise HTTPException(status_code=503, detail="internal_probe_store_not_internal")
+    if store.status != models.STORE_ACTIVE:
+        raise HTTPException(status_code=409, detail="internal_probe_store_not_active")
+    _refuse_unusable_store(store)
+
+    link = await load_active_link(session, store.id, currency)
+    resolved_currency = normalize_currency(link.currency)
+
+    if amount_cents < 1:
+        raise HTTPException(status_code=400, detail="amount_too_low")
+    # The riel has no subunit. A probe is not a charge, so round a fractional
+    # default up to the nearest whole riel instead of failing the health check.
+    if resolved_currency == "KHR" and amount_cents % 100 != 0:
+        amount_cents = ((amount_cents // 100) + 1) * 100
+    if link.min_amount_cents and amount_cents < link.min_amount_cents:
+        amount_cents = link.min_amount_cents
+    if link.max_amount_cents and amount_cents > link.max_amount_cents:
+        raise HTTPException(status_code=400, detail="amount_too_high")
+
+    now = _now()
+    _qr_string, qr_md5, expires_at, hosted_session = await mint_qr(
+        store,
+        link,
+        amount_cents,
+        public_id=gen_public_id("probe_"),
+        now=now,
+        currency=resolved_currency,
+        hosted_qr=hosted_qr,
+    )
+    return store, link, amount_cents, qr_md5, expires_at, bool(hosted_session)
+
+
 async def reissue_payment(
     session: AsyncSession, parent: models.Payment
 ) -> tuple[models.Payment, bool]:
@@ -343,6 +468,7 @@ async def reissue_payment(
     if store is None:
         raise HTTPException(status_code=400, detail="store_disabled")
     _refuse_unusable_store(store)
+    _refuse_synthetic_on_merchant_store(store, parent.reference_id, parent.metadata_)
     link = await session.get(models.PaymentLink, parent.payment_link_id)
     if link is None:
         raise HTTPException(status_code=400, detail="payment_link_missing")
@@ -421,6 +547,7 @@ async def list_payments(
         .limit(max(1, min(limit, 100)))
         .offset(_clamp_offset(offset))
     )
+    stmt = without_synthetic_payments(stmt)
     if status:
         stmt = stmt.where(models.Payment.status == status)
     res = await session.execute(stmt)
@@ -451,6 +578,7 @@ async def list_payments_for_account(
         .limit(max(1, min(limit, 100)))
         .offset(_clamp_offset(offset))
     )
+    stmt = without_synthetic_payments(stmt)
     if status:
         stmt = stmt.where(models.Payment.status == status)
     res = await session.execute(stmt)
@@ -891,6 +1019,10 @@ async def expire_due_payments(session: AsyncSession) -> list[models.Payment]:
     due = list(res.scalars().all())
     for payment in due:
         payment.status = models.PAYMENT_EXPIRED
+        if _is_synthetic(payment.reference_id, payment.metadata_):
+            # A probe is not a sale, so "payment.expired" would be a lie a merchant
+            # could act on. The row still expires; only the webhook is skipped.
+            continue
         store = await session.get(models.Store, payment.store_id)
         await webhooks.enqueue_event(
             session, payment=payment, store=store, event_type=models.EVENT_EXPIRED

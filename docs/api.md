@@ -168,6 +168,9 @@ account frozen for an unpaid plan invoice → `403 account_restricted`. Quota ex
 `402 quota_exceeded`. No link / disabled → `400 payment_link_disabled` / `400 store_disabled`;
 held by the platform for billing (`store_billing_suspended`) → `400`. Unknown store →
 `404 store_not_found`, or `404 merchant_not_found` when addressed by `merchant=`.
+The reference prefix `health-smoke:` (and `metadata.synthetic=true`) is reserved for the
+platform's own probe; a payment carrying either on a merchant store is refused with
+`synthetic_payment_requires_internal_store`.
 
 Response `201 Created` (or `200` on idempotent replay):
 
@@ -400,6 +403,7 @@ Codes returned in `detail` (verified against `src/`):
 | `store_disabled` | 400 | The store is switched off — by the merchant, or by an operator |
 | `store_billing_suspended` | 400 | The platform is holding the store: the account is on a plan smaller than its store count. Unlike `store_disabled` this is not the merchant's own switch, and it clears when the plan is settled or a slot is swapped back on the billing page |
 | `offline_qr_requires_a_confirmation_source` | 400 | `hosted_qr=false` where nothing can confirm it |
+| `synthetic_payment_requires_internal_store` | 400 | A reserved probe reference (`health-smoke:`) or `metadata.synthetic=true` was used on a merchant store. Probe payments are internal-only; see `docs/internal-payment-probe.md` |
 | `payload_too_long` | 400 | `GET /api/v1/khqr/render.svg` only: the payload does not fit a QR code. Not a request-body limit. |
 | `invalid_payload` | 400 | `GET /api/v1/khqr/render.svg`: the payload could not be encoded |
 | `payment_not_found` / `store_not_found` / `merchant_not_found` | 404 | Not found in this account |

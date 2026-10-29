@@ -1118,6 +1118,10 @@ all, rather than presenting as an empty dashboard with no stated cause.
 P1-3) and go out over Telegram whether this container runs or not; losing the agent
 costs history, not notification.
 
+The hourly end-to-end check is separate: `POST /api/v1/internal/payment-probe` mints a
+QR against the platform's internal store and writes no payment row. See
+`docs/internal-payment-probe.md` for the token and the monitor body.
+
 **Deployed and verified on the host** (2026-09-18), commit `1d2826c`:
 
 - `migrate` exited **0** — enabling a profile re-runs the migration gate, and it is

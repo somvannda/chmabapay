@@ -350,6 +350,13 @@ class Settings(BaseSettings):
     # Example: "https://link.payway.com.kh/ABAPAYpe518710Y"
     chmabapay_hq_payway_link: str | None = None
 
+    # Optional bearer token for `POST /api/v1/internal/payment-probe`. When set, the
+    # hourly monitor can authenticate with this scoped secret instead of a
+    # platform-admin API key, which would grant it the whole platform. Generate with
+    # `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Unset keeps the
+    # endpoint available to platform-admin keys only.
+    internal_probe_token: str | None = None
+
     # Comma-separated list of email addresses that automatically become platform admin + business
     # on their FIRST Google OAuth sign-in. Also seeds the HQ store used for billing self-pay.
     # Example: "ceo@chmaba.com,ops@chmaba.com"  (case-insensitive match against Account.email)

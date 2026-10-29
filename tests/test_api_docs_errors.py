@@ -98,6 +98,14 @@ NOT_IN_REFERENCE = frozenset(
         "invoice_not_raised",
         # Internal invariants raised by the console, not the merchant API.
         "invoice_already_void",
+        # The internal payment probe is hidden from the public OpenAPI surface
+        # (`routers/probe.py`, `include_in_schema=False`). Its store-configuration
+        # failures are operator-facing, and the reserved probe prefix is a policy
+        # refusal a merchant integration cannot hit.
+        "internal_probe_store_not_active",
+        "internal_probe_store_not_configured",
+        "internal_probe_store_not_internal",
+        "synthetic_payment_requires_internal_store",
     }
 )
 
