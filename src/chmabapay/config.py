@@ -96,7 +96,11 @@ class Settings(BaseSettings):
     expiry_interval_seconds: float = 5.0
     webhook_poll_interval_seconds: float = 1.0
     webhook_max_attempts: int = 8
-    webhook_timeout_seconds: float = 5.0
+    # 10s, not 5s: on 2026-11-04 three dead resolvers made every lookup cost ~4s, and
+    # a 5s client timeout left ~1s of margin - so deliveries timed out with an empty
+    # error and looked like an application fault. The transport hop is a tenth of a
+    # second when DNS is healthy, so the extra headroom costs nothing.
+    webhook_timeout_seconds: float = 10.0
 
     checkout_ttl_seconds: int = 300  # QR / payment lifetime
 
@@ -281,7 +285,9 @@ class Settings(BaseSettings):
     # can be sent, so POST /api/v1/stores/{id}/telegram/test refuses (503) instead of
     # reporting a success that never happened.
     telegram_bot_token: str | None = None
-    telegram_timeout_seconds: float = 5.0
+    # Same reasoning as `webhook_timeout_seconds`: the page path must survive a slow
+    # resolver, because an alert that times out at 5s is an alert nobody receives.
+    telegram_timeout_seconds: float = 10.0
 
     # Whether a deployment that is visibly *not* production may page the operator chat
     # anyway. Off, because a page that fires on a stopped laptop teaches people to mute

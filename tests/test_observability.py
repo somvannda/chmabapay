@@ -614,6 +614,10 @@ async def test_a_worker_loop_that_dies_is_caught_by_its_heartbeat():
 
 
 async def test_an_undeliverable_alert_reports_failure_rather_than_pretending():
+    before = sample(
+        rendered(), "chmabapay_alert_delivery_failures_total", reason="not_configured"
+    )
+
     notifier = TelegramNotifier(chat_id=None)
     assert notifier.configured is False
     assert await notifier.send("ALERT something") is False
@@ -621,6 +625,17 @@ async def test_an_undeliverable_alert_reports_failure_rather_than_pretending():
     watcher = make_watcher(FakeTransport(heartbeats={}, metrics={}), notifier=notifier)
     # The watcher keeps running; it just cannot deliver.
     assert await watcher.check_once()
+
+    # The failure has to leave a mark the metrics pipeline can see, because the
+    # channel that just failed cannot be the one that reports it.
+    assert (
+        sample(
+            rendered(),
+            "chmabapay_alert_delivery_failures_total",
+            reason="not_configured",
+        )
+        > before
+    )
 
 
 # --------------------------------------------------------------------------- #
