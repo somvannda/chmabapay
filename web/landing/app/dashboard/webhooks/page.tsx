@@ -1,8 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { readApiError } from "@/components/portal/apiError";
+import {
+  healthByEndpoint,
+  type WebhookHealth,
+} from "@/components/portal/WebhookHealth";
 
 type WebhookEndpoint = {
   id: string | number;
@@ -208,6 +212,8 @@ type WebhookDelivery = {
   delivery_id: number;
   event_id: string;
   event_type: string;
+  store_id?: number;
+  store_name?: string;
   http_status: number | null;
   attempt_count: number;
   response_body_preview: string | null;
@@ -475,6 +481,7 @@ function DeliveriesModal({
               <thead>
                 <tr>
                   <th>Event</th>
+                  <th>Store</th>
                   <th>Status</th>
                   <th>HTTP</th>
                   <th>Tries</th>
@@ -491,6 +498,7 @@ function DeliveriesModal({
                         {delivery.event_type}
                         <div className="dash-code-mono">{delivery.event_id}</div>
                       </td>
+                      <td>{delivery.store_name || "—"}</td>
                       <td>
                         <span className={state.className}>{state.label}</span>
                       </td>
@@ -725,10 +733,120 @@ function EditEndpointModal({
   );
 }
 
+/**
+ * The notification the Webhooks page opens with: which endpoints are failing, how
+ * many events each lost, and which store's payments were in them.
+ *
+ * An endpoint belongs to the account, not to a store, so the URL alone does not tell
+ * a merchant whose sales are stuck. The per-store breakdown is the part that makes the
+ * failure actionable — it names the integration that has to be fixed.
+ */
+function WebhookFailurePanel({
+  health,
+  onRefresh,
+  onViewDeliveries,
+}: {
+  health: WebhookHealth;
+  onRefresh: () => void;
+  onViewDeliveries: (endpointId: number) => void;
+}) {
+  const hasFailed = health.failed_count > 0;
+  if (!hasFailed && health.retrying_count === 0) return null;
+
+  return (
+    <div className={hasFailed ? "dash-warn" : "dash-info"} role="alert">
+      <strong>
+        {hasFailed
+          ? `${health.failed_count} webhook ${
+              health.failed_count === 1 ? "delivery" : "deliveries"
+            } failed in the last ${health.window_hours} hours`
+          : `${health.retrying_count} webhook ${
+              health.retrying_count === 1 ? "delivery is" : "deliveries are"
+            } still retrying`}
+      </strong>
+      <div className="mt-1">
+        {hasFailed
+          ? "Your endpoint did not accept these events. Payments are still recorded here, but the store systems that depend on this webhook did not receive them."
+          : "We are still retrying these events. If the endpoint keeps failing they will be marked failed."}
+      </div>
+
+      <div className="mt-3 space-y-3">
+        {health.endpoints.map((endpoint) => (
+          <div
+            key={endpoint.endpoint_id}
+            className="rounded-xl border border-black/10 bg-white/60 p-3 dark:border-white/10 dark:bg-black/20"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <code className="min-w-0 break-all text-[12px]">{endpoint.url}</code>
+              {endpoint.failed_count > 0 ? (
+                <span className="dash-pill dash-pill-failed">
+                  {endpoint.failed_count} failed
+                </span>
+              ) : null}
+              {endpoint.retrying_count > 0 ? (
+                <span className="dash-pill dash-pill-retrying">
+                  {endpoint.retrying_count} retrying
+                </span>
+              ) : null}
+              <span className="dash-badge dash-badge-muted">{endpoint.status}</span>
+            </div>
+
+            <div className="mt-2 text-[12px]">
+              <span className="font-semibold">Stores affected:</span>{" "}
+              {endpoint.stores.map((store, index) => (
+                <span key={store.store_id}>
+                  {index > 0 ? " · " : ""}
+                  {store.store_name} ({store.failed_count} failed
+                  {store.retrying_count > 0
+                    ? `, ${store.retrying_count} retrying`
+                    : ""}
+                  )
+                </span>
+              ))}
+            </div>
+
+            {endpoint.last_response_status !== null ? (
+              <div className="mt-1 text-[12px]">
+                <span className="font-semibold">Last HTTP response:</span>{" "}
+                {endpoint.last_response_status}
+              </div>
+            ) : null}
+            {endpoint.last_error ? (
+              <pre className="dash-code-block mt-2 whitespace-pre-wrap">
+                {endpoint.last_error}
+              </pre>
+            ) : null}
+            <div className="mt-2">
+              <button
+                type="button"
+                className="dash-btn dash-btn-secondary dash-btn-sm"
+                onClick={() => onViewDeliveries(endpoint.endpoint_id)}
+              >
+                View deliveries
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="dash-empty-cta-row">
+        <button
+          type="button"
+          className="dash-btn dash-btn-secondary dash-btn-sm"
+          onClick={onRefresh}
+        >
+          Refresh status
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardWebhooksPage() {
   const [loading, setLoading] = useState(true);
   const [endpoints, setEndpoints] = useState<WebhookEndpoint[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [health, setHealth] = useState<WebhookHealth | null>(null);
 
   const [editing, setEditing] = useState<WebhookEndpoint | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -743,11 +861,33 @@ export default function DashboardWebhooksPage() {
     endpoint: WebhookEndpoint;
   } | null>(null);
 
+  const fetchHealth = useCallback(async () => {
+    try {
+      const res = await fetch("/api/v1/webhooks/health", {
+        credentials: "include",
+      });
+      if (!res.ok) return;
+      const data = (await res.json().catch(() => null)) as WebhookHealth | null;
+      if (data) {
+        setHealth(data);
+        // Keeps the shell's sidebar badge in step after a retry, a delete or a URL
+        // fix on this page, without making the merchant reload the workspace.
+        window.dispatchEvent(new CustomEvent("chmabapay:webhooks-changed"));
+      }
+    } catch {
+    }
+  }, []);
+
   const fetchEndpoints = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await fetch("/api/v1/webhooks", { credentials: "include" });
+      const [res] = await Promise.all([
+        fetch("/api/v1/webhooks", { credentials: "include" }),
+        // Health is an extra, never the reason the endpoint list fails to load. A
+        // merchant can still manage their endpoints if this one read is unavailable.
+        fetchHealth(),
+      ]);
       // A failed read used to leave `endpoints` empty, which the page then rendered as
       // "No webhook endpoints yet." — the same screen as a fresh account.
       if (!res.ok) throw new Error(await readApiError(res));
@@ -765,7 +905,7 @@ export default function DashboardWebhooksPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchHealth]);
 
   useEffect(() => {
     void fetchEndpoints();
@@ -852,6 +992,7 @@ export default function DashboardWebhooksPage() {
     const tb = new Date(b.created_at || 0).getTime();
     return tb - ta;
   });
+  const healthMap = useMemo(() => healthByEndpoint(health), [health]);
 
   return (
     <>
@@ -880,6 +1021,19 @@ export default function DashboardWebhooksPage() {
         {actionError && (
           <div className="dash-form-alert dash-form-alert-error">{actionError}</div>
         )}
+
+        {!loading && health ? (
+          <WebhookFailurePanel
+            health={health}
+            onRefresh={() => void fetchHealth()}
+            onViewDeliveries={(endpointId) => {
+              const endpoint = endpoints.find(
+                (item) => String(item.id) === String(endpointId),
+              );
+              if (endpoint) setViewingDeliveries(endpoint);
+            }}
+          />
+        ) : null}
 
         {loading ? (
           <div className="dash-info">Loading webhooks…</div>
@@ -922,6 +1076,7 @@ export default function DashboardWebhooksPage() {
                   <th>URL</th>
                   <th>Events</th>
                   <th>Status</th>
+                  <th>Failures ({health?.window_hours ?? 24}h)</th>
                   <th>Created</th>
                   <th>Actions</th>
                 </tr>
@@ -930,6 +1085,7 @@ export default function DashboardWebhooksPage() {
                 {sortedEndpoints.map((ep) => {
                   const isActive = ep.status === "active";
                   const rowBusy = busyId === String(ep.id);
+                  const epHealth = healthMap[String(ep.id)];
                   return (
                     <tr key={String(ep.id)}>
                       <td>
@@ -950,6 +1106,25 @@ export default function DashboardWebhooksPage() {
                         >
                           {isActive ? "active" : "disabled"}
                         </span>
+                      </td>
+                      <td>
+                        {epHealth &&
+                        (epHealth.failed_count > 0 || epHealth.retrying_count > 0) ? (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {epHealth.failed_count > 0 ? (
+                              <span className="dash-pill dash-pill-failed">
+                                {epHealth.failed_count} failed
+                              </span>
+                            ) : null}
+                            {epHealth.retrying_count > 0 ? (
+                              <span className="dash-pill dash-pill-retrying">
+                                {epHealth.retrying_count} retrying
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="dash-badge dash-badge-muted">healthy</span>
+                        )}
                       </td>
                       <td>{formatDate(ep.created_at)}</td>
                       <td>

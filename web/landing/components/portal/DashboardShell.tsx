@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { BillingNotice, type BillingNoticePayload } from "./BillingNotice";
 import { ToastProvider } from "./Toast";
+import { WebhookHealthNotice, type WebhookHealth } from "./WebhookHealth";
 import { ThemeToggle } from "@shared/ui";
 import { ChmabaLogo } from "@shared/chrome";
 
@@ -205,6 +206,12 @@ export type DashboardShellProps = {
    */
   notice?: BillingNoticePayload | null;
   /**
+   * This account's webhook delivery health. Fetched by the layout so the sidebar badge
+   * and the banner can share one read, and so both refresh on the same
+   * `chmabapay:webhooks-changed` event the Webhooks page fires after an action.
+   */
+  webhookHealth?: WebhookHealth | null;
+  /**
    * The account is on hold for non-payment (`status === "restricted"`). Computing it in the
    * layout keeps the shell from having to know which account statuses mean what.
    */
@@ -225,6 +232,7 @@ export function DashboardShell({
   onSignOut,
   signoutLoading = false,
   notice = null,
+  webhookHealth = null,
   readOnly = false,
   children,
 }: DashboardShellProps) {
@@ -255,6 +263,11 @@ export function DashboardShell({
     safeLimit > 0 ? Math.min(100, Math.round((used / safeLimit) * 100)) : 0;
   const nearLimit = safeLimit > 0 && used / safeLimit >= 0.8;
   const showUpgrade = planCode.toLowerCase() !== "pro";
+  // Only terminal failures earn the red count. `retrying` is a delivery still in
+  // flight, and a badge that flickers on every transient 500 trains the merchant to
+  // ignore it.
+  const webhookFailures = webhookHealth?.failed_count ?? 0;
+  const webhookBadge = webhookFailures > 99 ? "99+" : String(webhookFailures);
 
   // Billing is the one page that still accepts input while the account is on hold — it is how the
   // hold is lifted — so it is the one page the read-only treatment is not applied to.
@@ -302,8 +315,23 @@ export function DashboardShell({
                         {item.icon}
                       </svg>
                       <span>{item.label}</span>
+                      {item.key === "webhooks" && webhookFailures > 0 ? (
+                        <span
+                          className="ml-auto inline-flex min-w-[18px] items-center justify-center rounded-full bg-[#e5484d] px-1.5 py-0.5 text-[9px] font-extrabold text-white"
+                          aria-label={`${webhookFailures} failed webhook deliveries`}
+                          title={`${webhookFailures} failed webhook deliveries`}
+                        >
+                          {webhookBadge}
+                        </span>
+                      ) : null}
                       {isActive && (
-                        <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#c4f27c]" />
+                        <span
+                          className={`${
+                            item.key === "webhooks" && webhookFailures > 0
+                              ? ""
+                              : "ml-auto"
+                          } h-1.5 w-1.5 rounded-full bg-[#c4f27c]`}
+                        />
                       )}
                     </Link>
                   );
@@ -462,6 +490,14 @@ export function DashboardShell({
             /dashboard/* page without each page rendering it, and it must stay clickable while the
             page below is read-only — its action is the way out of that state. */}
         <BillingNotice notice={notice} />
+
+        {/* Same placement and reason as the billing notice: every /dashboard/* page,
+            and outside the read-only fieldset so its link stays clickable. Suppressed
+            on the Webhooks page, which renders the per-endpoint breakdown instead. */}
+        <WebhookHealthNotice
+          health={webhookHealth}
+          hidden={pathname.startsWith("/dashboard/webhooks")}
+        />
 
         <main
           className={

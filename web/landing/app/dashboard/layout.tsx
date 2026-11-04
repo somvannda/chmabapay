@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import type { BillingNoticePayload } from "@/components/portal/BillingNotice";
 import { DashboardShell } from "@/components/portal/DashboardShell";
+import type { WebhookHealth } from "@/components/portal/WebhookHealth";
 import { termsAccepted, useSession } from "@/components/portal/useSession";
 
 type SubscriptionInfo = {
@@ -73,6 +74,7 @@ export default function DashboardLayout({
   const [acceptingTerms, setAcceptingTerms] = useState(false);
   const [termsError, setTermsError] = useState<string | null>(null);
   const [notice, setNotice] = useState<BillingNoticePayload | null>(null);
+  const [webhookHealth, setWebhookHealth] = useState<WebhookHealth | null>(null);
 
   useEffect(() => {
     document.body.classList.add("dash-hide-landing-chrome");
@@ -151,6 +153,37 @@ export default function DashboardLayout({
     return () => {
       alive = false;
       window.removeEventListener("chmabapay:plan-changed", onPlanChanged);
+    };
+  }, []);
+
+  // Webhook delivery health drives both the sidebar badge and the dashboard banner.
+  // Fetched here rather than in the shell so the Webhooks page's own reads and the
+  // shell's badge refresh through one event, and a failed optional read leaves the
+  // shell alone rather than blanking it.
+  useEffect(() => {
+    let alive = true;
+
+    const loadWebhookHealth = async () => {
+      try {
+        const res = await fetch("/api/v1/webhooks/health", {
+          credentials: "include",
+        });
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => null)) as WebhookHealth | null;
+        if (alive && data) setWebhookHealth(data);
+      } catch {
+      }
+    };
+
+    void loadWebhookHealth();
+    const onWebhooksChanged = () => {
+      void loadWebhookHealth();
+    };
+    window.addEventListener("chmabapay:webhooks-changed", onWebhooksChanged);
+
+    return () => {
+      alive = false;
+      window.removeEventListener("chmabapay:webhooks-changed", onWebhooksChanged);
     };
   }, []);
 
@@ -291,6 +324,7 @@ export default function DashboardLayout({
       onSignOut={handleSignOut}
       signoutLoading={signoutLoading}
       notice={notice}
+      webhookHealth={webhookHealth}
       // The server's own state, not a guess from the notice: `restricted` is what the API
       // refuses writes for, and the UI should follow exactly that line.
       readOnly={profile.status === "restricted"}
