@@ -1,0 +1,12 @@
+[Unit]
+Description=ChmabaPay dead-man's-switch heartbeat
+Documentation=file:/opt/chmabapay/docs/deploy.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/chmabapay/deploy/heartbeat.sh
+# A failed ping is the signal, and the timer must keep firing regardless; exit 1
+# is recorded so `systemctl status` shows it, not so systemd stops retrying.
+TimeoutStartSec=60

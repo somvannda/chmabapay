@@ -1,0 +1,11 @@
+[Unit]
+Description=Ping the off-box dead-man's switch every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=chmabapay-heartbeat.service
+
+[Install]
+WantedBy=timers.target

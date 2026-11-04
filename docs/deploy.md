@@ -1148,6 +1148,56 @@ these three values live, and the monitoring service re-reads them on start. Afte
 changing the token, `docker compose ... --profile monitoring up -d --force-recreate
 prometheus` is enough — the rest of the stack does not need to move.
 
+### The outbound heartbeat — the check that survives a broken resolver
+
+On **2026-11-04** the host's outbound DNS degraded: three of six resolvers stopped
+answering, so every lookup paid a ~4s timeout. Webhook deliveries failed, and every
+Telegram alert timed out too — including the alerts that were correctly reporting the
+webhook backlog. The incident was silent for about twenty minutes.
+
+Nothing that watches this host from outside would have noticed:
+
+- `GET /health` answered **200 throughout** — the API was up; its egress was not;
+- `POST /api/v1/internal/payment-probe` with `hosted_qr: false` never leaves the box
+  (it builds the QR locally), so it stayed green as well;
+- Prometheus pushes from the same box, over the same resolver, and its agent mode has
+  no local alerting.
+
+The only observation that fails in that situation is one that has to travel **out**.
+`deploy/heartbeat.sh` pings an external dead-man's switch once a minute; if the ping
+stops arriving, the provider — not this host — sends the page.
+
+**Configuration.** Create a check at Healthchecks.io or BetterStack with a **1 minute
+period** and a **5 minute grace**, alerting by **email/SMS** (not Telegram: that is one
+of the channels that fails). Put its ping URL in `deploy/.env`:
+
+```dotenv
+HEARTBEAT_URL=https://hc-ping.com/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+Empty is a no-op, so the timer can be installed before the account exists.
+
+**Install** (once, on the host):
+
+```bash
+cd /opt/chmabapay
+install -m 755 deploy/heartbeat.sh /opt/chmabapay/deploy/heartbeat.sh
+install -m 644 deploy/systemd/chmabapay-heartbeat.service /etc/systemd/system/
+install -m 644 deploy/systemd/chmabapay-heartbeat.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now chmabapay-heartbeat.timer
+systemctl list-timers chmabapay-heartbeat.timer
+```
+
+The service is `Type=oneshot` and the timer uses `OnUnitActiveSec=1min`, so a failed
+ping exits non-zero (visible in `systemctl status`) without stopping the next attempt.
+
+**What it does not cover.** A host that is up with working egress but a dead API still
+pings. Pair it with one pull check on `POST /api/v1/internal/payment-probe` (see
+`docs/internal-payment-probe.md`), which exercises auth → database → store → KHQR
+encoder on every call. Push proves "this box can still reach the world"; pull proves
+"the application still works". Neither alone was enough on 2026-11-04.
+
 ## 14. Backups, and the restore that proves them
 
 Until this section existed, this stack had no backup. The only two dumps in the
