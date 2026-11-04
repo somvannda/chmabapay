@@ -111,6 +111,10 @@ export default function DashboardHelpPage() {
       a: "When you create a webhook endpoint we return a whsec_ signing secret once. Use it on your server to verify the X-ChmabaPay-Signature header on every POST. Rotate the secret at any time from the endpoint row — the new secret is also returned once only.",
     },
     {
+      q: "How will I know a webhook delivery failed?",
+      a: "The dashboard shows a warning banner and a red count beside Webhooks whenever deliveries fail, and the Webhooks page lists each failing endpoint with the affected stores, the last HTTP status and the error. Deliveries left at 'retrying' are still in flight; only a delivery marked 'failed' has exhausted its retry budget. Open Deliveries on the endpoint row to see the full attempt log — a test send is not listed there because it goes straight out rather than through the queue.",
+    },
+    {
       q: "How do I switch plans?",
       a: "Go to Billing → Choose your plan and select a plan. Moving to a paid plan takes effect once its invoice for the period is paid — the invoice is raised when you pick the plan and you can pay it from the Billing page, so the new plan starts with its first payment rather than before it. Moving to Free applies immediately, because there is nothing to collect. Your stores, keys and webhooks stay intact either way.",
     },

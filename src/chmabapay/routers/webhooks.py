@@ -75,6 +75,52 @@ class WebhookTestOut(BaseModel):
     headers_sent: dict[str, str]
 
 
+class WebhookFailureStoreOut(BaseModel):
+    """One store whose events are stuck on a failing endpoint.
+
+    Endpoints are account-scoped, so the same endpoint can carry events from every
+    store. Breaking the count down by store is what turns "your webhook is failing"
+    into "Sokha Cafe's payments are not reaching your server".
+    """
+
+    store_id: int
+    store_name: str
+    failed_count: int
+    retrying_count: int
+    last_failure_at: datetime | None
+
+
+class WebhookHealthEndpointOut(BaseModel):
+    endpoint_id: int
+    url: str
+    status: str
+    failed_count: int
+    retrying_count: int
+    affected_store_count: int
+    last_failure_at: datetime | None
+    last_error: str | None
+    last_response_status: int | None
+    stores: list[WebhookFailureStoreOut]
+
+
+class WebhookHealthOut(BaseModel):
+    """What a merchant needs to answer "is my webhook working, and where is it failing?".
+
+    `failed_count` mirrors the operator console's 24h count: terminal failures only,
+    because a delivery still retrying is not yet a lost event. `retrying_count` is
+    reported beside it so an endpoint that is currently down is visible before the
+    attempt budget runs out.
+    """
+
+    window_hours: int
+    failed_count: int
+    retrying_count: int
+    affected_endpoint_count: int
+    affected_store_count: int
+    generated_at: datetime
+    endpoints: list[WebhookHealthEndpointOut]
+
+
 def _scope_endpoints_query(
     ctx: AuthContext,
     stmt: Any,
@@ -87,9 +133,9 @@ async def _load_endpoint(
     ctx: AuthContext,
     endpoint_id: int,
 ) -> models.WebhookEndpoint:
-    stmt = _scope_endpoints_query(
-        ctx, select(models.WebhookEndpoint)
-    ).where(models.WebhookEndpoint.id == endpoint_id)
+    stmt = _scope_endpoints_query(ctx, select(models.WebhookEndpoint)).where(
+        models.WebhookEndpoint.id == endpoint_id
+    )
     res = await session.execute(stmt)
     ep = res.scalar_one_or_none()
     if ep is None:
@@ -134,22 +180,210 @@ def _build_test_event_payload() -> dict:
     )
 
 
+@router.get("/health", response_model=WebhookHealthOut)
+async def webhook_health(
+    window_hours: int = Query(default=24, ge=1, le=720),
+    ctx: AuthContext = Depends(get_current_auth_context),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delivery health for this account, grouped by endpoint and store.
+
+    The merchant-facing deliveries route answers "what happened on this one endpoint"
+    after the merchant already suspects something. This route is the notification
+    surface: it says how many recent deliveries failed, which endpoint gave up, and
+    which store's events were in them — before the merchant thinks to look.
+
+    It deliberately uses the same window and status the operator console counts
+    (`failed` in the last 24 hours by default), so the number on the merchant's
+    dashboard and the number an operator sees are the same number. `retrying` rows are
+    reported separately rather than folded in: a delivery still being retried is at
+    risk, not yet lost, and conflating the two would cry wolf on every transient 500.
+    """
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=window_hours)
+    problem_statuses = [models.DELIVERY_FAILED, models.DELIVERY_RETRYING]
+
+    # One grouped query, not one per endpoint: an account can have several endpoints
+    # and the console reads this on every dashboard page. Grouping by (endpoint,
+    # store, status) gives both totals and the per-store breakdown in one pass.
+    grouped = (
+        await session.execute(
+            select(
+                models.WebhookEndpoint.id,
+                models.WebhookEndpoint.url,
+                models.WebhookEndpoint.status,
+                models.Store.id,
+                models.Store.name,
+                models.EventDelivery.status,
+                func.count(models.EventDelivery.id),
+                func.max(models.EventDelivery.updated_at),
+            )
+            .join(
+                models.Event,
+                models.Event.id == models.EventDelivery.event_id,
+            )
+            .join(
+                models.WebhookEndpoint,
+                models.WebhookEndpoint.id == models.EventDelivery.endpoint_id,
+            )
+            .join(models.Store, models.Store.id == models.Event.store_id)
+            .where(
+                models.WebhookEndpoint.account_id == ctx.account.id,
+                models.EventDelivery.status.in_(problem_statuses),
+                models.EventDelivery.updated_at >= cutoff,
+            )
+            .group_by(
+                models.WebhookEndpoint.id,
+                models.WebhookEndpoint.url,
+                models.WebhookEndpoint.status,
+                models.Store.id,
+                models.Store.name,
+                models.EventDelivery.status,
+            )
+        )
+    ).all()
+
+    # The newest problem row per endpoint, for the one line of cause the merchant can
+    # act on. Fetching by max(id) keeps this portable (SQLite and Postgres) and avoids
+    # a window function for a single value per endpoint.
+    latest_ids = (
+        select(func.max(models.EventDelivery.id).label("delivery_id"))
+        .join(
+            models.WebhookEndpoint,
+            models.WebhookEndpoint.id == models.EventDelivery.endpoint_id,
+        )
+        .where(
+            models.WebhookEndpoint.account_id == ctx.account.id,
+            models.EventDelivery.status.in_(problem_statuses),
+            models.EventDelivery.updated_at >= cutoff,
+        )
+        .group_by(models.EventDelivery.endpoint_id)
+        .subquery()
+    )
+    latest_rows = (
+        await session.execute(
+            select(
+                models.EventDelivery.endpoint_id,
+                models.EventDelivery.last_error,
+                models.EventDelivery.last_response_status,
+            ).join(
+                latest_ids,
+                models.EventDelivery.id == latest_ids.c.delivery_id,
+            )
+        )
+    ).all()
+    latest_by_endpoint = {
+        endpoint_id: (last_error, last_response_status)
+        for endpoint_id, last_error, last_response_status in latest_rows
+    }
+
+    endpoints: dict[int, dict[str, Any]] = {}
+    for (
+        endpoint_id,
+        url,
+        endpoint_status,
+        store_id,
+        store_name,
+        delivery_status,
+        count,
+        last_seen,
+    ) in grouped:
+        entry = endpoints.setdefault(
+            endpoint_id,
+            {
+                "endpoint_id": endpoint_id,
+                "url": url,
+                "status": endpoint_status,
+                "failed_count": 0,
+                "retrying_count": 0,
+                "last_failure_at": None,
+                "stores": {},
+            },
+        )
+        if delivery_status == models.DELIVERY_FAILED:
+            entry["failed_count"] += int(count or 0)
+        else:
+            entry["retrying_count"] += int(count or 0)
+        if last_seen is not None and (
+            entry["last_failure_at"] is None or last_seen > entry["last_failure_at"]
+        ):
+            entry["last_failure_at"] = last_seen
+
+        store = entry["stores"].setdefault(
+            store_id,
+            {
+                "store_id": store_id,
+                "store_name": store_name,
+                "failed_count": 0,
+                "retrying_count": 0,
+                "last_failure_at": last_seen,
+            },
+        )
+        if delivery_status == models.DELIVERY_FAILED:
+            store["failed_count"] += int(count or 0)
+        else:
+            store["retrying_count"] += int(count or 0)
+        if last_seen is not None and (
+            store["last_failure_at"] is None or last_seen > store["last_failure_at"]
+        ):
+            store["last_failure_at"] = last_seen
+
+    endpoint_rows: list[WebhookHealthEndpointOut] = []
+    affected_store_ids: set[int] = set()
+    for entry in endpoints.values():
+        stores = sorted(
+            entry["stores"].values(),
+            key=lambda s: (s["failed_count"], s["retrying_count"]),
+            reverse=True,
+        )
+        affected_store_ids.update(s["store_id"] for s in stores)
+        last_error, last_response_status = latest_by_endpoint.get(
+            entry["endpoint_id"], (None, None)
+        )
+        endpoint_rows.append(
+            WebhookHealthEndpointOut(
+                endpoint_id=entry["endpoint_id"],
+                url=entry["url"],
+                status=entry["status"],
+                failed_count=entry["failed_count"],
+                retrying_count=entry["retrying_count"],
+                affected_store_count=len(stores),
+                last_failure_at=entry["last_failure_at"],
+                last_error=last_error,
+                last_response_status=last_response_status,
+                stores=[WebhookFailureStoreOut(**s) for s in stores],
+            )
+        )
+
+    endpoint_rows.sort(
+        key=lambda e: (e.failed_count, e.retrying_count, e.endpoint_id),
+        reverse=True,
+    )
+    return WebhookHealthOut(
+        window_hours=window_hours,
+        failed_count=sum(e.failed_count for e in endpoint_rows),
+        retrying_count=sum(e.retrying_count for e in endpoint_rows),
+        affected_endpoint_count=len(endpoint_rows),
+        affected_store_count=len(affected_store_ids),
+        generated_at=now,
+        endpoints=endpoint_rows,
+    )
+
+
 @router.get("", response_model=list[WebhookOut])
 async def list_webhooks(
     ctx: AuthContext = Depends(get_current_auth_context),
     session: AsyncSession = Depends(get_session),
 ):
-    stmt = _scope_endpoints_query(
-        ctx, select(models.WebhookEndpoint)
-    ).order_by(models.WebhookEndpoint.id.desc())
+    stmt = _scope_endpoints_query(ctx, select(models.WebhookEndpoint)).order_by(
+        models.WebhookEndpoint.id.desc()
+    )
     res = await session.execute(stmt)
     endpoints = list(res.scalars().all())
     return [WebhookOut.from_model(ep) for ep in endpoints]
 
 
-async def _get_active_plan(
-    session: AsyncSession, account_id: int
-) -> models.Plan | None:
+async def _get_active_plan(session: AsyncSession, account_id: int) -> models.Plan | None:
     res = await session.execute(
         select(models.Plan)
         .join(
@@ -189,8 +423,7 @@ async def _enforce_webhook_limit(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Max webhook endpoints ({limit}) reached for your plan. "
-                "Delete one or upgrade."
+                f"Max webhook endpoints ({limit}) reached for your plan. Delete one or upgrade."
             ),
         )
 
@@ -339,12 +572,8 @@ async def test_webhook(
     # Same builder the sender uses, so the headers the merchant sees here are the
     # headers they will see on a real payment — including the User-Agent their
     # firewall may be allow-listing.
-    headers = webhooks.delivery_headers(
-        payload_bytes, ep.secret_key, models.EVENT_COMPLETED
-    )
-    local_valid = verify_signature(
-        payload_bytes, ep.secret_key, headers[webhooks.SIGNATURE_HEADER]
-    )
+    headers = webhooks.delivery_headers(payload_bytes, ep.secret_key, models.EVENT_COMPLETED)
+    local_valid = verify_signature(payload_bytes, ep.secret_key, headers[webhooks.SIGNATURE_HEADER])
     http_status: int | None = None
     body_preview: str | None = None
     try:
@@ -367,6 +596,8 @@ class WebhookDeliveryOut(BaseModel):
     delivery_id: int
     event_id: str
     event_type: str
+    store_id: int
+    store_name: str
     http_status: int | None
     attempt_count: int
     response_body_preview: str | None
@@ -385,8 +616,9 @@ async def list_webhook_deliveries(
     ep = await _load_endpoint(session, ctx, endpoint_id)
     offset = (page - 1) * limit
     stmt = (
-        select(models.EventDelivery, models.Event)
+        select(models.EventDelivery, models.Event, models.Store)
         .join(models.Event, models.EventDelivery.event_id == models.Event.id)
+        .join(models.Store, models.Store.id == models.Event.store_id)
         .where(models.EventDelivery.endpoint_id == ep.id)
         .order_by(models.EventDelivery.created_at.desc())
         .offset(offset)
@@ -395,7 +627,7 @@ async def list_webhook_deliveries(
     res = await session.execute(stmt)
     rows = list(res.all())
     deliveries = []
-    for delivery, event in rows:
+    for delivery, event, store in rows:
         is_completed = delivery.status in (models.DELIVERY_SUCCESS, models.DELIVERY_FAILED)
         preview: str | None = None
         if delivery.last_error:
@@ -407,6 +639,8 @@ async def list_webhook_deliveries(
                 delivery_id=delivery.id,
                 event_id=delivery.event_id,
                 event_type=event.type,
+                store_id=store.id,
+                store_name=store.name,
                 http_status=delivery.last_response_status,
                 attempt_count=delivery.attempts,
                 response_body_preview=preview,
