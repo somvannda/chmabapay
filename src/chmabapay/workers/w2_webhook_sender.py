@@ -41,6 +41,11 @@ class WebhookSenderWorker(Worker):
         settings = get_settings()
         self._concurrency = concurrency or getattr(settings, "worker_w2_concurrency", 30) or 30
         self._sem = asyncio.Semaphore(self._concurrency)
+        # The runtime enqueues a fallback scan once a second with no dedup key, so a
+        # scan that outlives its interval would let a second one read the same due
+        # rows and deliver them twice. One scan at a time per worker is the cheap
+        # guarantee; the transport's dedup TTL (an hour) is far too coarse for it.
+        self._scan_in_flight = False
 
     async def process(self, job: Job) -> dict[str, Any]:
         async with self._sem:
@@ -89,32 +94,48 @@ class WebhookSenderWorker(Worker):
 
     async def _fanout_scan_and_send(self, batch_size: int) -> dict[str, Any]:
         """Backwards-compatible DB scan every 1s (replaces old webhook_loop)."""
-        settings = get_settings()
-        processed = 0
-        now = _now()
-        async with session_factory() as session:
-            res = await session.execute(
-                select(models.EventDelivery)
-                .where(
-                    models.EventDelivery.status.in_(
-                        [models.DELIVERY_PENDING, models.DELIVERY_RETRYING],
-                    ),
-                    (models.EventDelivery.next_attempt_at.is_(None))
-                    | (models.EventDelivery.next_attempt_at <= now),
+        if self._scan_in_flight:
+            return {"ok": True, "skipped": True, "reason": "scan_in_flight"}
+
+        self._scan_in_flight = True
+        try:
+            settings = get_settings()
+            processed = 0
+            now = _now()
+            async with session_factory() as session:
+                res = await session.execute(
+                    select(models.EventDelivery)
+                    # A disabled endpoint has to stop the retries already queued for
+                    # it, not only the fan-out of future events. Without this join,
+                    # turning an endpoint off in the dashboard left every pending row
+                    # hammering the dead URL until its attempt budget ran out.
+                    .join(
+                        models.WebhookEndpoint,
+                        models.WebhookEndpoint.id == models.EventDelivery.endpoint_id,
+                    )
+                    .where(
+                        models.WebhookEndpoint.status == models.WEBHOOK_ENDPOINT_ACTIVE,
+                        models.EventDelivery.status.in_(
+                            [models.DELIVERY_PENDING, models.DELIVERY_RETRYING],
+                        ),
+                        (models.EventDelivery.next_attempt_at.is_(None))
+                        | (models.EventDelivery.next_attempt_at <= now),
+                    )
+                    .order_by(models.EventDelivery.id)
+                    .limit(max(1, int(batch_size))),
                 )
-                .order_by(models.EventDelivery.id)
-                .limit(max(1, int(batch_size))),
-            )
-            due = list(res.scalars().all())
-            for delivery in due:
-                try:
-                    await self._deliver_one(session, delivery)
-                    processed += 1
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("W2 delivery %s transient error: %s", delivery.id, exc)
-            if due:
-                await session.commit()
-        return {"ok": True, "processed": processed, "fanout": True, "max_backoff_sec": settings.webhook_max_attempts}
+                due = list(res.scalars().all())
+                for delivery in due:
+                    try:
+                        await self._deliver_one(session, delivery)
+                        processed += 1
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("W2 delivery %s transient error: %s", delivery.id, exc)
+                if due:
+                    await session.commit()
+            return {"ok": True, "processed": processed, "fanout": True, "max_backoff_sec": settings.webhook_max_attempts}
+        finally:
+            self._scan_in_flight = False
 
     # ------------------------------------------------------------------
     # HTTP post logic
@@ -149,7 +170,11 @@ class WebhookSenderWorker(Worker):
                 return
             raise ValueError(f"non_2xx:{response.status_code}")
         except Exception as exc:  # network + non-2xx + timeout  # noqa: BLE001
-            delivery.last_error = str(exc)[:2000]
+            # httpx timeout exceptions stringify to "", so the 2026-11-04 incident
+            # showed a column of blank errors for what were really ConnectTimeouts.
+            # Falling back to the type means "no error recorded" is never what a
+            # reader sees.
+            delivery.last_error = (str(exc) or type(exc).__name__)[:2000]
             if delivery.attempts >= settings.webhook_max_attempts:
                 delivery.status = models.DELIVERY_FAILED
                 delivery.next_attempt_at = None

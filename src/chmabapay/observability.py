@@ -143,6 +143,14 @@ ALERTS_RAISED = Counter(
     "Operator alerts raised, by condition.",
     ["condition"],
 )
+# The page path failing is the one failure the page path cannot report. This counter
+# is the escape hatch: it is scraped and remote-written independently of Telegram, so
+# a Grafana alert on `increase(...[15m]) > 0` still fires when the bot token is dead.
+ALERT_DELIVERY_FAILURES = Counter(
+    "chmabapay_alert_delivery_failures_total",
+    "Alerts that could not be delivered to the operator channel, by reason.",
+    ["reason"],
+)
 # Distinct from ALERTS_RAISED: this counts every occurrence of an unhandled
 # exception, including the ones the alert channel deliberately suppressed. The gap
 # between the two is how you tell "one error" from "one error, ten thousand times".

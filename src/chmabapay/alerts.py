@@ -47,7 +47,7 @@ from sqlalchemy import func, select
 from . import models
 from .config import get_settings
 from .db import session_factory
-from .observability import ALERTS_RAISED
+from .observability import ALERT_DELIVERY_FAILURES, ALERTS_RAISED
 from .services import telegram
 from .workers import Q_BILLING, Q_DETECTION, Q_EXPIRY, Q_RETENTION, Q_WEBHOOK
 from .workers.w6_billing_lifecycle import QUEUE as Q_LIFECYCLE
@@ -276,12 +276,15 @@ class TelegramNotifier:
 
     async def send(self, text: str) -> bool:
         if not self.chat_id:
+            ALERT_DELIVERY_FAILURES.labels(reason="not_configured").inc()
             log.error("ALERT NOT SENT (OPS_TELEGRAM_CHAT_ID unset): %s", text)
             return False
         if not telegram.is_configured():
+            ALERT_DELIVERY_FAILURES.labels(reason="not_configured").inc()
             log.error("ALERT NOT SENT (TELEGRAM_BOT_TOKEN unset): %s", text)
             return False
         if not delivery_allowed():
+            ALERT_DELIVERY_FAILURES.labels(reason="delivery_disabled").inc()
             log.error(
                 "ALERT NOT SENT (development deployment: %s; set "
                 "ALERTS_ALLOW_NON_PRODUCTION=true to page from here anyway): %s",
@@ -293,7 +296,9 @@ class TelegramNotifier:
             await telegram.send_message(self.chat_id, text)
         except telegram.TelegramError as exc:
             # Losing the alert must not lose the reason it existed, so the text
-            # goes to the log either way.
+            # goes to the log either way - and the counter gives Grafana Cloud a
+            # signal that does not travel through the channel that just failed.
+            ALERT_DELIVERY_FAILURES.labels(reason="send_failed").inc()
             log.error("alert delivery failed (%s): %s", exc, text)
             return False
         return True

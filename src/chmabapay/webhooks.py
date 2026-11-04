@@ -255,7 +255,9 @@ async def _deliver(session: AsyncSession, delivery: models.EventDelivery) -> Non
         )
     except Exception as exc:  # network + non-2xx
         settings = get_settings()
-        delivery.last_error = str(exc)[:2000]
+        # See w2_webhook_sender._deliver_one: httpx timeouts stringify to "", and a
+        # blank error is indistinguishable from "we never even tried".
+        delivery.last_error = (str(exc) or type(exc).__name__)[:2000]
         if delivery.attempts >= settings.webhook_max_attempts:
             delivery.status = models.DELIVERY_FAILED
         else:
