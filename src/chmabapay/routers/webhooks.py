@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +29,49 @@ router = APIRouter(
 )
 
 
+def _validate_webhook_url(value: str) -> str:
+    """Refuse a URL that cannot be a receiver, and the ones that must not be.
+
+    The delivery POST is made by *this* server, so the URL is an instruction about
+    where the platform connects. Scheme is therefore restricted to http(s) -
+    `file://` or `gopher://` would be a protocol-smuggling primitive - and loopback,
+    private, link-local and reserved addresses are refused because they aim that
+    request at the platform's own network (metadata endpoints, the database, the
+    API). Credentials in the URL are refused too: they would be logged on every
+    attempt.
+
+    This cannot stop a public hostname that resolves to a private address, and it is
+    not meant to: the sender already posts to arbitrary merchant URLs by design. It
+    stops the configurations that are never legitimate and are trivially avoidable.
+    """
+    parsed = urlsplit(value)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("url must be an http or https URL")
+    if not parsed.hostname:
+        raise ValueError("url must include a host")
+    if parsed.username or parsed.password:
+        raise ValueError("url must not include credentials")
+
+    host = parsed.hostname.lower()
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        raise ValueError("url must not point at a local host")
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return value
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    ):
+        raise ValueError("url must not point at a private or local address")
+    return value
+
+
 class WebhookCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -34,12 +79,22 @@ class WebhookCreate(BaseModel):
     secret_key: str | None = None
     events: list[str] | None = None
 
+    @field_validator("url")
+    @classmethod
+    def _check_url(cls, value: str) -> str:
+        return _validate_webhook_url(value)
+
 
 class WebhookPatch(BaseModel):
     url: str | None = Field(default=None, min_length=8)
     events: list[str] | None = None
     status: str | None = None
     enabled: bool | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _check_url(cls, value: str | None) -> str | None:
+        return None if value is None else _validate_webhook_url(value)
 
 
 class WebhookOut(BaseModel):
