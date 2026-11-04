@@ -5,6 +5,11 @@ name = "chmabapay-egress-monitor"
 main = "src/index.js"
 compatibility_date = "2026-01-01"
 
+#: A workers.dev hostname is enough - no DNS record or zone change is needed.
+workers_dev = true
+#: Preview URLs would publish a second, unlisted copy of /run for every upload.
+preview_urls = false
+
 #: One minute. Cloudflare's cron resolution is a minute, and this is a check
 #: that should page within a few minutes of egress breaking.
 [triggers]
@@ -15,14 +20,14 @@ crons = ["* * * * *"]
 #: Create with `npx wrangler kv namespace create STATE` and paste the id here.
 [[kv_namespaces]]
 binding = "STATE"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "ae292ae3af524dae9c3d1dde0602ab43"
 
 [vars]
 EGRESS_URL = "https://pay.chmaba.com/api/v1/internal/egress"
-#: The operator chat the application already pages. Not a secret, but kept out
-#: of the repository: copy it from OPS_TELEGRAM_CHAT_ID in deploy/.env.
-OPS_CHAT_ID = "REPLACE_WITH_OPS_CHAT_ID"
 
-#: Secrets, set with `wrangler secret put` and never written to this file:
+#: Secrets, set with `wrangler secret put` and never written to this file. This
+#: repository is public, so the operator chat id is a secret too - it identifies
+#: a person's inbox.
 #:   EGRESS_TOKEN        - the value of INTERNAL_PROBE_TOKEN in deploy/.env
 #:   TELEGRAM_BOT_TOKEN  - the same bot the application alerts with
+#:   OPS_CHAT_ID         - the value of OPS_TELEGRAM_CHAT_ID in deploy/.env

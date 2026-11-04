@@ -25,10 +25,14 @@ export default {
     ctx.waitUntil(run(env));
   },
 
-  // `/run` is a manual smoke test only. It never sends unless the check fails.
+  // `/run` is a manual smoke test only. It never sends unless the check fails, but
+  // it does make the Worker open outbound connections, so it is not anonymous.
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
     if (path === "/run") {
+      if (request.headers.get("x-monitor-key") !== env.EGRESS_TOKEN) {
+        return new Response("forbidden\n", { status: 403 });
+      }
       return Response.json(await run(env));
     }
     return new Response("chmabapay egress monitor\n");
