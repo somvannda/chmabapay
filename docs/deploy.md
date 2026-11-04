@@ -1198,6 +1198,25 @@ pings. Pair it with one pull check on `POST /api/v1/internal/payment-probe` (see
 encoder on every call. Push proves "this box can still reach the world"; pull proves
 "the application still works". Neither alone was enough on 2026-11-04.
 
+### The egress check, and the Worker that watches it
+
+`GET /api/v1/internal/egress` (platform-admin or `INTERNAL_PROBE_TOKEN`) resolves
+`api.telegram.org` and `link.payway.com.kh` and opens a TCP connection to each,
+reporting DNS and connect timings separately. It answers **200** when both work and
+**503** with the failing phase when they do not. This is the only check that measures
+the capability that actually broke: `hosted_qr: false` never leaves the box, and
+`/health` never did.
+
+`deploy/cloudflare/egress-monitor/` is a Cloudflare Worker that calls it once a minute
+from outside the host and pages over Telegram when it fails — including the case where
+the host is up but its resolver is not, which is precisely 2026-11-04. It needs a KV
+namespace only to throttle alerts and announce recovery; steady-state runs do not
+write.
+
+Deploy it with `npx wrangler` as described in that directory's `README.md`. It needs
+`INTERNAL_PROBE_TOKEN` and the Telegram bot token as Worker secrets — copy them from
+`deploy/.env` rather than pasting them anywhere else.
+
 ## 14. Backups, and the restore that proves them
 
 Until this section existed, this stack had no backup. The only two dumps in the

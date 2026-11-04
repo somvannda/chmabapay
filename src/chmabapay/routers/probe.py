@@ -11,12 +11,15 @@ for the platform admin, not part of the merchant API.
 
 from __future__ import annotations
 
+import asyncio
 import secrets
-from datetime import datetime
+import socket
+import time
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -135,4 +138,149 @@ async def payment_probe(
         hosted=hosted,
         qr_md5=qr_md5,
         expires_at=expires_at,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Egress probe
+# --------------------------------------------------------------------------- #
+# Why this exists: on 2026-11-04 this host's outbound DNS degraded and every
+# lookup cost ~4s. `/health` answered 200 the whole time, and the internal
+# payment probe never leaves the box, so no monitor watching either of them
+# could see it. This endpoint performs a real resolve + TCP connect *from inside
+# the application container*, which is the capability that was actually broken.
+#
+# It is read-only and touches two fixed, public hosts, so it cannot be turned
+# into a general-purpose fetcher.
+EGRESS_TARGETS: tuple[tuple[str, str, int], ...] = (
+    ("telegram", "api.telegram.org", 443),
+    ("aba", "link.payway.com.kh", 443),
+)
+EGRESS_TIMEOUT_SECONDS = 5.0
+
+
+class EgressCheckOut(BaseModel):
+    name: str
+    host: str
+    ok: bool
+    detail: str
+    ms: int
+
+
+class EgressOut(BaseModel):
+    status: Literal["ok", "degraded"]
+    checks: list[EgressCheckOut]
+    generated_at: datetime
+
+
+async def _egress_check(
+    name: str, host: str, port: int, timeout: float
+) -> EgressCheckOut:
+    """Resolve `host`, then connect to the address that came back.
+
+    Both phases are timed and reported separately, because the two failures look
+    identical from outside and need different fixes: a resolver that times out is
+    `/etc/resolv.conf`, while a refused connection is egress or the remote host.
+    """
+    loop = asyncio.get_running_loop()
+    started = time.monotonic()
+    try:
+        infos = await asyncio.wait_for(
+            loop.getaddrinfo(host, port, type=socket.SOCK_STREAM), timeout=timeout
+        )
+    except TimeoutError:
+        return EgressCheckOut(
+            name=name,
+            host=host,
+            ok=False,
+            detail=f"DNS timed out after {timeout:.1f}s",
+            ms=int((time.monotonic() - started) * 1000),
+        )
+    except OSError as exc:
+        return EgressCheckOut(
+            name=name,
+            host=host,
+            ok=False,
+            detail=f"DNS failed: {type(exc).__name__}: {exc}",
+            ms=int((time.monotonic() - started) * 1000),
+        )
+
+    dns_ms = int((time.monotonic() - started) * 1000)
+    if not infos:
+        return EgressCheckOut(
+            name=name, host=host, ok=False, detail="DNS returned no address", ms=dns_ms
+        )
+
+    family, socktype, proto, _, address = infos[0]
+    writer = None
+    connect_started = time.monotonic()
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(
+                host=address[0],
+                port=port,
+                family=family,
+                proto=proto,
+                # The address is already resolved; asking again would pay the
+                # lookup twice and hide which phase was slow.
+            ),
+            timeout=timeout,
+        )
+    except TimeoutError:
+        return EgressCheckOut(
+            name=name,
+            host=host,
+            ok=False,
+            detail=f"DNS {dns_ms}ms, connect timed out after {timeout:.1f}s",
+            ms=int((time.monotonic() - started) * 1000),
+        )
+    except OSError as exc:
+        return EgressCheckOut(
+            name=name,
+            host=host,
+            ok=False,
+            detail=f"DNS {dns_ms}ms, connect failed: {type(exc).__name__}: {exc}",
+            ms=int((time.monotonic() - started) * 1000),
+        )
+    finally:
+        if writer is not None:
+            writer.close()
+
+    connect_ms = int((time.monotonic() - connect_started) * 1000)
+    return EgressCheckOut(
+        name=name,
+        host=host,
+        ok=True,
+        detail=f"DNS {dns_ms}ms, connect {connect_ms}ms",
+        ms=int((time.monotonic() - started) * 1000),
+    )
+
+
+@router.get("/egress", response_model=EgressOut, responses={503: {"model": EgressOut}})
+async def egress_probe(
+    response: Response,
+    ctx: AuthContext | None = Depends(_probe_auth),
+) -> EgressOut:
+    """Prove the application can still resolve names and open outbound connections.
+
+    200 means every target answered. 503 lists what did not, so a monitor can
+    decide on the status code alone. The response is JSON in both cases because
+    the detail is the part a human needs at 3am.
+    """
+    if ctx is not None and not ctx.account.is_platform_admin:
+        raise HTTPException(status_code=403, detail="platform_admin_required")
+
+    checks = await asyncio.gather(
+        *(
+            _egress_check(name, host, port, EGRESS_TIMEOUT_SECONDS)
+            for name, host, port in EGRESS_TARGETS
+        )
+    )
+    healthy = all(check.ok for check in checks)
+    if not healthy:
+        response.status_code = 503
+    return EgressOut(
+        status="ok" if healthy else "degraded",
+        checks=list(checks),
+        generated_at=datetime.now(UTC),
     )

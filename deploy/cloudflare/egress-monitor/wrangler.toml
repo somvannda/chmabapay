@@ -1,0 +1,28 @@
+#: ChmabaPay egress monitor — a Cloudflare Worker cron.
+#:
+#: Deploy from this directory: `npx wrangler deploy`. See README.md.
+name = "chmabapay-egress-monitor"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+#: One minute. Cloudflare's cron resolution is a minute, and this is a check
+#: that should page within a few minutes of egress breaking.
+[triggers]
+crons = ["* * * * *"]
+
+#: Only used to throttle alerts and to remember whether the last run was
+#: healthy, so one failure pages once and recovery is announced once.
+#: Create with `npx wrangler kv namespace create STATE` and paste the id here.
+[[kv_namespaces]]
+binding = "STATE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+[vars]
+EGRESS_URL = "https://pay.chmaba.com/api/v1/internal/egress"
+#: The operator chat the application already pages. Not a secret, but kept out
+#: of the repository: copy it from OPS_TELEGRAM_CHAT_ID in deploy/.env.
+OPS_CHAT_ID = "REPLACE_WITH_OPS_CHAT_ID"
+
+#: Secrets, set with `wrangler secret put` and never written to this file:
+#:   EGRESS_TOKEN        - the value of INTERNAL_PROBE_TOKEN in deploy/.env
+#:   TELEGRAM_BOT_TOKEN  - the same bot the application alerts with
