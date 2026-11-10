@@ -68,6 +68,15 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      # A script that only ever runs on the VPS is the easiest kind to break
+      # unnoticed. `sh -n` is a parse check rather than a behavioural one, but
+      # it catches the class of edit that would otherwise fail at 2am.
+      - name: Shell syntax
+        run: |
+          for script in deploy/*.sh; do
+            sh -n "$script"
+          done
+
       # Proves migrations are the complete and only schema path: applying them to
       # an empty database must land exactly on the models, and `check` exits
       # non-zero the moment a model changes without a matching revision.

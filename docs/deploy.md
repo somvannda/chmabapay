@@ -1239,6 +1239,25 @@ The monitor makes the failure visible; it does not fix it. The host-side root ca
 a resolver list with dead entries, and glibc tries nameservers **serially**, so one
 dead server stalls every lookup before the next is tried.
 
+`deploy/fix-host-dns.sh` does the remediation as one reviewable step. It is a dry run
+by default; `--apply` backs the file up, writes only the resolvers that answered, and
+restores the backup if names stop resolving:
+
+```bash
+deploy/fix-host-dns.sh                 # inspect, change nothing
+sudo deploy/fix-host-dns.sh --apply    # write, verify, roll back on failure
+```
+
+It refuses to edit a symlink, because that means systemd-resolved owns the file, and
+prints the `resolved.conf.d` drop-in to use instead. `--nameservers "10.0.0.2 10.0.0.3"`
+fills in provider resolvers when fewer than two of the current ones answer, and
+`--no-probe` keeps the current list and only caps it when `dig`/`nslookup` cannot
+reach out. Add `--container chmabapay-prod-api-1` to confirm the application
+container resolves through Docker afterwards.
+
+The manual steps below are the same work done by hand, for when you want to see each
+one:
+
 Inspect, per resolver:
 
 ```bash
