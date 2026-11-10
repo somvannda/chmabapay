@@ -77,6 +77,25 @@ x-logging: &logging
 x-limits: &limits
   mem_limit: 512m
 
+# ---------------------------------------------------------------------------- #
+# DNS
+# ---------------------------------------------------------------------------- #
+# The host's own resolver has been the recurring failure: on 2026-11-04 three of
+# six nameservers stopped answering, and on 2026-11-09 every lookup timed out for
+# a minute. glibc tries nameservers serially, so one dead entry stalls a lookup
+# while Docker's embedded DNS (127.0.0.11) forwards the same broken list in.
+#
+# These containers do not need the host's resolver list; they need two public
+# resolvers that are up. Docker still runs its embedded DNS for service names on
+# the compose network, and forwards external lookups to these instead. This is
+# the per-service counterpart to fixing /etc/resolv.conf on the host: the fix
+# survives a reboot, a cloud-init rewrite, and a resolver the operator has not
+# cleaned up yet.
+x-dns: &dns
+  dns:
+    - 1.1.1.1
+    - 8.8.8.8
+
 x-backend-env: &backend-env
   # Built from the same three variables the `db` service is initialised with, so a
   # `POSTGRES_PASSWORD` is required rather than defaulted: the development stack
@@ -266,7 +285,10 @@ services:
       dockerfile: Dockerfile
     command: ["alembic", "upgrade", "head"]
     environment: *api-env
-    <<: *limits
+    # Alembic only needs the `db` service name, but the image's entrypoint may
+    # resolve external names too; keeping it on the same resolver list means a
+    # broken host resolver cannot fail a migration that should not touch DNS.
+    <<: [*limits, *dns]
     logging: *logging
     depends_on:
       db:
@@ -279,7 +301,10 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     logging: *logging
-    <<: *limits
+    # Two upstreams, not the host's list. See `x-dns`: this is the container
+    # that has to reach Telegram, ABA and merchant webhooks, and it should not
+    # inherit a resolver list with dead entries in it.
+    <<: [*limits, *dns]
     environment: *api-env
     # No `ports:`. The only published port in this whole file is the proxy's. The API
     # is reached as `api:8000` on the compose network, by the proxy. Publishing 8000
@@ -437,6 +462,9 @@ services:
     # starving the POS stack; a metrics forwarder has no business claiming 512MB of a
     # 1.9GB host, and agent mode needs well under this.
     mem_limit: 256m
+    # Its only outbound host is Grafana Cloud, but that push is how the platform is
+    # watched; it must not fail because the host resolver is having a bad minute.
+    <<: *dns
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |

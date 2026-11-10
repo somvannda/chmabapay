@@ -15,9 +15,10 @@ import asyncio
 import secrets
 import socket
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
@@ -150,13 +151,21 @@ async def payment_probe(
 # could see it. This endpoint performs a real resolve + TCP connect *from inside
 # the application container*, which is the capability that was actually broken.
 #
-# It is read-only and touches two fixed, public hosts, so it cannot be turned
+# It is read-only and touches three fixed, public hosts, so it cannot be turned
 # into a general-purpose fetcher.
 EGRESS_TARGETS: tuple[tuple[str, str, int], ...] = (
     ("telegram", "api.telegram.org", 443),
     ("aba", "link.payway.com.kh", 443),
+    ("cloudflare", "cloudflare-dns.com", 443),
 )
 EGRESS_TIMEOUT_SECONDS = 5.0
+
+# A quorum, not a unanimous vote. One flaky third party must not page someone: on
+# 2026-11-08 Telegram alone failed to connect while ABA answered in 2ms, and the
+# old `all(...)` turned that into "the host cannot reach the internet". Requiring
+# two of three still catches the failure this probe exists for — a broken resolver
+# takes every target with it.
+EGRESS_MIN_HEALTHY = 2
 
 
 class EgressCheckOut(BaseModel):
@@ -173,10 +182,85 @@ class EgressOut(BaseModel):
     generated_at: datetime
 
 
+def _family_name(family: int) -> str:
+    return "IPv4" if family == socket.AF_INET else "IPv6"
+
+
+def _connect_attempts(
+    infos: Sequence[tuple[Any, ...]],
+) -> list[tuple[int, int, tuple]]:
+    """Every usable address, IPv4 first.
+
+    `getaddrinfo` returns AAAA before A, and on 2026-11-08 that ordering was the
+    whole failure: the host had an IPv6 route that blackholed, so the single
+    connect this probe made spent its entire budget on it while IPv4 would have
+    answered in 2ms. IPv4 first makes a broken v6 path cost nothing when v4
+    works; IPv6 is still tried, second, so a genuinely v6-only host still passes.
+    """
+    seen: set[tuple[int, str]] = set()
+    attempts: list[tuple[int, int, tuple]] = []
+    for family, _socktype, proto, _canon, address in infos:
+        if family not in (socket.AF_INET, socket.AF_INET6):
+            continue
+        key = (family, address[0])
+        if key in seen:
+            continue
+        seen.add(key)
+        attempts.append((family, proto, address))
+    attempts.sort(key=lambda attempt: attempt[0] != socket.AF_INET)
+    return attempts
+
+
+async def _connect_first(
+    attempts: list[tuple[int, int, tuple]], port: int, timeout: float
+) -> tuple[int | None, float, list[str]]:
+    """Connect to the first address that answers, within `timeout` overall.
+
+    Each address gets a fair share of the time that is left rather than the whole
+    budget, because a dead first address must not turn a working second one into
+    a false failure — which is exactly what a full-budget IPv6 attempt did on
+    2026-11-08. Returns the family that answered (`None` if none did), how long
+    that took, and a human-readable reason for each attempt that failed.
+    """
+    started = time.monotonic()
+    deadline = started + timeout
+    failures: list[str] = []
+    for index, (family, proto, address) in enumerate(attempts):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        budget = remaining / (len(attempts) - index)
+        writer = None
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(
+                    host=address[0],
+                    port=port,
+                    family=family,
+                    proto=proto,
+                    # The address is already resolved; asking again would pay the
+                    # lookup twice and hide which phase was slow.
+                ),
+                timeout=budget,
+            )
+        except TimeoutError:
+            failures.append(f"{_family_name(family)} {address[0]} timed out")
+        except OSError as exc:
+            failures.append(
+                f"{_family_name(family)} {address[0]}: {type(exc).__name__}: {exc}"
+            )
+        else:
+            return family, time.monotonic() - started, failures
+        finally:
+            if writer is not None:
+                writer.close()
+    return None, time.monotonic() - started, failures
+
+
 async def _egress_check(
     name: str, host: str, port: int, timeout: float
 ) -> EgressCheckOut:
-    """Resolve `host`, then connect to the address that came back.
+    """Resolve `host`, then connect to every address that came back until one works.
 
     Both phases are timed and reported separately, because the two failures look
     identical from outside and need different fixes: a resolver that times out is
@@ -206,52 +290,29 @@ async def _egress_check(
         )
 
     dns_ms = int((time.monotonic() - started) * 1000)
-    if not infos:
+    attempts = _connect_attempts(infos)
+    if not attempts:
         return EgressCheckOut(
             name=name, host=host, ok=False, detail="DNS returned no address", ms=dns_ms
         )
 
-    family, socktype, proto, _, address = infos[0]
-    writer = None
-    connect_started = time.monotonic()
-    try:
-        _, writer = await asyncio.wait_for(
-            asyncio.open_connection(
-                host=address[0],
-                port=port,
-                family=family,
-                proto=proto,
-                # The address is already resolved; asking again would pay the
-                # lookup twice and hide which phase was slow.
-            ),
-            timeout=timeout,
-        )
-    except TimeoutError:
+    family, connect_seconds, failures = await _connect_first(attempts, port, timeout)
+    connect_ms = int(connect_seconds * 1000)
+    if family is None:
+        tried = "; ".join(failures) or "no address was tried"
         return EgressCheckOut(
             name=name,
             host=host,
             ok=False,
-            detail=f"DNS {dns_ms}ms, connect timed out after {timeout:.1f}s",
+            detail=f"DNS {dns_ms}ms, connect failed after {timeout:.1f}s ({tried})",
             ms=int((time.monotonic() - started) * 1000),
         )
-    except OSError as exc:
-        return EgressCheckOut(
-            name=name,
-            host=host,
-            ok=False,
-            detail=f"DNS {dns_ms}ms, connect failed: {type(exc).__name__}: {exc}",
-            ms=int((time.monotonic() - started) * 1000),
-        )
-    finally:
-        if writer is not None:
-            writer.close()
 
-    connect_ms = int((time.monotonic() - connect_started) * 1000)
     return EgressCheckOut(
         name=name,
         host=host,
         ok=True,
-        detail=f"DNS {dns_ms}ms, connect {connect_ms}ms",
+        detail=f"DNS {dns_ms}ms, connect {connect_ms}ms ({_family_name(family)})",
         ms=int((time.monotonic() - started) * 1000),
     )
 
@@ -263,9 +324,11 @@ async def egress_probe(
 ) -> EgressOut:
     """Prove the application can still resolve names and open outbound connections.
 
-    200 means every target answered. 503 lists what did not, so a monitor can
-    decide on the status code alone. The response is JSON in both cases because
-    the detail is the part a human needs at 3am.
+    200 means at least `EGRESS_MIN_HEALTHY` targets answered. 503 lists what did
+    not, so a monitor can decide on the status code alone. A single failing
+    target is reported in `checks` but does not fail the probe: one flaky third
+    party is not a broken host. The response is JSON in both cases because the
+    detail is the part a human needs at 3am.
     """
     if ctx is not None and not ctx.account.is_platform_admin:
         raise HTTPException(status_code=403, detail="platform_admin_required")
@@ -276,7 +339,7 @@ async def egress_probe(
             for name, host, port in EGRESS_TARGETS
         )
     )
-    healthy = all(check.ok for check in checks)
+    healthy = sum(1 for check in checks if check.ok) >= EGRESS_MIN_HEALTHY
     if not healthy:
         response.status_code = 503
     return EgressOut(

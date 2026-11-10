@@ -130,3 +130,21 @@ jobs:
         run: |
           pnpm --filter @chmabapay/admin typecheck
           pnpm --filter @chmabapay/admin build
+
+  egress-monitor:
+    name: test the egress monitor Worker
+    runs-on: ubuntu-latest
+
+    # The Worker is the only thing that can page when the host's own DNS breaks,
+    # so its debounce and message wording are tested rather than trusted to a
+    # `wrangler tail`. Plain `node --test`: no dependencies and no build step,
+    # which keeps it runnable from the worker directory on a laptop too.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Test
+        run: node --test deploy/cloudflare/egress-monitor/test/monitor.test.mjs

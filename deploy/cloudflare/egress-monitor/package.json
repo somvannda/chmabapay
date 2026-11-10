@@ -1,0 +1,8 @@
+{
+  "name": "chmabapay-egress-monitor",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/monitor.test.mjs"
+  }
+}

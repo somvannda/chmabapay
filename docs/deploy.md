@@ -1201,21 +1201,73 @@ encoder on every call. Push proves "this box can still reach the world"; pull pr
 ### The egress check, and the Worker that watches it
 
 `GET /api/v1/internal/egress` (platform-admin or `INTERNAL_PROBE_TOKEN`) resolves
-`api.telegram.org` and `link.payway.com.kh` and opens a TCP connection to each,
-reporting DNS and connect timings separately. It answers **200** when both work and
-**503** with the failing phase when they do not. This is the only check that measures
-the capability that actually broke: `hosted_qr: false` never leaves the box, and
-`/health` never did.
+`api.telegram.org`, `link.payway.com.kh` and `cloudflare-dns.com`, then opens a TCP
+connection to each, reporting DNS and connect timings separately. It answers **200**
+when at least two of the three work and **503** with the failing phase when they do
+not. A quorum rather than "all", because one flaky third party is not a broken host —
+which is exactly what the 2026-11-08 page was.
+
+Two details in the probe exist because of those two incidents:
+
+- **IPv4 is tried before IPv6.** `getaddrinfo` returns AAAA first, and the 2026-11-08
+  alert was a TCP connect timeout to Telegram with DNS at 5ms — a blackholed IPv6
+  route spending the whole 5s budget. Every resolved address is now tried with a fair
+  share of the remaining budget, and the successful family is named in `detail`.
+- **The resolver is not assumed.** Each container gets explicit upstreams (`x-dns` in
+  `docker-compose.prod.yml`) instead of inheriting the host's `/etc/resolv.conf`
+  through Docker's embedded DNS. See "Fixing the host resolver" below; the container
+  setting is what keeps the app working while the host is still wrong.
 
 `deploy/cloudflare/egress-monitor/` is a Cloudflare Worker that calls it once a minute
 from outside the host and pages over Telegram when it fails — including the case where
 the host is up but its resolver is not, which is precisely 2026-11-04. It needs a KV
-namespace only to throttle alerts and announce recovery; steady-state runs do not
-write.
+namespace only to remember edges; steady-state runs do not write.
+
+It does not page on the first bad minute. A failure must last **three consecutive
+minutes**, and recovery is announced only after **two consecutive passes** — both
+learned from 2026-11-08 and 2026-11-09, which each paged on a single bad minute and
+recovered on the next. The message also names the phase: DNS failures point at
+`/etc/resolv.conf`, connect failures explicitly say *not* the resolver.
 
 Deploy it with `npx wrangler` as described in that directory's `README.md`. It needs
 `INTERNAL_PROBE_TOKEN` and the Telegram bot token as Worker secrets — copy them from
 `deploy/.env` rather than pasting them anywhere else.
+
+### Fixing the host resolver
+
+The monitor makes the failure visible; it does not fix it. The host-side root cause is
+a resolver list with dead entries, and glibc tries nameservers **serially**, so one
+dead server stalls every lookup before the next is tried.
+
+Inspect, per resolver:
+
+```bash
+cat /etc/resolv.conf
+resolvectl status            # if systemd-resolved is in use
+docker exec chmabapay-prod-api-1 cat /etc/resolv.conf   # compose names it <project>-<service>-1
+for ns in $(awk '/^nameserver/{print $2}' /etc/resolv.conf); do
+  echo "== $ns"
+  dig @$ns api.telegram.org +time=2 +tries=1 | tail -3
+done
+```
+
+Then keep only nameservers that answer, and cap the per-server penalty:
+
+```
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+options timeout:2 attempts:2 edns0
+```
+
+A local caching resolver (systemd-resolved's stub at `127.0.0.53`, or `unbound`) is
+better than a long public list: one healthy upstream set, cached answers, and no
+serial dead-server cost. If cloud-init or the provider rewrites the file on boot,
+configure it at the source or mark the file immutable — otherwise the next reboot
+restores the list that caused the outage. If the provider blocks public DNS (some
+hijack or drop UDP/53 to `1.1.1.1`), substitute its own resolvers in `x-dns` in
+`docker-compose.prod.yml`; the point is two that answer, not these two specifically.
+
+
 
 ## 14. Backups, and the restore that proves them
 

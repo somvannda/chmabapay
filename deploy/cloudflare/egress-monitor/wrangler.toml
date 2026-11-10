@@ -15,8 +15,8 @@ preview_urls = false
 [triggers]
 crons = ["* * * * *"]
 
-#: Only used to throttle alerts and to remember whether the last run was
-#: healthy, so one failure pages once and recovery is announced once.
+#: Only used to count a failure window (three minutes) and remember whether an
+#: alert is outstanding, so one incident pages once and recovery is announced once.
 #: Create with `npx wrangler kv namespace create STATE` and paste the id here.
 [[kv_namespaces]]
 binding = "STATE"

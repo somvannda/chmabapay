@@ -43,17 +43,36 @@ curl https://chmabapay-egress-monitor.<your-subdomain>.workers.dev/run
 Expected healthy output:
 
 ```json
-{ "ok": true, "detail": "HTTP 200 {...\"status\":\"ok\"...}", "alerted": false }
+{ "ok": true, "reachable": true, "status": 200, "checks": [ ... ], "detail": "HTTP 200 {...}", "alerted": false }
 ```
+
+## Test
+
+The debounce and message wording are covered without a network or a KV
+namespace, using a controllable clock and a stubbed `fetch`:
+
+```bash
+cd deploy/cloudflare/egress-monitor
+node --test test/monitor.test.mjs     # or: npm test
+```
+
+CI runs the same command in the `egress-monitor` job.
 
 ## Alert behaviour
 
 | Situation | What happens |
 |---|---|
-| First failing run | One alert with the HTTP status and body |
+| One failed minute | Nothing — a blip is not an outage |
+| Three consecutive failing minutes | One alert, naming the phase (DNS vs connect) |
 | Still failing | A reminder at most once an hour |
-| Recovers | One "recovered" message |
+| Two consecutive passes | One "recovered" message, with how long it lasted |
 | Healthy, steady state | No KV writes (only a read per minute) |
+
+The three-minute threshold and the two-pass recovery were both added after
+2026-11-08 and 2026-11-09 paged on a single bad minute each and recovered on the
+next. The probe they call now tests three hosts and requires two to pass, so one
+flaky third party cannot page; it also tries IPv4 before IPv6, because the
+2026-11-08 failure was a blackholed IPv6 route, not DNS.
 
 The KV namespace is used only for that throttle. Writes happen on edges, so a
 one-minute cron stays inside the free tier's 1,000 writes/day.
