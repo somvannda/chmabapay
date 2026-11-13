@@ -357,6 +357,10 @@ async def verify_internal_payment(
         .join(models.Store, models.Store.id == models.Payment.store_id)
         .where(models.Payment.public_id == payment_public_id)
         .where(models.Store.account_id == ctx.account.id)
+        # Internal stores are platform surface: their rows are plan fees, and the
+        # merchant payment routes do not expose them. Without this filter the
+        # reconcile call could still probe and mark one paid by id.
+        .where(models.Store.is_internal.is_(False))
     )
     row = (await session.execute(stmt)).one_or_none()
     if row is None:
@@ -454,6 +458,9 @@ async def check_payment_status(
         .join(models.Store, models.Store.id == models.Payment.store_id)
         .where(models.Payment.public_id == payment_public_id)
         .where(models.Store.account_id == ctx.account.id)
+        # Same boundary as the reconcile route above: the merchant status read does
+        # not expose an internal store's plan fee.
+        .where(models.Store.is_internal.is_(False))
     )
     row = (await session.execute(stmt)).one_or_none()
     if row is None:

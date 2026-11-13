@@ -46,6 +46,27 @@ async def _pay(client: httpx.AsyncClient, merchant, store, *, amount: float) -> 
     return payment
 
 
+async def _pay_internal_via_service(store, *, amount: float) -> None:
+    """Settle a plan fee into the internal store, the way billing writes it.
+
+    `POST /api/v1/payments` refuses an internal store now, so this uses the service
+    entry point `routers/billing.py` uses for an invoice's QR.
+    """
+    from chmabapay.services import payments as payments_svc
+
+    async with session_factory() as session:
+        payment, _created = await payments_svc.create_payment(
+            session,
+            store=store,
+            amount_cents=int(amount * 100),
+            reference_id="INV-1-2026-09",
+            metadata={"source": "billing_invoice"},
+            idempotency_key=None,
+            hosted_qr=False,
+        )
+        assert await payments_svc.mark_paid(session, payment.public_id) is not None
+
+
 async def _make_internal_store(account, name: str = "ChmabaPay HQ") -> models.Store:
     """A store that belongs to the platform itself, not a tenant."""
     store = await make_store(account, name=name, owner=name.replace(" ", ""))
@@ -83,7 +104,7 @@ async def test_internal_stores_are_excluded_from_every_figure(client):
 
     # The platform's own store, plus a paid plan fee flowing through it.
     hq = await _make_internal_store(merchant)
-    await _pay(client, merchant, hq, amount=99.0)
+    await _pay_internal_via_service(hq, amount=99.0)
 
     body = (await client.get("/api/v1/public/stats")).json()
 

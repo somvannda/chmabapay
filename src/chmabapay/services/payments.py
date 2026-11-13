@@ -389,6 +389,15 @@ async def probe_internal_qr(
         )
     if not store.is_internal:
         raise HTTPException(status_code=503, detail="internal_probe_store_not_internal")
+    # The flag alone is not enough. `docs/internal-payment-probe.md` promises the
+    # store is owned by a platform admin, and this is the check that makes that
+    # promise true: a store flagged by a direct database write on a merchant account
+    # would otherwise be a probe target.
+    owner = await session.get(models.Account, store.account_id)
+    if owner is None or not owner.is_platform_admin:
+        raise HTTPException(
+            status_code=503, detail="internal_probe_store_not_admin_owned"
+        )
     if store.status != models.STORE_ACTIVE:
         raise HTTPException(status_code=409, detail="internal_probe_store_not_active")
     _refuse_unusable_store(store)
@@ -540,9 +549,17 @@ async def list_payments(
     limit: int = 20,
     offset: int = 0,
 ) -> list[models.Payment]:
+    """One store's payments for the merchant-facing list.
+
+    An internal store is the platform's own collection point, so it is not part of
+    the merchant surface even when the caller owns it. Its rows are plan fees, not
+    sales; the console reports them as platform revenue instead.
+    """
     stmt = (
         select(models.Payment)
+        .join(models.Store, models.Store.id == models.Payment.store_id)
         .where(models.Payment.store_id == store_id)
+        .where(models.Store.is_internal.is_(False))
         .order_by(models.Payment.id.desc())
         .limit(max(1, min(limit, 100)))
         .offset(_clamp_offset(offset))
@@ -561,7 +578,7 @@ async def list_payments_for_account(
     limit: int = 20,
     offset: int = 0,
 ) -> list[tuple[models.Payment, models.Store]]:
-    """Every payment on the account, newest first, across all of its stores.
+    """Every payment on the account's merchant stores, newest first.
 
     The portal's payments page asks for "All stores". Until this existed the endpoint
     had to resolve a single target store, so it fell back to "the account's only
@@ -569,11 +586,17 @@ async def list_payments_for_account(
     account with two or more — which is why that page rendered an empty list. The
     store is returned with each payment because a cross-store list that cannot name
     the store is not much use.
+
+    Internal stores are excluded. The platform's own store collects plan fees, so
+    including it would mix platform revenue into the platform admin's merchant
+    dashboard and make a test row on that store look like a sale. The console
+    reports internal-store takings as platform revenue on their own.
     """
     stmt = (
         select(models.Payment, models.Store)
         .join(models.Store, models.Store.id == models.Payment.store_id)
         .where(models.Store.account_id == account_id)
+        .where(models.Store.is_internal.is_(False))
         .order_by(models.Payment.id.desc())
         .limit(max(1, min(limit, 100)))
         .offset(_clamp_offset(offset))
@@ -994,10 +1017,14 @@ async def reverse_payment(
     payment.reversal_reason = cleaned[:255] or None
 
     store = await session.get(models.Store, payment.store_id)
-    # A negative row, not an edit of the original: the ledger is a log, so the history
-    # shows both the credit and the give-back. This also settles the question P0-6 left
-    # open — a refunded payment no longer counts toward the month's volume.
-    await _record_plan_ledger_entry(session, store.account_id, payment, reversal=True)
+    # Mirror `mark_paid`: an internal store's takings never wrote a positive ledger
+    # row, so a reversal must not write a negative one either. Without the guard, a
+    # refunded plan fee debits the platform's own usage ledger against a credit that
+    # was deliberately never recorded.
+    if not store.is_internal:
+        await _record_plan_ledger_entry(
+            session, store.account_id, payment, reversal=True
+        )
     await webhooks.enqueue_event(
         session, payment=payment, store=store, event_type=models.EVENT_REVERSED
     )

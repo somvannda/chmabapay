@@ -11,6 +11,9 @@ export type StoreOption = {
   id: string;
   name: string;
   status?: string;
+  // The platform's own store collects plan fees. The API refuses a customer payment
+  // on it, so the form must not offer it as a destination.
+  is_internal?: boolean;
   // One destination per currency. `link` is the primary, kept for payloads that predate
   // the second link.
   link?: { currency?: string | null } | null;
@@ -101,9 +104,13 @@ export default function NewPaymentForm({
                 ? data.data
                 : [];
           if (alive) {
-            setStores(items);
-            if (items.length === 1) {
-              setStorePublicId(items[0].id);
+            // Internal stores are excluded from the list the API serves those rows
+            // for, and creating a payment on one is refused. Offering it would only
+            // produce an error after the merchant filled the form in.
+            const selectable = items.filter((s) => !s.is_internal);
+            setStores(selectable);
+            if (selectable.length === 1) {
+              setStorePublicId(selectable[0].id);
             }
           }
         }

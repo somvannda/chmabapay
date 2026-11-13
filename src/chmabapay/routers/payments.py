@@ -214,6 +214,16 @@ async def create_payment(
     session: AsyncSession = Depends(get_session),
 ):
     store = await resolve_target(session, ctx, body.store, body.merchant)
+    # Internal stores are the platform's own collection point. Only the billing flow
+    # writes there, through `svc.create_payment` directly — letting the merchant API
+    # mint a row on it put test payments and plan fees in the operator's own sales
+    # list, which is exactly what the payments list now hides.
+    if store.is_internal:
+        raise HTTPException(
+            status_code=400,
+            detail="internal_store_not_payable: this store collects platform fees and "
+            "cannot be used to create a customer payment",
+        )
     mode = _ctx_mode(ctx)
     # A live offline QR with no confirmation source is a payment that can never
     # be marked paid: we would hand out a code, take no ABA session for it, and
@@ -304,6 +314,7 @@ async def reissue_payment(
         .join(models.Store, models.Store.id == models.Payment.store_id)
         .where(models.Payment.public_id == public_id)
         .where(models.Store.account_id == ctx.account.id)
+        .where(models.Store.is_internal.is_(False))
     )
     row = (await session.execute(stmt)).one_or_none()
     if row is None:
@@ -372,6 +383,7 @@ async def reverse_payment(
         .join(models.Store, models.Store.id == models.Payment.store_id)
         .where(models.Payment.public_id == public_id)
         .where(models.Store.account_id == ctx.account.id)
+        .where(models.Store.is_internal.is_(False))
     )
     row = (await session.execute(stmt)).one_or_none()
     if row is None:
@@ -465,6 +477,7 @@ async def get_payment(
         .join(models.Store, models.Store.id == models.Payment.store_id)
         .where(models.Payment.public_id == public_id)
         .where(models.Store.account_id == ctx.account.id)
+        .where(models.Store.is_internal.is_(False))
     )
     row = (await session.execute(stmt)).one_or_none()
     if row is None:

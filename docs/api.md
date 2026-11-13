@@ -404,6 +404,7 @@ Codes returned in `detail` (verified against `src/`):
 | `store_billing_suspended` | 400 | The platform is holding the store: the account is on a plan smaller than its store count. Unlike `store_disabled` this is not the merchant's own switch, and it clears when the plan is settled or a slot is swapped back on the billing page |
 | `offline_qr_requires_a_confirmation_source` | 400 | `hosted_qr=false` where nothing can confirm it |
 | `synthetic_payment_requires_internal_store` | 400 | A reserved probe reference (`health-smoke:`) or `metadata.synthetic=true` was used on a merchant store. Probe payments are internal-only; see `docs/internal-payment-probe.md` |
+| `internal_store_not_payable` | 400 | `store` names the platform's own internal store. That store collects plan fees and cannot take a customer payment; it never appears in merchant payment lists or reports |
 | `payload_too_long` | 400 | `GET /api/v1/khqr/render.svg` only: the payload does not fit a QR code. Not a request-body limit. |
 | `invalid_payload` | 400 | `GET /api/v1/khqr/render.svg`: the payload could not be encoded |
 | `payment_not_found` / `store_not_found` / `merchant_not_found` | 404 | Not found in this account |

@@ -19,6 +19,9 @@ no `Payment` row, no expiry sweep, no webhook, and nothing a merchant can see.
 - A store with `is_internal=true`, owned by a platform admin account. The resolver is
   `services.billing.resolve_hq_store`: `CHMABAPAY_HQ_STORE_ID` wins, then a store named
   `ChmabaPay HQ` under a platform admin, then that admin's first active store.
+  The probe re-checks that owner and answers `503
+  internal_probe_store_not_admin_owned` when the flag is set on somebody else's
+  store — a state only a direct database write can produce.
 - That store must have an active payment link.
 - Either the scoped `INTERNAL_PROBE_TOKEN` (recommended) or an API key belonging to a
   **platform admin** account. The token is limited to this endpoint; a platform-admin
@@ -101,6 +104,23 @@ the monitor is repointed:
 2. Merchant payment lists and reports exclude `health-smoke:` rows, so historical
    probe rows already in a store stop appearing in the portal and CSV/JSON exports.
    The admin payment feed still shows them for audit.
+
+## Internal stores are not merchant surface
+
+The internal store hangs off a platform-admin account, so without a boundary its
+payments appear in that account's merchant dashboard beside its real business. Two
+rules prevent that:
+
+- `POST /api/v1/payments` refuses an internal store with `400
+  internal_store_not_payable`. Only the billing flow writes there — it mints the QR
+  for a plan invoice through `services.payments.create_payment`, not this route.
+- Merchant payment lists and reports exclude every `is_internal` store, and a
+  single-payment read for one answers `404 payment_not_found`. The console reports
+  internal-store takings as platform revenue instead.
+
+A test payment created on the internal store before these rules still exists as an
+audit row. Reverse it in the console (`admin.payment_reversed`) rather than deleting
+it; it no longer appears in the portal.
 
 Once the monitor points at the new endpoint, there is nothing left to hide.
 

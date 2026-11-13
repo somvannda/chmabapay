@@ -65,6 +65,10 @@ async def _build_filter_stmt(
     # Probe rows are operational noise, not sales. The merchant's own exports have
     # to agree with the payments list about that.
     stmt = payments_svc.without_synthetic_payments(stmt)
+    # The platform's own store collects plan fees, so its rows are platform revenue
+    # rather than merchant sales. The payments list hides them for the same reason;
+    # a CSV that disagreed with the screen would be worse than either.
+    stmt = stmt.where(models.Store.is_internal.is_(False))
 
     if from_dt is not None:
         stmt = stmt.where(models.Payment.created_at >= from_dt)

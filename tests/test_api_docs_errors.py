@@ -103,9 +103,14 @@ NOT_IN_REFERENCE = frozenset(
         # failures are operator-facing, and the reserved probe prefix is a policy
         # refusal a merchant integration cannot hit.
         "internal_probe_store_not_active",
+        "internal_probe_store_not_admin_owned",
         "internal_probe_store_not_configured",
         "internal_probe_store_not_internal",
         "synthetic_payment_requires_internal_store",
+        # Internal stores are not merchant surface: the console mints and audits their
+        # payments, and the merchant API refuses to create one. A merchant key cannot
+        # reach the branch, so it is not part of the reference.
+        "internal_store_not_payable",
     }
 )
 

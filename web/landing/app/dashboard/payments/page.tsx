@@ -10,6 +10,9 @@ type StoreOption = {
   id: string;
   name: string;
   status?: string;
+  // The platform's own store collects plan fees, not customer payments. The API
+  // hides its rows, so offering it in this filter would only ever return nothing.
+  is_internal?: boolean;
   [k: string]: unknown;
 };
 
@@ -106,7 +109,7 @@ export default function DashboardPaymentsPage() {
               : Array.isArray(data?.data)
                 ? data.data
                 : [];
-          if (alive) setStores(items);
+          if (alive) setStores(items.filter((s) => !s.is_internal));
         }
       } catch {
       }

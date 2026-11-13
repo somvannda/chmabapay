@@ -178,6 +178,32 @@ async def test_probe_refuses_when_the_hq_store_is_not_internal(client):
     assert response.json()["detail"] == "internal_probe_store_not_internal"
 
 
+async def test_probe_refuses_an_internal_store_owned_by_a_non_admin(client, monkeypatch):
+    """The flag alone is not proof: the owner has to be a platform admin.
+
+    This is the production shape the guard exists for — a store flagged via a direct
+    database write on a merchant account. The pin is the only resolution step that
+    does not already filter by admin ownership, so it is the one this test uses.
+    """
+    merchant = await make_account(email="owner@chmaba.test", name="Merchant")
+    store = await _make_internal_store(merchant)
+    ops = await _make_platform_admin()
+    raw_key, _ = await make_key(ops)
+    monkeypatch.setattr(
+        get_settings(), "chmabapay_hq_store_id", store.public_id, raising=False
+    )
+
+    response = await client.post(
+        "/api/v1/internal/payment-probe",
+        json={"amount": 0.10},
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "internal_probe_store_not_admin_owned"
+    assert await _payment_count() == 0
+
+
 async def test_synthetic_reference_is_refused_on_a_customer_store(client):
     account = await make_account()
     await make_store(account)
@@ -232,3 +258,105 @@ async def test_synthetic_rows_are_hidden_from_the_merchant_list(client):
     report = await client.get("/api/v1/reports/payments.json", headers=headers)
     assert report.status_code == 200
     assert created["id"] not in [row["public_id"] for row in report.json()["data"]]
+
+
+async def _make_internal_payment(store, *, amount_cents: int = 2500) -> str:
+    """A payment on an internal store, written the way billing writes one.
+
+    The merchant API refuses this now, so the test goes through the service the
+    billing router uses (`_invoice_payment` in `routers/billing.py`).
+    """
+    from chmabapay.services import payments as payments_svc
+
+    async with session_factory() as session:
+        payment, _created = await payments_svc.create_payment(
+            session,
+            store=store,
+            amount_cents=amount_cents,
+            reference_id="INV-1-2026-09",
+            metadata={"source": "billing_invoice"},
+            idempotency_key=None,
+            hosted_qr=False,
+        )
+        return payment.public_id
+
+
+async def test_an_internal_store_refuses_a_merchant_payment(client):
+    """A customer payment cannot be minted on the platform's own store.
+
+    The probe endpoint already writes no row; this is the other way a test row
+    reached the internal store. Refusing it keeps plan-fee collection to the
+    billing path, which is the only caller that has an invoice to settle.
+    """
+    ops = await _make_platform_admin()
+    hq = await _make_internal_store(ops)
+    raw_key, _ = await make_key(ops)
+
+    response = await client.post(
+        "/api/v1/payments",
+        json={"amount": 1.0, "store": hq.public_id, "hosted_qr": False},
+        headers={"Authorization": f"Bearer {raw_key}"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"].startswith("internal_store_not_payable")
+    assert await _payment_count() == 0
+
+
+async def test_internal_store_rows_stay_out_of_the_merchant_list_and_reports(client):
+    """Plan fees are platform revenue, not the operator's own sales.
+
+    The internal store hangs off the platform-admin account, so without this the
+    operator's merchant dashboard showed plan fees (and any test row) beside their
+    real store's payments. The console reports internal takings separately.
+    """
+    ops = await _make_platform_admin()
+    hq = await _make_internal_store(ops)
+    public_id = await _make_internal_payment(hq)
+    raw_key, _ = await make_key(ops)
+    headers = {"Authorization": f"Bearer {raw_key}"}
+
+    # A real payment on the same account must stay visible: the filter is scoped to
+    # internal stores, not to the operator's account.
+    shop = await make_store(ops, name="Operator Shop", owner="Shop")
+    normal = (
+        await client.post(
+            "/api/v1/payments",
+            json={"amount": 1.0, "store": shop.public_id, "hosted_qr": False},
+            headers=headers,
+        )
+    ).json()
+    assert normal["id"]
+
+    listed = await client.get("/api/v1/payments", headers=headers)
+    assert listed.status_code == 200
+    listed_ids = [row["id"] for row in listed.json()["data"]]
+    assert normal["id"] in listed_ids
+    assert public_id not in listed_ids
+
+    by_store = await client.get(
+        f"/api/v1/payments?store={hq.public_id}", headers=headers
+    )
+    assert by_store.status_code == 200
+    assert by_store.json()["data"] == []
+
+    report = await client.get("/api/v1/reports/payments.json", headers=headers)
+    assert report.status_code == 200
+    assert public_id not in [row["public_id"] for row in report.json()["data"]]
+
+    csv_report = await client.get("/api/v1/reports/payments.csv", headers=headers)
+    assert csv_report.status_code == 200
+    assert public_id not in csv_report.text
+
+    detail = await client.get(f"/api/v1/payments/{public_id}", headers=headers)
+    assert detail.status_code == 404
+
+    reconciled = await client.post(
+        f"/api/v1/transactions/verify-payment/{public_id}", headers=headers
+    )
+    assert reconciled.status_code == 404
+
+    status_read = await client.get(
+        f"/api/v1/transactions/check-status/{public_id}", headers=headers
+    )
+    assert status_read.status_code == 404

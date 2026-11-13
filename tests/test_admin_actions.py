@@ -839,6 +839,30 @@ async def make_paid_payment(client, account, store, *, amount_cents: int) -> dic
     return created
 
 
+async def make_paid_internal_payment(store, *, amount_cents: int) -> str:
+    """A plan fee settled into an internal store, written the way billing writes it.
+
+    The merchant API refuses to create a payment on an internal store, so this goes
+    through `services.payments.create_payment` directly — the same entry point
+    `routers/billing.py` uses when it mints an invoice's QR. Returns the public id.
+    """
+    from chmabapay.services import payments as payments_svc
+
+    async with session_factory() as session:
+        payment, _created = await payments_svc.create_payment(
+            session,
+            store=store,
+            amount_cents=amount_cents,
+            reference_id="INV-1-2026-09",
+            metadata={"source": "billing_invoice"},
+            idempotency_key=None,
+            hosted_qr=False,
+        )
+        settled = await payments_svc.mark_paid(session, payment.public_id)
+        assert settled is not None
+        return settled.public_id
+
+
 async def month_count(account_id: int) -> int:
     from chmabapay.services.payments import count_paid_payments_this_month
 
@@ -886,7 +910,9 @@ async def test_an_internal_store_is_not_metered_and_reports_as_platform_revenue(
         assert marked.json()["changed"] is True
 
     # A plan fee paid into the internal store…
-    await make_paid_payment(client, operator, internal_store, amount_cents=2500)
+    internal_public_id = await make_paid_internal_payment(
+        internal_store, amount_cents=2500
+    )
     # …and an ordinary merchant sale, which must still behave as it always did.
     await make_paid_payment(client, merchant, merchant_store, amount_cents=1250)
 
@@ -902,6 +928,13 @@ async def test_an_internal_store_is_not_metered_and_reports_as_platform_revenue(
 
     async with signed_in(operator) as admin:
         overview = (await admin.get("/api/v1/admin/overview")).json()
+        feed = (
+            await admin.get(f"/api/v1/admin/payments?account_id={operator.id}")
+        ).json()
+
+    # The console still shows the internal-store row. Hiding plan fees from the
+    # merchant surface must not blind the operator who reconciles or reverses one.
+    assert internal_public_id in [row["id"] for row in feed["data"]]
 
     # 3. Excluded from merchant volume…
     assert overview["paid_today_count"] == 1
@@ -918,6 +951,35 @@ async def test_an_internal_store_is_not_metered_and_reports_as_platform_revenue(
     assert entries[0].details["from"] is False
     assert entries[0].details["to"] is True
     assert entries[0].details["reason"] == "this is where plan fees land"
+
+
+async def test_reversing_an_internal_payment_writes_no_ledger_row(client):
+    """A plan-fee refund must not debit a usage ledger that never credited it.
+
+    `mark_paid` skips the internal store, so there is no positive row. Reversing
+    must skip it too, or the platform's own account ends up with a negative entry
+    and no matching credit.
+    """
+    operator = await make_operator()
+    internal_store = await make_store(operator, name="ChmabaPay HQ", owner="Hq")
+    async with session_factory() as session:
+        row = await session.get(models.Store, internal_store.id)
+        assert row is not None
+        row.is_internal = True
+        await session.commit()
+
+    public_id = await make_paid_internal_payment(internal_store, amount_cents=1499)
+    assert await ledger_rows(operator.id) == []
+
+    async with signed_in(operator) as admin:
+        res = await admin.post(
+            f"/api/v1/admin/payments/{public_id}/reverse",
+            json={"reason": "refunding a plan fee into the internal store"},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["status"] == models.PAYMENT_REVERSED
+
+    assert await ledger_rows(operator.id) == []
 
 
 async def test_marking_a_store_internal_is_quiet_on_a_repeat(client):
